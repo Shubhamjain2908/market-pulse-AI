@@ -5,16 +5,17 @@ A personal morning-briefing agent for Indian stock markets (NSE/BSE).
 modular pipeline that runs every weekday at 7:30 AM IST and emails you a
 short, actionable briefing before market open.
 
-> **Status:** Phases 0–3 shipped. Phase 2 added a JSON-driven screen engine
-> (Momentum Breakout, Quality at Value, FII Accumulation), first-class
-> watchlist alerts, and a backtest harness that replays historical EOD data
-> to give every screen a hit-rate / drawdown profile. The full AI-enhanced
-> pipeline runs end-to-end: Yahoo/NSE/Screener/RSS data ingestion, technical
-> indicators (SMA/EMA/RSI/ATR/volume/52W), LLM sentiment scoring on news
-> headlines, AI thesis generation for top-signal stocks, and an AI-composed
-> HTML briefing with market mood narrative, thesis cards, and a "screens
-> fired today" section. Supports Cursor Agent, Anthropic, OpenAI, and
-> Vertex AI (Gemini) as LLM backends. See [the roadmap](#roadmap).
+> **Status:** Phases 0–3 + 5 shipped. Phase 5 adds Zerodha Kite Connect
+> integration, a per-holding LLM-driven HOLD/ADD/TRIM/EXIT analyser, an
+> intraday LTP scanner, four additional built-in screens (RSI Oversold
+> Bounce, Golden Cross, Volume Breakout, Dividend Compounder), and a
+> single-command `pnpm daily` that runs the entire pipeline end-to-end and
+> produces a briefing with a "My Portfolio" section showing each
+> position's recommended action. The earlier phases provide: a JSON-driven
+> screen engine, first-class watchlist alerts, a backtest harness, LLM
+> sentiment scoring, AI thesis generation, and an AI-composed HTML
+> briefing. Supports Cursor Agent, Anthropic, OpenAI, and Vertex AI
+> (Gemini) as LLM backends. See [the roadmap](#roadmap).
 
 ---
 
@@ -102,12 +103,21 @@ pnpm migrate
 # 4. Sanity-check your runtime/config (no secrets are printed)
 pnpm cli doctor
 
-# 5. Run the full pipeline (ingest → enrich → sentiment → thesis → brief)
-pnpm run-all
-# -> writes briefings/briefing-YYYY-MM-DD.html
+# 5. (Optional) Connect Zerodha Kite for live portfolio analysis
+pnpm kite-login
+# -> opens the Kite login URL, prompts for the request_token,
+#    persists access_token to .env. Re-run daily after ~6 AM IST.
 
-# Run without LLM calls (Phase 1 mode)
-pnpm cli run-all --skip-ai
+# 6. The single-command morning run
+pnpm daily
+# -> ingest → enrich → screen → portfolio sync → sentiment →
+#    AI thesis → portfolio analysis → HTML briefing
+# -> writes briefings/briefing-YYYY-MM-DD.html with a "My Portfolio"
+#    section for every holding (HOLD / ADD / TRIM / EXIT + reason).
+
+# Variations
+pnpm daily --skip-portfolio   # skip the Kite branch entirely
+pnpm daily --skip-ai          # no LLM calls (fast deterministic mode)
 ```
 
 ### CLI reference
@@ -115,6 +125,7 @@ pnpm cli run-all --skip-ai
 ```bash
 pnpm cli --help            # top-level help
 
+# Pipeline stages
 pnpm cli migrate           # apply DB migrations
 pnpm cli ingest            # stage 1 - pull data
 pnpm cli ingest -s RELIANCE,INFY
@@ -125,16 +136,41 @@ pnpm cli backtest -s 2025-10-01 -e 2026-04-30 -h 10  # historical replay
 pnpm cli backtest -s 2025-10-01 -e 2026-04-30 -n momentum_breakout
 pnpm cli sentiment         # score news headlines via LLM
 pnpm cli thesis            # generate AI theses for top-signal stocks
-pnpm cli thesis -n 3       # limit to 3 theses
 pnpm cli brief             # stage 4 - compose + deliver briefing
-pnpm cli brief --skip-ai   # compose without LLM narrative
+
+# One-shot pipelines
 pnpm cli run-all           # full pipeline (ingest → thesis → brief)
-pnpm cli run-all --skip-ai # skip all AI stages
-pnpm cli doctor            # config diagnostics
+pnpm cli daily             # full pipeline + Kite portfolio sync + LLM
+                           # HOLD/ADD/TRIM/EXIT analysis per holding
+
+# Phase 5 — Zerodha Kite + portfolio
+pnpm cli kite-login        # interactive: refresh access_token (daily)
+pnpm cli portfolio-sync    # snapshot current holdings to DB
+pnpm cli portfolio-analyse # LLM-driven action recommendation per holding
+pnpm cli portfolio-analyse -s INFY,HDFCBANK
+pnpm cli scan              # one-shot intraday LTP refresh + live alerts
+                           # (cron every 5-15 min during market hours)
+
+pnpm cli doctor            # config diagnostics (no secrets)
 ```
 
 All commands accept `-d 2026-04-30` to target a specific trading date
 (useful for backtesting and replay).
+
+### Verifying the LLM is configured
+
+`scripts/smoke-llm.mts` runs three calls of escalating complexity (text →
+small JSON → realistic thesis prompt) so you can confirm `CURSOR_API_KEY`
+(or any other configured provider) is wired up before kicking off a full
+run:
+
+```bash
+pnpm tsx scripts/smoke-llm.mts
+# -> ✓ text — 11.7s
+# -> ✓ json — 10.2s
+# -> ✓ thesis — 10.4s
+# -> LLM smoke test passed.
+```
 
 ---
 
@@ -147,8 +183,10 @@ Three places, in order of precedence:
 2. **`config/*.json`** — committed configuration:
    - [`watchlist.json`](config/watchlist.json) — symbols to highlight
    - [`screens.json`](config/screens.json) — screen criteria DSL
-   - [`portfolio.json`](config/portfolio.json) — manual holdings (Phase 1–4;
-     replaced by Kite sync in Phase 5)
+   - [`portfolio.json`](config/portfolio.json) — manual holdings, used
+     when `PORTFOLIO_SOURCE=manual`. Live Kite sync is the default in
+     Phase 5 (`PORTFOLIO_SOURCE=kite`); the analyser doesn't care which
+     source produced the rows.
 3. **CLI flags** — per-invocation overrides like `-d` or `--delivery`.
 
 ### Switching the LLM provider
@@ -201,8 +239,58 @@ configured screen against historical EOD data:
 Set `MARKET_DATA_PROVIDER`:
 
 - `free` (default) — NSE public JSON endpoints + Yahoo Finance + Screener.in
-- `kite` — Zerodha Kite Connect (requires `KITE_API_KEY` / `KITE_API_SECRET`
-  / `KITE_ACCESS_TOKEN`; ingestor implemented in Phase 5)
+- `kite` — adds Zerodha Kite Connect for live portfolio + LTP. EOD
+  historical data still comes from Yahoo (Kite's historical API is a
+  paid add-on we don't depend on).
+
+### Connecting Zerodha Kite (Phase 5)
+
+The portfolio analyser is the marquee Phase 5 deliverable: every morning
+it builds a context (P&L, technicals, fundamentals, recent news, screens
+fired, alerts) for each of your holdings and asks the LLM to pick exactly
+one of `HOLD` / `ADD` / `TRIM` / `EXIT` with a 2-3 sentence thesis, bull/
+bear points, the catalyst that triggered the call, and optional stop /
+target levels.
+
+To enable it:
+
+1. Create a Kite Connect app at <https://kite.trade> ("My Apps" → "Create
+   new app"). Note the API key, API secret, and the redirect URL you
+   configured.
+2. Fill these into `.env`:
+   ```
+   MARKET_DATA_PROVIDER=kite
+   PORTFOLIO_SOURCE=kite
+   KITE_API_KEY=...
+   KITE_API_SECRET=...
+   ```
+3. Run the daily login dance:
+   ```
+   pnpm kite-login
+   ```
+   This opens the Kite login page, accepts either the bare
+   `request_token` or the full redirect URL Zerodha sent you, exchanges
+   it for an `access_token`, and idempotently writes the token into
+   `.env`. Tokens expire at roughly 6 AM IST every day, so this is a
+   once-per-morning step.
+4. Run the briefing:
+   ```
+   pnpm daily
+   ```
+   The briefing now contains a "My Portfolio" section right under the
+   market-mood banner, with every position's recommended action.
+
+If you'd rather skip Kite entirely, leave `PORTFOLIO_SOURCE=manual` (the
+default) and edit `config/portfolio.json`. Same downstream output —
+just no live LTPs or day-change tracking.
+
+### Intraday scanning (`mp scan`)
+
+`pnpm scan` does a one-shot Kite quote fetch for the union of your
+watchlist and current holdings, persists each tick to `intraday_quotes`,
+and flags any symbol whose intraday move exceeds `--threshold` (default
+`3` percent) as a live alert. Cron-friendly — the command exits on
+completion, so a `*/10 * * * *` entry during market hours is enough.
 
 ---
 
@@ -267,8 +355,8 @@ pnpm build              # tsc -> dist/  (also copies SQL assets)
 | 1     | Ingest + enrich      | ✅ shipped    | NSE/Yahoo/Screener/RSS ingestors; SMA/EMA/RSI/ATR/volume/52W signals; HTML briefing |
 | 2     | Screening + backtest | ✅ shipped    | JSON screen DSL; momentum / value / FII screens; first-class watchlist alerts; backtest harness with hit-rate / drawdown |
 | 3     | AI layer             | ✅ shipped    | Anthropic/OpenAI/Cursor providers; sentiment enricher; thesis generator; LLM briefing narrative |
-| 4     | Delivery             | planned       | Cron schedule (7:30 / 15:30 / Sat 8:00); Gmail / Slack / Telegram delivery |
-| 5     | Real-time + Kite     | planned       | Kite Connect ingestor; intraday watchlist alerts; portfolio sync           |
+| 4     | Delivery             | partial       | File output shipping; cron schedule + Gmail / Slack / Telegram channels still TODO |
+| 5     | Real-time + Kite     | ✅ shipped    | Kite Connect HTTP client + interactive login; portfolio sync + per-holding LLM HOLD/ADD/TRIM/EXIT analyser; intraday LTP scanner; 4 new screens; single-command `pnpm daily` |
 
 ---
 
