@@ -1,0 +1,69 @@
+{
+  "name": "market-pulse-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal Indian-markets (NSE/BSE) morning briefing agent. Pipeline: ingest -> enrich -> screen -> brief, with a swappable LLM provider.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@10.33.2",
+  "main": "dist/cli.js",
+  "bin": {
+    "mp": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "dev": "tsx watch src/cli.ts",
+    "start": "node dist/cli.js",
+    "cli": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "migrate": "tsx src/cli.ts migrate",
+    "ingest": "tsx src/cli.ts ingest",
+    "enrich": "tsx src/cli.ts enrich",
+    "screen": "tsx src/cli.ts screen",
+    "brief": "tsx src/cli.ts brief",
+    "run-all": "tsx src/cli.ts run-all",
+    "prepare": "echo 'skip husky setup until added'"
+  },
+  "keywords": [
+    "stock-market",
+    "nse",
+    "bse",
+    "india",
+    "ai-agent",
+    "trading",
+    "briefing",
+    "cursor-agent",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "commander": "^12.1.0",
+    "croner": "^9.0.0",
+    "dotenv": "^16.4.5",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@biomejs/biome", "better-sqlite3", "esbuild"]
+  }
+}
