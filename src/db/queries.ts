@@ -11,6 +11,7 @@ import type {
   RawQuote,
   ScreenResult,
   Signal,
+  Thesis,
 } from '../types/domain.js';
 import { getDb } from './connection.js';
 
@@ -195,6 +196,113 @@ export function upsertSignals(rows: Signal[], db: DatabaseType = getDb()): numbe
   });
   tx(rows);
   return rows.length;
+}
+
+// ---------------------------------------------------------------------------
+// Screen results
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Theses (AI-generated)
+// ---------------------------------------------------------------------------
+
+export interface UpsertThesisRow extends Thesis {
+  date: string;
+  model: string;
+  raw?: string;
+}
+
+export function upsertThesis(row: UpsertThesisRow, db: DatabaseType = getDb()): void {
+  db.prepare(`
+    INSERT INTO theses (
+      symbol, date, thesis, bull_case, bear_case, entry_zone, stop_loss,
+      target, time_horizon, confidence, trigger_reason, model, raw_response
+    ) VALUES (
+      @symbol, @date, @thesis, @bullCase, @bearCase, @entryZone, @stopLoss,
+      @target, @timeHorizon, @confidence, @triggerReason, @model, @raw
+    )
+    ON CONFLICT(symbol, date) DO UPDATE SET
+      thesis         = excluded.thesis,
+      bull_case      = excluded.bull_case,
+      bear_case      = excluded.bear_case,
+      entry_zone     = excluded.entry_zone,
+      stop_loss      = excluded.stop_loss,
+      target         = excluded.target,
+      time_horizon   = excluded.time_horizon,
+      confidence     = excluded.confidence,
+      trigger_reason = excluded.trigger_reason,
+      model          = excluded.model,
+      raw_response   = excluded.raw_response
+  `).run({
+    symbol: row.symbol,
+    date: row.date ?? new Date().toISOString().slice(0, 10),
+    thesis: row.thesis,
+    bullCase: JSON.stringify(row.bullCase),
+    bearCase: JSON.stringify(row.bearCase),
+    entryZone: row.entryZone,
+    stopLoss: row.stopLoss,
+    target: row.target,
+    timeHorizon: row.timeHorizon,
+    confidence: row.confidenceScore,
+    triggerReason: row.triggerScreen,
+    model: row.model,
+    raw: row.raw ?? null,
+  });
+}
+
+export interface StoredThesis {
+  symbol: string;
+  date: string;
+  thesis: string;
+  bullCase: string[];
+  bearCase: string[];
+  entryZone: string;
+  stopLoss: string;
+  target: string;
+  timeHorizon: string;
+  confidence: number;
+  triggerReason: string;
+  model: string;
+}
+
+export function getThesesForDate(date: string, db: DatabaseType = getDb()): StoredThesis[] {
+  const rows = db
+    .prepare(`
+      SELECT symbol, date, thesis, bull_case, bear_case, entry_zone, stop_loss,
+             target, time_horizon, confidence, trigger_reason, model
+      FROM theses
+      WHERE date = ?
+      ORDER BY confidence DESC
+    `)
+    .all(date) as Array<{
+    symbol: string;
+    date: string;
+    thesis: string;
+    bull_case: string;
+    bear_case: string;
+    entry_zone: string;
+    stop_loss: string;
+    target: string;
+    time_horizon: string;
+    confidence: number;
+    trigger_reason: string;
+    model: string;
+  }>;
+
+  return rows.map((r) => ({
+    symbol: r.symbol,
+    date: r.date,
+    thesis: r.thesis,
+    bullCase: JSON.parse(r.bull_case) as string[],
+    bearCase: JSON.parse(r.bear_case) as string[],
+    entryZone: r.entry_zone,
+    stopLoss: r.stop_loss,
+    target: r.target,
+    timeHorizon: r.time_horizon,
+    confidence: r.confidence,
+    triggerReason: r.trigger_reason,
+    model: r.model,
+  }));
 }
 
 // ---------------------------------------------------------------------------
