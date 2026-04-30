@@ -188,7 +188,7 @@ function rankCandidates(date: string, symbols: string[], db: DatabaseType): Cand
 // Context builder — assembles everything the LLM needs for a single stock
 // ---------------------------------------------------------------------------
 
-function buildStockContext(symbol: string, date: string, db: DatabaseType): string {
+export function buildStockContext(symbol: string, date: string, db: DatabaseType): string {
   const sections: string[] = [`Analyse ${symbol} as of ${date}.\n`];
 
   const quotes = db

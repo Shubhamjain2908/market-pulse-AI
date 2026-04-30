@@ -65,6 +65,20 @@ export class MockLlmProvider implements LlmProvider {
       const ids = [...opts.user.matchAll(/"id":\s*(\d+)/g)].map((m) => Number(m[1]));
       const batch = ids.length > 0 ? ids.map((id) => ({ id, sentiment: 0.1 })) : MOCK_SENTIMENT;
       raw = JSON.stringify(batch);
+    } else if (opts.system.includes('portfolio review')) {
+      const symbolMatch = opts.user.match(/# Position:\s+(\w+)/);
+      raw = JSON.stringify({
+        symbol: symbolMatch?.[1] ?? 'MOCK',
+        action: 'HOLD',
+        conviction: 0.6,
+        thesis:
+          'The position is in line with the original thesis; technicals remain constructive and there is no fresh news warranting a change in stance.',
+        bullPoints: ['Trend intact', 'Volumes supportive'],
+        bearPoints: ['Macro uncertainty', 'Valuation getting full'],
+        triggerReason: 'No material change since last review.',
+        suggestedStop: null,
+        suggestedTarget: null,
+      });
     } else if (opts.system.includes('equity research') || opts.system.includes('investment')) {
       const symbolMatch = opts.user.match(/Analyse\s+(\w+)/);
       raw = JSON.stringify({
