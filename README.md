@@ -5,10 +5,11 @@ A personal morning-briefing agent for Indian stock markets (NSE/BSE).
 modular pipeline that runs every weekday at 7:30 AM IST and emails you a
 short, actionable briefing before market open.
 
-> **Status:** Phase 0 (foundation). The repo currently ships the skeleton —
-> typed pipeline, swappable ingestor + LLM provider interfaces, SQLite
-> schema, and a CLI. Real ingestors and AI thesis generation land in
-> Phases 1 → 4. See [the roadmap](#roadmap).
+> **Status:** Phase 1 complete. The pipeline runs end-to-end on free-tier
+> data: Yahoo historical OHLCV, NSE FII/DII, Screener.in fundamentals,
+> ET/Moneycontrol RSS news, technical indicators (SMA/EMA/RSI/ATR/volume/
+> 52W), and a template-rendered HTML briefing. AI thesis generation lands
+> in Phase 3. See [the roadmap](#roadmap).
 
 ---
 
@@ -217,14 +218,14 @@ pnpm build              # tsc -> dist/  (also copies SQL assets)
 
 ## Roadmap
 
-| Phase | Theme                | Highlights                                                                 |
-| ----- | -------------------- | -------------------------------------------------------------------------- |
-| 0     | Foundation (this)    | Repo scaffold, types, DB schema, CLI, LLM provider abstraction             |
-| 1     | Ingest + enrich      | NSE/Yahoo/Screener/RSS ingestors; SMA/EMA/RSI/ATR/volume signals           |
-| 2     | Screening + backtest | JSON screen DSL; momentum / value / FII screens; 6-month backtest harness  |
-| 3     | AI layer             | LLM thesis generator + briefing composer; sentiment scoring; zod-validated |
-| 4     | Delivery             | Cron schedule (7:30 / 15:30 / Sat 8:00); Gmail / Slack / Telegram delivery |
-| 5     | Real-time + Kite     | Kite Connect ingestor; intraday watchlist alerts; portfolio sync           |
+| Phase | Theme                | Status        | Highlights                                                                 |
+| ----- | -------------------- | ------------- | -------------------------------------------------------------------------- |
+| 0     | Foundation           | ✅ shipped    | Repo scaffold, types, DB schema, CLI, LLM provider abstraction             |
+| 1     | Ingest + enrich      | ✅ shipped    | NSE/Yahoo/Screener/RSS ingestors; SMA/EMA/RSI/ATR/volume/52W signals; HTML briefing |
+| 2     | Screening + backtest | next          | JSON screen DSL; momentum / value / FII screens; 6-month backtest harness  |
+| 3     | AI layer             | planned       | LLM thesis generator + briefing composer; sentiment scoring; zod-validated |
+| 4     | Delivery             | planned       | Cron schedule (7:30 / 15:30 / Sat 8:00); Gmail / Slack / Telegram delivery |
+| 5     | Real-time + Kite     | planned       | Kite Connect ingestor; intraday watchlist alerts; portfolio sync           |
 
 ---
 
