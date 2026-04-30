@@ -36,6 +36,51 @@
         { "signal": "fii_net_5d_sum", "op": "gt", "value": 0 },
         { "signal": "close", "op": "gt_signal", "value": "sma_200" }
       ]
+    },
+    {
+      "name": "rsi_oversold_bounce",
+      "label": "RSI Oversold Bounce",
+      "description": "Mean-reversion setup: deeply oversold RSI on stocks still in a long-term uptrend, ideal for a swing entry once momentum turns.",
+      "timeHorizon": "short",
+      "criteria": [
+        { "signal": "rsi_14", "op": "lte", "value": 32 },
+        { "signal": "close", "op": "gt_signal", "value": "sma_200" },
+        { "signal": "pct_from_52w_low", "op": "gte", "value": 8 }
+      ]
+    },
+    {
+      "name": "golden_cross",
+      "label": "Golden Cross",
+      "description": "Classic long-term trend confirmation: 50-day moving average above the 200-day with price above both — a stable uptrend regime.",
+      "timeHorizon": "long",
+      "criteria": [
+        { "signal": "sma_50", "op": "gt_signal", "value": "sma_200" },
+        { "signal": "close", "op": "gt_signal", "value": "sma_50" },
+        { "signal": "rsi_14", "op": "between", "value": [45, 70] }
+      ]
+    },
+    {
+      "name": "volume_breakout",
+      "label": "Volume Breakout",
+      "description": "Sharp 3x-plus volume spike with a positive close — typically marks accumulation or news-driven momentum.",
+      "timeHorizon": "short",
+      "criteria": [
+        { "signal": "volume_ratio_20d", "op": "gte", "value": 3 },
+        { "signal": "close", "op": "gt_signal", "value": "sma_20" },
+        { "signal": "rsi_14", "op": "gt", "value": 50 }
+      ]
+    },
+    {
+      "name": "dividend_compounder",
+      "label": "Dividend Compounder",
+      "description": "High-quality dividend payers at reasonable valuations — the bedrock of a long-only Indian portfolio.",
+      "timeHorizon": "long",
+      "criteria": [
+        { "signal": "dividend_yield", "op": "gte", "value": 2 },
+        { "signal": "roe", "op": "gte", "value": 12 },
+        { "signal": "debt_to_equity", "op": "lte", "value": 0.7 },
+        { "signal": "pe", "op": "lte", "value": 25 }
+      ]
     }
   ]
 }
