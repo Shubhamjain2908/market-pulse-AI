@@ -24,6 +24,7 @@ export interface BriefRunResult {
   newsCount: number;
   thesesCount: number;
   screenMatchesCount: number;
+  portfolioCount: number;
   hasNarrative: boolean;
 }
 
@@ -53,6 +54,7 @@ export async function runBriefingComposer(opts: BriefRunOptions = {}): Promise<B
     newsCount: composed.data.news.length,
     thesesCount: composed.data.theses?.length ?? 0,
     screenMatchesCount: screenMatches,
+    portfolioCount: composed.data.portfolio?.positions.length ?? 0,
     hasNarrative: !!composed.data.moodNarrative,
   };
 }

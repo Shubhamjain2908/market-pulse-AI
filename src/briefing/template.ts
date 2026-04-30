@@ -55,6 +55,34 @@ export interface ThesisCard {
   triggerReason: string;
 }
 
+export interface PortfolioPositionCard {
+  symbol: string;
+  qty: number;
+  avgPrice: number;
+  lastPrice: number | null;
+  pnl: number | null;
+  pnlPct: number | null;
+  dayChangePct: number | null;
+  action: 'HOLD' | 'ADD' | 'TRIM' | 'EXIT' | null;
+  conviction: number | null;
+  thesis: string | null;
+  triggerReason: string | null;
+  bullPoints: string[];
+  bearPoints: string[];
+  suggestedStop: number | null;
+  suggestedTarget: number | null;
+}
+
+export interface PortfolioSummary {
+  totalValue: number;
+  totalPnl: number;
+  totalPnlPct: number;
+  dayChange: number | null;
+  dayChangePct: number | null;
+  source: 'kite' | 'manual';
+  positions: PortfolioPositionCard[];
+}
+
 export interface ScreenMatch {
   screenName: string;
   screenLabel: string;
@@ -76,6 +104,8 @@ export interface BriefingData {
   news: NewsRow[];
   /** AI-generated thesis cards (Phase 3). */
   theses?: ThesisCard[];
+  /** Portfolio summary + per-holding analysis (Phase 5). */
+  portfolio?: PortfolioSummary;
   /** True when the AI thesis section is intentionally empty (Phase 1). */
   aiPicksDisabled?: boolean;
 }
@@ -93,6 +123,7 @@ export function renderBriefing(data: BriefingData): string {
   <main class="wrap">
     ${renderHeader(data.date)}
     ${renderMood(data.mood, data.moodNarrative)}
+    ${renderPortfolio(data.portfolio)}
     ${renderWatchlistAlerts(data.watchlistAlerts)}
     ${renderScreenMatches(data.screenMatches)}
     ${renderMovers(data.topGainers, data.topLosers)}
@@ -177,6 +208,117 @@ function renderWatchlistAlerts(alerts: WatchlistAlert[]): string {
         <tbody>${rows}</tbody>
       </table>
     </section>`;
+}
+
+function renderPortfolio(p?: PortfolioSummary): string {
+  if (!p || p.positions.length === 0) return '';
+
+  const summaryClass = p.totalPnl >= 0 ? 'positive' : 'negative';
+  const dayClass =
+    p.dayChangePct == null ? 'neutral' : p.dayChangePct >= 0 ? 'positive' : 'negative';
+
+  const summary = `
+    <div class="grid grid-4">
+      <div class="mood neutral">
+        <div class="mood-label">Total Value</div>
+        <div class="mood-value">${formatInr(p.totalValue)}</div>
+      </div>
+      <div class="mood ${summaryClass}">
+        <div class="mood-label">Unrealised P&amp;L</div>
+        <div class="mood-value">${signed(formatInr(p.totalPnl))} (${p.totalPnlPct.toFixed(2)}%)</div>
+      </div>
+      <div class="mood ${dayClass}">
+        <div class="mood-label">Today's Change</div>
+        <div class="mood-value">${p.dayChangePct == null ? '—' : `${signedPct(p.dayChangePct)}`}</div>
+      </div>
+      <div class="mood neutral">
+        <div class="mood-label">Holdings</div>
+        <div class="mood-value">${p.positions.length}</div>
+      </div>
+    </div>`;
+
+  const cards = p.positions.map(renderPositionCard).join('');
+
+  return `
+    <section class="card">
+      <h2>My Portfolio <span class="muted">· source: ${esc(p.source)}</span></h2>
+      ${summary}
+      <div class="position-cards">${cards}</div>
+    </section>`;
+}
+
+function renderPositionCard(c: PortfolioPositionCard): string {
+  const pnlClass = c.pnlPct == null ? 'neutral' : c.pnlPct >= 0 ? 'positive' : 'negative';
+  const pnl =
+    c.pnl != null && c.pnlPct != null
+      ? `${signed(formatInr(c.pnl))} (${c.pnlPct.toFixed(2)}%)`
+      : '—';
+  const dayChip =
+    c.dayChangePct == null
+      ? ''
+      : `<span class="day-chip ${c.dayChangePct >= 0 ? 'positive' : 'negative'}">${signedPct(c.dayChangePct)} today</span>`;
+  const actionChip = c.action
+    ? `<span class="action-chip ${c.action.toLowerCase()}">${c.action}</span>`
+    : '';
+
+  const headline = `
+    <div class="position-header">
+      <div>
+        <strong>${esc(c.symbol)}</strong>
+        <span class="muted"> · ${c.qty.toFixed(0)} qty @ ₹${c.avgPrice.toFixed(2)}</span>
+      </div>
+      <div class="position-prices">
+        ${actionChip}
+        <span class="${pnlClass}">${pnl}</span>
+        ${dayChip}
+      </div>
+    </div>`;
+
+  const thesis = c.thesis ? `<p class="position-thesis">${esc(c.thesis)}</p>` : '';
+  const trigger = c.triggerReason
+    ? `<p class="position-trigger"><span class="muted">Trigger:</span> ${esc(c.triggerReason)}</p>`
+    : '';
+  const bull = c.bullPoints.length
+    ? `<div class="point-list bull"><div class="point-label">+</div><ul>${c.bullPoints.map((b) => `<li>${esc(b)}</li>`).join('')}</ul></div>`
+    : '';
+  const bear = c.bearPoints.length
+    ? `<div class="point-list bear"><div class="point-label">−</div><ul>${c.bearPoints.map((b) => `<li>${esc(b)}</li>`).join('')}</ul></div>`
+    : '';
+  const levels = formatLevels(c.suggestedStop, c.suggestedTarget, c.lastPrice);
+
+  return `
+    <div class="position-card">
+      ${headline}
+      ${thesis}
+      ${trigger}
+      ${bull || bear ? `<div class="point-grid">${bull}${bear}</div>` : ''}
+      ${levels}
+    </div>`;
+}
+
+function formatLevels(stop: number | null, target: number | null, last: number | null): string {
+  const items: string[] = [];
+  if (last != null) items.push(`LTP <strong>₹${last.toFixed(2)}</strong>`);
+  if (stop != null) items.push(`Stop <strong>₹${stop.toFixed(2)}</strong>`);
+  if (target != null) items.push(`Target <strong>₹${target.toFixed(2)}</strong>`);
+  if (items.length === 0) return '';
+  return `<div class="position-levels">${items.join(' · ')}</div>`;
+}
+
+function formatInr(v: number): string {
+  const abs = Math.abs(v);
+  if (abs >= 10_000_000) return `₹${(v / 10_000_000).toFixed(2)}Cr`;
+  if (abs >= 100_000) return `₹${(v / 100_000).toFixed(2)}L`;
+  if (abs >= 1_000) return `₹${(v / 1_000).toFixed(2)}K`;
+  return `₹${v.toFixed(2)}`;
+}
+
+function signed(s: string): string {
+  return s.startsWith('-') ? s : `+${s}`;
+}
+
+function signedPct(v: number): string {
+  return v >= 0 ? `+${v.toFixed(2)}%` : `${v.toFixed(2)}%`;
 }
 
 function renderScreenMatches(matches?: ScreenMatch[]): string {
@@ -483,6 +625,32 @@ function baseStyles(): string {
     .symbol-chips { display: flex; flex-wrap: wrap; gap: 6px; }
     .symbol-chip { display: inline-block; padding: 2px 8px; border-radius: 4px;
       background: #eef4f8; color: var(--accent); font-weight: 600; font-size: 12px; }
+    .position-cards { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+    .position-card { padding: 14px; border: 1px solid var(--border); border-radius: 8px;
+      background: #fafbfd; }
+    .position-header { display: flex; justify-content: space-between; align-items: center;
+      gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+    .position-prices { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .position-thesis { margin: 6px 0; font-size: 13px; line-height: 1.5; }
+    .position-trigger { margin: 4px 0 8px; font-size: 12px; color: #4a5568; }
+    .position-levels { margin-top: 6px; font-size: 12px; color: #4a5568; }
+    .point-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; }
+    @media (max-width: 600px) { .point-grid { grid-template-columns: 1fr; } }
+    .point-list { display: flex; gap: 6px; align-items: flex-start; }
+    .point-list ul { margin: 0; padding-left: 16px; font-size: 12px; line-height: 1.45; }
+    .point-list .point-label { font-weight: 800; font-size: 14px; line-height: 1; padding-top: 2px; }
+    .point-list.bull .point-label { color: var(--positive); }
+    .point-list.bear .point-label { color: var(--negative); }
+    .action-chip { display: inline-block; padding: 2px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.05em; }
+    .action-chip.hold { background: #e6eaf2; color: #2c3e50; }
+    .action-chip.add  { background: #d4edda; color: #155724; }
+    .action-chip.trim { background: #fff3cd; color: #856404; }
+    .action-chip.exit { background: #f8d7da; color: #721c24; }
+    .day-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
+      font-weight: 600; }
+    .day-chip.positive { background: #e6f4ea; color: var(--positive); }
+    .day-chip.negative { background: #fde7e7; color: var(--negative); }
     footer { margin-top: 18px; padding: 14px 0; text-align: center; color: var(--muted);
       font-size: 11px; }
     .disclaimer { max-width: 600px; margin: 0 auto; font-style: italic; }

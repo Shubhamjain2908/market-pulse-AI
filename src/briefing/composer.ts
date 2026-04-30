@@ -11,7 +11,7 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { getAlertsForDate } from '../analysers/alerts.js';
 import { loadScreens, loadWatchlist } from '../config/loaders.js';
-import { getDb } from '../db/index.js';
+import { getDb, getLatestHoldings, getPortfolioAnalysisForDate } from '../db/index.js';
 import { getThesesForDate } from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
@@ -22,6 +22,8 @@ import {
   type BriefingData,
   type MoverRow,
   type NewsRow,
+  type PortfolioPositionCard,
+  type PortfolioSummary,
   type ScreenMatch,
   type ThesisCard,
   type WatchlistAlert,
@@ -59,6 +61,7 @@ export async function composeBriefing(
   const news = gatherNews(48, db);
   const theses = gatherTheses(date, db);
   const screenMatches = gatherScreenMatches(date, db);
+  const portfolio = gatherPortfolio(date, db);
 
   let moodNarrative: string | undefined;
   if (
@@ -88,6 +91,7 @@ export async function composeBriefing(
     moodNarrative,
     watchlistAlerts,
     screenMatches: screenMatches.length > 0 ? screenMatches : undefined,
+    portfolio,
     topGainers,
     topLosers,
     news,
@@ -104,6 +108,7 @@ export async function composeBriefing(
       losers: data.topLosers.length,
       news: data.news.length,
       theses: theses.length,
+      portfolioHoldings: portfolio?.positions.length ?? 0,
       hasNarrative: !!moodNarrative,
     },
     'composed briefing payload',
@@ -204,6 +209,64 @@ function gatherWatchlistAlerts(date: string, db: DatabaseType): WatchlistAlert[]
     value: a.value,
     description: a.message,
   }));
+}
+
+function gatherPortfolio(date: string, db: DatabaseType): PortfolioSummary | undefined {
+  const holdings = getLatestHoldings(db);
+  if (holdings.length === 0) return undefined;
+  const analysis = getPortfolioAnalysisForDate(date, db);
+  const analysisBySymbol = new Map(analysis.map((a) => [a.symbol, a]));
+
+  const positions: PortfolioPositionCard[] = holdings.map((h) => {
+    const a = analysisBySymbol.get(h.symbol);
+    return {
+      symbol: h.symbol,
+      qty: h.qty,
+      avgPrice: h.avgPrice,
+      lastPrice: h.lastPrice ?? null,
+      pnl: h.pnl ?? null,
+      pnlPct: h.pnlPct ?? null,
+      dayChangePct: h.dayChangePct ?? null,
+      action: a?.action ?? null,
+      conviction: a?.conviction ?? null,
+      thesis: a?.thesis ?? null,
+      triggerReason: a?.triggerReason ?? null,
+      bullPoints: a?.bullPoints ?? [],
+      bearPoints: a?.bearPoints ?? [],
+      suggestedStop: a?.suggestedStop ?? null,
+      suggestedTarget: a?.suggestedTarget ?? null,
+    };
+  });
+
+  let totalValue = 0;
+  let totalCost = 0;
+  let totalPnl = 0;
+  let dayChangeAbs = 0;
+  let hasDayChange = false;
+  for (const h of holdings) {
+    const px = h.lastPrice ?? h.avgPrice;
+    totalValue += h.qty * px;
+    totalCost += h.qty * h.avgPrice;
+    if (h.pnl != null) totalPnl += h.pnl;
+    if (h.dayChange != null) {
+      dayChangeAbs += h.dayChange;
+      hasDayChange = true;
+    }
+  }
+  const totalPnlPct = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0;
+  const previousValue = totalValue - dayChangeAbs;
+  const dayChangePct =
+    hasDayChange && previousValue > 0 ? (dayChangeAbs / previousValue) * 100 : null;
+
+  return {
+    totalValue,
+    totalPnl,
+    totalPnlPct,
+    dayChange: hasDayChange ? dayChangeAbs : null,
+    dayChangePct,
+    source: (holdings[0]?.source as 'kite' | 'manual') ?? 'manual',
+    positions,
+  };
 }
 
 function alertSignalLabel(kind: string): string {
