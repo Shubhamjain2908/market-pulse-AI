@@ -1,25 +1,26 @@
 /**
- * Phase 1 briefing composer. No LLM - just queries the local DB for
- * everything the user needs and renders the template.
+ * Briefing composer. Gathers all data from the DB and optional AI layers
+ * to produce a complete BriefingData payload, then renders HTML.
  *
- * Sections produced:
- *   - Market Mood: latest FII/DII totals
- *   - Watchlist Alerts: signals on watchlist symbols that exceed thresholds
- *   - Top Movers: biggest gainers/losers in the watchlist (1-day Δ)
- *   - News: all market-wide items from the last 48h
- *
- * Phase 3 will inject AI thesis cards in the dedicated placeholder slot.
+ * Phase 3 additions:
+ *   - LLM-generated market mood narrative
+ *   - AI thesis cards from the `theses` table
+ *   - Sentiment scores on news items
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { loadWatchlist } from '../config/loaders.js';
 import { getDb } from '../db/index.js';
+import { getThesesForDate } from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
+import { getLlmProvider } from '../llm/index.js';
+import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import {
   type BriefingData,
   type MoverRow,
   type NewsRow,
+  type ThesisCard,
   type WatchlistAlert,
   renderBriefing,
 } from './template.js';
@@ -28,32 +29,65 @@ const log = child({ component: 'briefing-composer' });
 
 export interface ComposeBriefingOptions {
   date?: string;
-  /** Override the watchlist (testing). Defaults to config/watchlist.json. */
   watchlist?: string[];
+  /** Skip all LLM calls (Phase 1 mode). */
+  skipAi?: boolean;
 }
 
 export interface ComposedBriefing {
   date: string;
   html: string;
-  /** The raw payload, in case callers want to send JSON elsewhere. */
   data: BriefingData;
 }
 
-export function composeBriefing(
+export async function composeBriefing(
   opts: ComposeBriefingOptions = {},
   db: DatabaseType = getDb(),
-): ComposedBriefing {
+  llm?: LlmProvider,
+): Promise<ComposedBriefing> {
   const date = opts.date ?? isoDateIst();
   const watchlist = (opts.watchlist ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
+  const useAi = !opts.skipAi;
+
+  const mood = gatherMood(date, db);
+  const watchlistAlerts = gatherWatchlistAlerts(date, watchlist, db);
+  const topGainers = gatherMovers(date, watchlist, 'gainers', db);
+  const topLosers = gatherMovers(date, watchlist, 'losers', db);
+  const news = gatherNews(48, db);
+  const theses = gatherTheses(date, db);
+
+  let moodNarrative: string | undefined;
+  if (
+    useAi &&
+    (mood.fiiNet != null || mood.diiNet != null || topGainers.length > 0 || topLosers.length > 0)
+  ) {
+    try {
+      const provider = llm ?? getLlmProvider();
+      moodNarrative = await generateMoodNarrative(
+        mood,
+        topGainers,
+        topLosers,
+        watchlistAlerts,
+        provider,
+      );
+    } catch (err) {
+      log.warn(
+        { err: (err as Error).message },
+        'mood narrative generation failed, continuing without it',
+      );
+    }
+  }
 
   const data: BriefingData = {
     date,
-    mood: gatherMood(date, db),
-    watchlistAlerts: gatherWatchlistAlerts(date, watchlist, db),
-    topGainers: gatherMovers(date, watchlist, 'gainers', db),
-    topLosers: gatherMovers(date, watchlist, 'losers', db),
-    news: gatherNews(48, db),
-    aiPicksDisabled: true,
+    mood,
+    moodNarrative,
+    watchlistAlerts,
+    topGainers,
+    topLosers,
+    news,
+    theses: theses.length > 0 ? theses : undefined,
+    aiPicksDisabled: !useAi,
   };
 
   log.info(
@@ -63,6 +97,8 @@ export function composeBriefing(
       gainers: data.topGainers.length,
       losers: data.topLosers.length,
       news: data.news.length,
+      theses: theses.length,
+      hasNarrative: !!moodNarrative,
     },
     'composed briefing payload',
   );
@@ -71,7 +107,67 @@ export function composeBriefing(
 }
 
 // ---------------------------------------------------------------------------
-// Section gatherers
+// AI: mood narrative
+// ---------------------------------------------------------------------------
+
+const MOOD_SYSTEM = `You are a concise financial journalist covering Indian equity markets.
+Write a 2-4 sentence market mood summary for a morning briefing. Be factual, mention
+specific numbers when available. Never give investment advice. Write in present tense.`;
+
+async function generateMoodNarrative(
+  mood: BriefingData['mood'],
+  gainers: MoverRow[],
+  losers: MoverRow[],
+  alerts: WatchlistAlert[],
+  llm: LlmProvider,
+): Promise<string> {
+  const dataPoints: string[] = [];
+  if (mood.fiiNet != null) dataPoints.push(`FII net (cash): ₹${mood.fiiNet.toFixed(0)}Cr`);
+  if (mood.diiNet != null) dataPoints.push(`DII net (cash): ₹${mood.diiNet.toFixed(0)}Cr`);
+  if (mood.vix != null) dataPoints.push(`India VIX: ${mood.vix.toFixed(2)}`);
+  if (mood.niftyChangePct != null)
+    dataPoints.push(`Nifty change: ${mood.niftyChangePct.toFixed(2)}%`);
+  const topGainer = gainers[0];
+  if (topGainer)
+    dataPoints.push(`Top gainer: ${topGainer.symbol} (+${topGainer.changePct.toFixed(1)}%)`);
+  const topLoser = losers[0];
+  if (topLoser)
+    dataPoints.push(`Top loser: ${topLoser.symbol} (${topLoser.changePct.toFixed(1)}%)`);
+  if (alerts.length > 0)
+    dataPoints.push(`Active alerts: ${alerts.length} (${alerts.map((a) => a.symbol).join(', ')})`);
+
+  const result = await llm.generateText({
+    system: MOOD_SYSTEM,
+    user: `Market data:\n${dataPoints.join('\n')}\n\nWrite a brief market mood summary.`,
+    temperature: 0.3,
+    maxOutputTokens: 300,
+  });
+
+  return result.text.trim();
+}
+
+// ---------------------------------------------------------------------------
+// Thesis cards
+// ---------------------------------------------------------------------------
+
+function gatherTheses(date: string, db: DatabaseType): ThesisCard[] {
+  const rows = getThesesForDate(date, db);
+  return rows.map((r) => ({
+    symbol: r.symbol,
+    thesis: r.thesis,
+    bullCase: r.bullCase,
+    bearCase: r.bearCase,
+    entryZone: r.entryZone,
+    stopLoss: r.stopLoss,
+    target: r.target,
+    timeHorizon: r.timeHorizon,
+    confidence: r.confidence,
+    triggerReason: r.triggerReason,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Section gatherers (data-only, no LLM)
 // ---------------------------------------------------------------------------
 
 function gatherMood(date: string, db: DatabaseType): BriefingData['mood'] {
@@ -255,7 +351,7 @@ function gatherNews(hours: number, db: DatabaseType): NewsRow[] {
   const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
   const rows = db
     .prepare(`
-      SELECT headline, source, url, published_at AS publishedAt, symbol
+      SELECT headline, source, url, published_at AS publishedAt, symbol, sentiment
       FROM news
       WHERE published_at >= ?
       ORDER BY published_at DESC

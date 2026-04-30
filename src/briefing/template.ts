@@ -39,15 +39,33 @@ export interface NewsRow {
   url: string;
   publishedAt: string;
   symbol?: string;
+  sentiment?: number | null;
+}
+
+export interface ThesisCard {
+  symbol: string;
+  thesis: string;
+  bullCase: string[];
+  bearCase: string[];
+  entryZone: string;
+  stopLoss: string;
+  target: string;
+  timeHorizon: string;
+  confidence: number;
+  triggerReason: string;
 }
 
 export interface BriefingData {
   date: string;
   mood: MarketMood;
+  /** LLM-generated narrative summary of market conditions. */
+  moodNarrative?: string;
   watchlistAlerts: WatchlistAlert[];
   topGainers: MoverRow[];
   topLosers: MoverRow[];
   news: NewsRow[];
+  /** AI-generated thesis cards (Phase 3). */
+  theses?: ThesisCard[];
   /** True when the AI thesis section is intentionally empty (Phase 1). */
   aiPicksDisabled?: boolean;
 }
@@ -64,10 +82,10 @@ export function renderBriefing(data: BriefingData): string {
 <body>
   <main class="wrap">
     ${renderHeader(data.date)}
-    ${renderMood(data.mood)}
+    ${renderMood(data.mood, data.moodNarrative)}
     ${renderWatchlistAlerts(data.watchlistAlerts)}
     ${renderMovers(data.topGainers, data.topLosers)}
-    ${renderAiPlaceholder(data.aiPicksDisabled)}
+    ${renderAiPicks(data.theses, data.aiPicksDisabled)}
     ${renderNews(data.news)}
     ${renderFooter()}
   </main>
@@ -88,7 +106,7 @@ function renderHeader(date: string): string {
     </header>`;
 }
 
-function renderMood(mood: MarketMood): string {
+function renderMood(mood: MarketMood, narrative?: string): string {
   const cards = [
     moodCard('FII Net (Cash)', formatCrore(mood.fiiNet), mood.fiiNet),
     moodCard('DII Net (Cash)', formatCrore(mood.diiNet), mood.diiNet),
@@ -100,10 +118,13 @@ function renderMood(mood: MarketMood): string {
     ),
   ].join('');
 
+  const narrativeHtml = narrative ? `<div class="mood-narrative">${esc(narrative)}</div>` : '';
+
   return `
     <section class="card">
       <h2>Market Mood</h2>
       <div class="grid grid-4">${cards}</div>
+      ${narrativeHtml}
     </section>`;
 }
 
@@ -182,15 +203,66 @@ function moverRow(m: MoverRow, _tone: 'positive' | 'negative'): string {
     </tr>`;
 }
 
-function renderAiPlaceholder(disabled?: boolean): string {
-  if (!disabled) return '';
+function renderAiPicks(theses?: ThesisCard[], disabled?: boolean): string {
+  if (disabled) {
+    return `
+      <section class="card ai-placeholder">
+        <h2>AI Picks</h2>
+        <p class="muted">AI thesis generation is disabled for this run.</p>
+      </section>`;
+  }
+
+  if (!theses || theses.length === 0) {
+    return `
+      <section class="card">
+        <h2>AI Picks</h2>
+        <p class="muted">No stocks met the signal threshold for AI analysis today.</p>
+      </section>`;
+  }
+
+  const cards = theses
+    .map((t) => {
+      const bullItems = t.bullCase.map((b) => `<li>${esc(b)}</li>`).join('');
+      const bearItems = t.bearCase.map((b) => `<li>${esc(b)}</li>`).join('');
+      const confidencePct = (t.confidence / 10) * 100;
+      const horizonLabel =
+        t.timeHorizon === 'short' ? '1-4W' : t.timeHorizon === 'medium' ? '1-3M' : '3-12M';
+
+      return `
+      <div class="thesis-card">
+        <div class="thesis-header">
+          <span class="thesis-symbol">${esc(t.symbol)}</span>
+          <span class="thesis-horizon tag">${esc(horizonLabel)}</span>
+          <span class="thesis-confidence" title="Confidence: ${t.confidence}/10">
+            <span class="conf-bar" style="width:${confidencePct}%"></span>
+            ${t.confidence}/10
+          </span>
+        </div>
+        <p class="thesis-body">${esc(t.thesis)}</p>
+        <div class="thesis-levels">
+          <span class="level positive">Entry: ${esc(t.entryZone)}</span>
+          <span class="level negative">SL: ${esc(t.stopLoss)}</span>
+          <span class="level accent">Target: ${esc(t.target)}</span>
+        </div>
+        <div class="grid grid-2">
+          <div>
+            <h4 class="bull-header">Bull Case</h4>
+            <ul class="thesis-list">${bullItems}</ul>
+          </div>
+          <div>
+            <h4 class="bear-header">Bear Case</h4>
+            <ul class="thesis-list">${bearItems}</ul>
+          </div>
+        </div>
+        <div class="thesis-trigger muted">Triggered by: ${esc(t.triggerReason)}</div>
+      </div>`;
+    })
+    .join('');
+
   return `
-    <section class="card ai-placeholder">
-      <h2>AI Picks</h2>
-      <p class="muted">
-        Phase 1 briefing is template-rendered only. AI thesis generation
-        lands in Phase 3 once the LLM provider abstraction is wired up.
-      </p>
+    <section class="card">
+      <h2>AI Picks &middot; Top ${theses.length}</h2>
+      ${cards}
     </section>`;
 }
 
@@ -207,6 +279,7 @@ function renderNews(news: NewsRow[]): string {
       (n) => `
         <li>
           <a href="${esc(n.url)}">${esc(n.headline)}</a>
+          ${sentimentBadge(n.sentiment)}
           <div class="meta">
             ${esc(n.source)}
             ${n.symbol ? `&middot; <span class="tag">${esc(n.symbol)}</span>` : ''}
@@ -232,6 +305,13 @@ function renderFooter(): string {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function sentimentBadge(sentiment: number | null | undefined): string {
+  if (sentiment == null) return '';
+  const label = sentiment >= 0.3 ? 'Bullish' : sentiment <= -0.3 ? 'Bearish' : 'Neutral';
+  const cls = sentiment >= 0.3 ? 'positive' : sentiment <= -0.3 ? 'negative' : 'neutral';
+  return ` <span class="sentiment-badge ${cls}" title="Sentiment: ${sentiment.toFixed(2)}">${label}</span>`;
+}
 
 function esc(s: string | number | undefined): string {
   if (s == null) return '';
@@ -325,6 +405,35 @@ function baseStyles(): string {
     .tag { background: #eef4f8; color: var(--accent); padding: 1px 6px; border-radius: 4px;
       font-weight: 600; font-size: 11px; }
     .ai-placeholder { background: #fbf7e9; border-color: #f0e0a8; }
+    .mood-narrative { margin-top: 12px; padding: 10px 14px; background: #f8fafc;
+      border-left: 3px solid var(--accent); border-radius: 4px; font-size: 14px;
+      line-height: 1.6; color: var(--text); }
+    .thesis-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px;
+      margin-bottom: 12px; background: #fafbfd; }
+    .thesis-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .thesis-symbol { font-size: 18px; font-weight: 700; color: var(--accent); }
+    .thesis-horizon { font-size: 11px; }
+    .thesis-confidence { font-size: 12px; color: var(--muted); position: relative;
+      display: inline-flex; align-items: center; gap: 4px; }
+    .conf-bar { display: inline-block; height: 6px; background: var(--accent); border-radius: 3px;
+      min-width: 4px; }
+    .thesis-body { margin: 0 0 10px; font-size: 14px; line-height: 1.5; }
+    .thesis-levels { display: flex; gap: 12px; margin-bottom: 10px; font-size: 13px;
+      font-weight: 600; }
+    .level.positive { color: var(--positive); }
+    .level.negative { color: var(--negative); }
+    .level.accent { color: var(--accent); }
+    .bull-header { color: var(--positive); font-size: 13px; margin: 0 0 4px; }
+    .bear-header { color: var(--negative); font-size: 13px; margin: 0 0 4px; }
+    .thesis-list { margin: 0; padding-left: 18px; font-size: 13px; }
+    .thesis-list li { margin-bottom: 2px; }
+    .thesis-trigger { margin-top: 8px; font-size: 11px; }
+    .sentiment-badge { display: inline-block; padding: 1px 6px; border-radius: 4px;
+      font-size: 10px; font-weight: 600; letter-spacing: 0.03em; vertical-align: middle;
+      margin-left: 4px; }
+    .sentiment-badge.positive { background: #dcfce7; color: var(--positive); }
+    .sentiment-badge.negative { background: #fee2e2; color: var(--negative); }
+    .sentiment-badge.neutral { background: #f3f4f6; color: var(--muted); }
     footer { margin-top: 18px; padding: 14px 0; text-align: center; color: var(--muted);
       font-size: 11px; }
     .disclaimer { max-width: 600px; margin: 0 auto; font-style: italic; }

@@ -1,7 +1,6 @@
 /**
- * Briefing Composer agent. Phase 1 produces a template-rendered HTML
- * briefing - no LLM involvement. Phase 3 will replace the placeholder
- * AI-picks card with actual thesis output.
+ * Briefing Composer agent. Phase 3: composes a full AI-enhanced briefing
+ * including LLM-generated narrative and thesis cards.
  */
 
 import { composeBriefing } from '../briefing/composer.js';
@@ -13,6 +12,8 @@ const log = child({ component: 'briefing-composer' });
 export interface BriefRunOptions {
   date?: string;
   delivery?: 'file' | 'email' | 'slack' | 'telegram';
+  /** Skip LLM-generated sections (narrative, etc.). */
+  skipAi?: boolean;
 }
 
 export interface BriefRunResult {
@@ -21,18 +22,22 @@ export interface BriefRunResult {
   delivery: string;
   alertCount: number;
   newsCount: number;
+  thesesCount: number;
+  hasNarrative: boolean;
 }
 
 export async function runBriefingComposer(opts: BriefRunOptions = {}): Promise<BriefRunResult> {
   const date = opts.date ?? isoDateIst();
   const delivery = opts.delivery ?? 'file';
 
-  const composed = composeBriefing({ date });
+  const composed = await composeBriefing({ date, skipAi: opts.skipAi });
   log.info(
     {
       date: composed.date,
       alerts: composed.data.watchlistAlerts.length,
       news: composed.data.news.length,
+      theses: composed.data.theses?.length ?? 0,
+      hasNarrative: !!composed.data.moodNarrative,
     },
     'briefing composed',
   );
@@ -43,5 +48,7 @@ export async function runBriefingComposer(opts: BriefRunOptions = {}): Promise<B
     delivery,
     alertCount: composed.data.watchlistAlerts.length,
     newsCount: composed.data.news.length,
+    thesesCount: composed.data.theses?.length ?? 0,
+    hasNarrative: !!composed.data.moodNarrative,
   };
 }
