@@ -5,11 +5,12 @@ A personal morning-briefing agent for Indian stock markets (NSE/BSE).
 modular pipeline that runs every weekday at 7:30 AM IST and emails you a
 short, actionable briefing before market open.
 
-> **Status:** Phase 1 complete. The pipeline runs end-to-end on free-tier
-> data: Yahoo historical OHLCV, NSE FII/DII, Screener.in fundamentals,
-> ET/Moneycontrol RSS news, technical indicators (SMA/EMA/RSI/ATR/volume/
-> 52W), and a template-rendered HTML briefing. AI thesis generation lands
-> in Phase 3. See [the roadmap](#roadmap).
+> **Status:** Phase 3 complete. The full AI-enhanced pipeline runs end-to-end:
+> Yahoo/NSE/Screener/RSS data ingestion, technical indicators (SMA/EMA/RSI/
+> ATR/volume/52W), LLM sentiment scoring on news headlines, AI thesis
+> generation for top-signal stocks, and an AI-composed HTML briefing with
+> market mood narrative and thesis cards. Supports Cursor Agent, Anthropic,
+> OpenAI, and Vertex AI (Gemini) as LLM backends. See [the roadmap](#roadmap).
 
 ---
 
@@ -60,9 +61,9 @@ flowchart LR
 
 Two abstractions keep the system portable:
 
-| Interface       | Purpose                                                   | Phase 0 default                                   |
+| Interface       | Purpose                                                   | Default                                           |
 | --------------- | --------------------------------------------------------- | ------------------------------------------------- |
-| `Ingestor`      | Pluggable data sources (`NSE`, `Yahoo`, `Screener`, `Kite`) | none registered yet — wired up in Phase 1         |
+| `Ingestor`      | Pluggable data sources (`NSE`, `Yahoo`, `Screener`, `Kite`) | Yahoo + NSE + Screener + RSS (free tier)          |
 | `LlmProvider`   | Pluggable LLM backend (`cursor-agent`, `anthropic`, `vertex`, `openai`) | `cursor-agent` (uses your existing subscription)  |
 
 ---
@@ -97,9 +98,12 @@ pnpm migrate
 # 4. Sanity-check your runtime/config (no secrets are printed)
 pnpm cli doctor
 
-# 5. Run the (currently stub) pipeline end-to-end
+# 5. Run the full pipeline (ingest → enrich → sentiment → thesis → brief)
 pnpm run-all
 # -> writes briefings/briefing-YYYY-MM-DD.html
+
+# Run without LLM calls (Phase 1 mode)
+pnpm cli run-all --skip-ai
 ```
 
 ### CLI reference
@@ -113,9 +117,13 @@ pnpm cli ingest -s RELIANCE,INFY
 pnpm cli enrich            # stage 2 - compute signals
 pnpm cli screen            # stage 3 - apply screens
 pnpm cli screen -n momentum_breakout
+pnpm cli sentiment         # score news headlines via LLM
+pnpm cli thesis            # generate AI theses for top-signal stocks
+pnpm cli thesis -n 3       # limit to 3 theses
 pnpm cli brief             # stage 4 - compose + deliver briefing
-pnpm cli brief --delivery file
-pnpm cli run-all           # all four stages in order
+pnpm cli brief --skip-ai   # compose without LLM narrative
+pnpm cli run-all           # full pipeline (ingest → thesis → brief)
+pnpm cli run-all --skip-ai # skip all AI stages
 pnpm cli doctor            # config diagnostics
 ```
 
@@ -170,9 +178,9 @@ market-pulse-ai/
   src/
     agents/         # one module per pipeline stage
     ingestors/      # data-source connectors (NSE, Yahoo, Screener, Kite, ...)
-    enrichers/      # signal computation (Phase 1)
-    analysers/      # screen engine + thesis generator (Phase 2/3)
-    briefing/       # HTML composer + delivery (Phase 4)
+    enrichers/      # signal computation: technical (Phase 1), sentiment (Phase 3)
+    analysers/      # screen engine (Phase 2)
+    briefing/       # HTML composer + delivery; AI narrative (Phase 3)
     db/             # schema.sql + migrations + prepared queries
     llm/            # LlmProvider interface + adapters
     config/         # env loader (zod-validated)
@@ -223,7 +231,7 @@ pnpm build              # tsc -> dist/  (also copies SQL assets)
 | 0     | Foundation           | ✅ shipped    | Repo scaffold, types, DB schema, CLI, LLM provider abstraction             |
 | 1     | Ingest + enrich      | ✅ shipped    | NSE/Yahoo/Screener/RSS ingestors; SMA/EMA/RSI/ATR/volume/52W signals; HTML briefing |
 | 2     | Screening + backtest | next          | JSON screen DSL; momentum / value / FII screens; 6-month backtest harness  |
-| 3     | AI layer             | planned       | LLM thesis generator + briefing composer; sentiment scoring; zod-validated |
+| 3     | AI layer             | ✅ shipped    | Anthropic/OpenAI/Cursor providers; sentiment enricher; thesis generator; LLM briefing narrative |
 | 4     | Delivery             | planned       | Cron schedule (7:30 / 15:30 / Sat 8:00); Gmail / Slack / Telegram delivery |
 | 5     | Real-time + Kite     | planned       | Kite Connect ingestor; intraday watchlist alerts; portfolio sync           |
 
