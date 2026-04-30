@@ -7,7 +7,8 @@
  *   mp migrate           Apply DB migrations
  *   mp ingest            Stage 1 - pull data from configured sources
  *   mp enrich            Stage 2 - compute signals from raw data
- *   mp screen            Stage 3 - apply screens to signals
+ *   mp screen            Stage 3 - run screens + alert scan against today's signals
+ *   mp backtest          Replay screens against historical EOD data
  *   mp sentiment         Score news headlines via LLM
  *   mp thesis            Generate AI theses for top-signal stocks
  *   mp brief             Stage 4 - compose + deliver briefing
@@ -18,6 +19,7 @@
  */
 
 import { Command } from 'commander';
+import { runBacktester } from './agents/backtester.js';
 import { runBriefingComposer } from './agents/briefing-composer.js';
 import { runDailyIngestor } from './agents/daily-ingestor.js';
 import { runSignalEnricher } from './agents/signal-enricher.js';
@@ -82,13 +84,47 @@ program
 
 program
   .command('screen')
-  .description('stage 3: evaluate screens against the signals table')
+  .description("stage 3: run screens + alert scan against today's signals")
   .option('-n, --screen <name>', 'restrict to a single screen by name')
   .action(async (opts: { screen?: string }) => {
     ensureDb();
     const date = program.opts<{ date?: string }>().date;
     const result = await runStockScreener({ date, screen: opts.screen });
     logger.info(result, 'screen complete');
+    closeDb();
+  });
+
+program
+  .command('backtest')
+  .description('replay screens against historical EOD data and persist results')
+  .requiredOption('-s, --start <YYYY-MM-DD>', 'inclusive start date of replay window')
+  .requiredOption('-e, --end <YYYY-MM-DD>', 'inclusive end date of replay window')
+  .option('-h, --hold-days <n>', 'trading sessions to hold each match', '10')
+  .option('-n, --screen <name>', 'restrict to a single screen by name')
+  .action(async (opts: { start: string; end: string; holdDays: string; screen?: string }) => {
+    ensureDb();
+    const summary = await runBacktester({
+      startDate: opts.start,
+      endDate: opts.end,
+      holdDays: Number(opts.holdDays) || 10,
+      screenName: opts.screen,
+    });
+    for (const r of summary.results) {
+      logger.info(
+        {
+          screen: r.screenName,
+          runId: r.runId,
+          trades: r.metrics.totalTrades,
+          hitRate: r.metrics.hitRate,
+          avgReturnPct: r.metrics.avgReturnPct,
+          medianReturnPct: r.metrics.medianReturnPct,
+          maxReturnPct: r.metrics.maxReturnPct,
+          minReturnPct: r.metrics.minReturnPct,
+          maxDrawdownPct: r.metrics.maxDrawdownPct,
+        },
+        'backtest result',
+      );
+    }
     closeDb();
   });
 
