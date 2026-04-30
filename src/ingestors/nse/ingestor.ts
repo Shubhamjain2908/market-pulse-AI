@@ -7,8 +7,14 @@
  * historical coverage (the 200-day window the enricher needs), prefer the
  * YahooIngestor. NseIngestor is the authoritative source for "today" and
  * for FII/DII activity, which Yahoo doesn't carry.
+ *
+ * Headers strategy: the underlying HttpClient is configured with browser-y
+ * defaults (UA, accept-language). The XHR-style headers (referer, origin,
+ * x-requested-with) are added per-request only when calling /api/* — never
+ * during cookie priming, since Akamai uses them as a bot signal.
  */
 
+import { z } from 'zod';
 import { RATE_LIMITS } from '../../constants.js';
 import { child } from '../../logger.js';
 import type { FiiDiiRow, RawQuote } from '../../types/domain.js';
@@ -20,6 +26,29 @@ import type { NseFiiDiiRow, NseQuoteResponse } from './types.js';
 
 const NSE_API = 'https://www.nseindia.com/api';
 const log = child({ component: 'nse-ingestor' });
+
+/** Headers to add ONLY on /api/* requests — never on the cookie prime. */
+const API_HEADERS = {
+  accept: '*/*',
+  referer: 'https://www.nseindia.com/',
+  origin: 'https://www.nseindia.com',
+  'x-requested-with': 'XMLHttpRequest',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-origin',
+} as const;
+
+/** Per-page referer overrides — hints to NSE which dashboard "owns" the call. */
+const FII_DII_REFERER = 'https://www.nseindia.com/reports/fii-dii';
+
+const NseFiiDiiRowSchema = z.object({
+  category: z.string(),
+  date: z.string(),
+  buyValue: z.union([z.string(), z.number()]),
+  sellValue: z.union([z.string(), z.number()]),
+  netValue: z.union([z.string(), z.number()]),
+});
+const NseFiiDiiResponseSchema = z.array(NseFiiDiiRowSchema);
 
 export class NseIngestor implements Ingestor {
   readonly name = 'nse-eod';
@@ -35,13 +64,8 @@ export class NseIngestor implements Ingestor {
         name: 'nse',
         rateLimit: { requestsPerSecond: RATE_LIMITS.nse, burst: 4 },
         withCookieJar: true,
-        defaults: {
-          headers: {
-            referer: 'https://www.nseindia.com/',
-            origin: 'https://www.nseindia.com',
-            'x-requested-with': 'XMLHttpRequest',
-          },
-        },
+        // Intentionally no XHR-style defaults here — those are added
+        // per-request by `apiHeaders()` to avoid breaking the cookie prime.
       });
   }
 
@@ -65,7 +89,6 @@ export class NseIngestor implements Ingestor {
       } catch (err) {
         log.warn({ symbol, err: (err as Error).message }, 'nse quote fetch failed');
         failed.push(symbol);
-        // Re-prime cookies on auth-style failures - NSE does this often.
         if (this.shouldReprime(err)) this.cookiesPrimed = false;
       }
     }
@@ -75,13 +98,23 @@ export class NseIngestor implements Ingestor {
   async fetchFiiDii(ctx: IngestorContext = {}): Promise<IngestResult<FiiDiiRow>> {
     await this.ensurePrimed(ctx.signal);
     try {
-      const rows = await this.client.request<NseFiiDiiRow[]>(`${NSE_API}/fiidiiTradeReact`, {
+      const raw = await this.client.request<unknown>(`${NSE_API}/fiidiiTradeReact`, {
         signal: ctx.signal,
+        headers: { ...API_HEADERS, referer: FII_DII_REFERER },
       });
-      const data = rows.map((r) => this.mapFiiDii(r)).filter((r): r is FiiDiiRow => r !== null);
-      return { data, failed: [], source: this.name };
+      const parsed = NseFiiDiiResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        log.warn(
+          { issues: parsed.error.issues.slice(0, 3), preview: JSON.stringify(raw).slice(0, 300) },
+          'nse fii/dii response failed validation',
+        );
+        return { data: [], failed: ['fii_dii'], source: this.name };
+      }
+      const merged = this.mergeFiiDii(parsed.data);
+      return { data: merged, failed: [], source: this.name };
     } catch (err) {
       log.warn({ err: (err as Error).message }, 'nse fii/dii fetch failed');
+      if (this.shouldReprime(err)) this.cookiesPrimed = false;
       return { data: [], failed: ['fii_dii'], source: this.name };
     }
   }
@@ -94,7 +127,7 @@ export class NseIngestor implements Ingestor {
 
   private async fetchOne(symbol: string, signal?: AbortSignal): Promise<NseQuoteResponse> {
     const url = `${NSE_API}/quote-equity?symbol=${encodeURIComponent(symbol.toUpperCase())}`;
-    return this.client.request<NseQuoteResponse>(url, { signal });
+    return this.client.request<NseQuoteResponse>(url, { signal, headers: API_HEADERS });
   }
 
   private mapQuote(symbol: string, date: string, data: NseQuoteResponse): RawQuote | null {
@@ -122,24 +155,45 @@ export class NseIngestor implements Ingestor {
     };
   }
 
-  private mapFiiDii(row: NseFiiDiiRow): FiiDiiRow | null {
-    const category = row.category?.trim();
-    if (!category) return null;
-    // The endpoint returns one row per category - we synthesise a combined
-    // row keyed by date+segment so the table primary key holds.
-    const isFii = category.startsWith('FII');
-    const date = parseNseDate(row.date) ?? isoDateIst();
-    return {
-      date,
-      segment: 'cash',
-      fiiBuy: isFii ? row.buyValue : 0,
-      fiiSell: isFii ? row.sellValue : 0,
-      fiiNet: isFii ? row.netValue : 0,
-      diiBuy: isFii ? 0 : row.buyValue,
-      diiSell: isFii ? 0 : row.sellValue,
-      diiNet: isFii ? 0 : row.netValue,
-      source: this.name,
-    };
+  /**
+   * The endpoint returns one row per category (FII/FPI and DII) for the
+   * same date. We collapse them into a single FiiDiiRow per (date, segment)
+   * — otherwise the second insert would overwrite the first via the
+   * `(date, segment)` primary key.
+   */
+  private mergeFiiDii(rows: NseFiiDiiRow[]): FiiDiiRow[] {
+    const byDate = new Map<string, FiiDiiRow>();
+    for (const row of rows) {
+      const date = parseNseDate(row.date) ?? isoDateIst();
+      const isFii = row.category.startsWith('FII');
+      const buy = Number(row.buyValue);
+      const sell = Number(row.sellValue);
+      const net = Number(row.netValue);
+      if (!Number.isFinite(buy) || !Number.isFinite(sell) || !Number.isFinite(net)) continue;
+
+      const existing = byDate.get(date) ?? {
+        date,
+        segment: 'cash' as const,
+        fiiBuy: 0,
+        fiiSell: 0,
+        fiiNet: 0,
+        diiBuy: 0,
+        diiSell: 0,
+        diiNet: 0,
+        source: this.name,
+      };
+      if (isFii) {
+        existing.fiiBuy = buy;
+        existing.fiiSell = sell;
+        existing.fiiNet = net;
+      } else {
+        existing.diiBuy = buy;
+        existing.diiSell = sell;
+        existing.diiNet = net;
+      }
+      byDate.set(date, existing);
+    }
+    return [...byDate.values()];
   }
 
   private shouldReprime(err: unknown): boolean {
