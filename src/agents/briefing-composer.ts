@@ -23,6 +23,7 @@ export interface BriefRunResult {
   alertCount: number;
   newsCount: number;
   thesesCount: number;
+  screenMatchesCount: number;
   hasNarrative: boolean;
 }
 
@@ -31,10 +32,12 @@ export async function runBriefingComposer(opts: BriefRunOptions = {}): Promise<B
   const delivery = opts.delivery ?? 'file';
 
   const composed = await composeBriefing({ date, skipAi: opts.skipAi });
+  const screenMatches = composed.data.screenMatches?.reduce((s, m) => s + m.symbols.length, 0) ?? 0;
   log.info(
     {
       date: composed.date,
       alerts: composed.data.watchlistAlerts.length,
+      screenMatches,
       news: composed.data.news.length,
       theses: composed.data.theses?.length ?? 0,
       hasNarrative: !!composed.data.moodNarrative,
@@ -49,6 +52,7 @@ export async function runBriefingComposer(opts: BriefRunOptions = {}): Promise<B
     alertCount: composed.data.watchlistAlerts.length,
     newsCount: composed.data.news.length,
     thesesCount: composed.data.theses?.length ?? 0,
+    screenMatchesCount: screenMatches,
     hasNarrative: !!composed.data.moodNarrative,
   };
 }

@@ -9,17 +9,20 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
-import { loadWatchlist } from '../config/loaders.js';
+import { getAlertsForDate } from '../analysers/alerts.js';
+import { loadScreens, loadWatchlist } from '../config/loaders.js';
 import { getDb } from '../db/index.js';
 import { getThesesForDate } from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
+import type { ScreenDefinition } from '../types/domain.js';
 import {
   type BriefingData,
   type MoverRow,
   type NewsRow,
+  type ScreenMatch,
   type ThesisCard,
   type WatchlistAlert,
   renderBriefing,
@@ -50,11 +53,12 @@ export async function composeBriefing(
   const useAi = !opts.skipAi;
 
   const mood = gatherMood(date, db);
-  const watchlistAlerts = gatherWatchlistAlerts(date, watchlist, db);
+  const watchlistAlerts = gatherWatchlistAlerts(date, db);
   const topGainers = gatherMovers(date, watchlist, 'gainers', db);
   const topLosers = gatherMovers(date, watchlist, 'losers', db);
   const news = gatherNews(48, db);
   const theses = gatherTheses(date, db);
+  const screenMatches = gatherScreenMatches(date, db);
 
   let moodNarrative: string | undefined;
   if (
@@ -83,6 +87,7 @@ export async function composeBriefing(
     mood,
     moodNarrative,
     watchlistAlerts,
+    screenMatches: screenMatches.length > 0 ? screenMatches : undefined,
     topGainers,
     topLosers,
     news,
@@ -94,6 +99,7 @@ export async function composeBriefing(
     {
       date,
       watchlistAlerts: data.watchlistAlerts.length,
+      screensFired: screenMatches.length,
       gainers: data.topGainers.length,
       losers: data.topLosers.length,
       news: data.news.length,
@@ -186,119 +192,76 @@ function gatherMood(date: string, db: DatabaseType): BriefingData['mood'] {
   };
 }
 
-interface SignalRow {
-  symbol: string;
-  rsi?: number;
-  volRatio?: number;
-  pctFromHigh?: number;
-  pctFromLow?: number;
-  close?: number;
-  sma50?: number;
+/**
+ * Read alerts from the `alerts` table. The Phase 2 alerts agent is
+ * responsible for populating this — the briefing is now a pure read.
+ */
+function gatherWatchlistAlerts(date: string, db: DatabaseType): WatchlistAlert[] {
+  const rows = getAlertsForDate(date, db);
+  return rows.map((a) => ({
+    symbol: a.symbol,
+    signal: alertSignalLabel(a.kind),
+    value: a.value,
+    description: a.message,
+  }));
 }
 
-function loadSignalsForDate(
-  date: string,
-  symbols: string[],
-  db: DatabaseType,
-): Map<string, SignalRow> {
-  if (symbols.length === 0) return new Map();
-  const placeholders = symbols.map(() => '?').join(',');
+function alertSignalLabel(kind: string): string {
+  switch (kind) {
+    case 'rsi_overbought':
+    case 'rsi_oversold':
+      return 'RSI 14';
+    case 'volume_spike':
+      return 'Volume';
+    case 'near_52w_high':
+      return '52W High';
+    case 'near_52w_low':
+      return '52W Low';
+    default:
+      return kind;
+  }
+}
+
+/**
+ * Read today's screen matches from the `screens` table, grouped by
+ * screen name, and decorate with the static screen metadata (label,
+ * description, time horizon) from config.
+ */
+function gatherScreenMatches(date: string, db: DatabaseType): ScreenMatch[] {
   const rows = db
     .prepare(`
-      SELECT symbol, name, value
-      FROM signals
-      WHERE date <= ? AND symbol IN (${placeholders})
-        AND date = (
-          SELECT MAX(date) FROM signals s2
-          WHERE s2.symbol = signals.symbol AND s2.date <= ?
-        )
+      SELECT screen_name AS screenName, symbol
+      FROM screens
+      WHERE date = ?
+      ORDER BY screen_name, symbol
     `)
-    .all(date, ...symbols, date) as Array<{ symbol: string; name: string; value: number }>;
+    .all(date) as Array<{ screenName: string; symbol: string }>;
+  if (rows.length === 0) return [];
 
-  const map = new Map<string, SignalRow>();
+  const meta = new Map<string, ScreenDefinition>();
+  try {
+    for (const s of loadScreens()) meta.set(s.name, s);
+  } catch {
+    // No screens config — proceed with names only.
+  }
+
+  const grouped = new Map<string, ScreenMatch>();
   for (const r of rows) {
-    const entry = map.get(r.symbol) ?? { symbol: r.symbol };
-    switch (r.name) {
-      case 'rsi_14':
-        entry.rsi = r.value;
-        break;
-      case 'volume_ratio_20d':
-        entry.volRatio = r.value;
-        break;
-      case 'pct_from_52w_high':
-        entry.pctFromHigh = r.value;
-        break;
-      case 'pct_from_52w_low':
-        entry.pctFromLow = r.value;
-        break;
-      case 'close':
-        entry.close = r.value;
-        break;
-      case 'sma_50':
-        entry.sma50 = r.value;
-        break;
-      default:
-        break;
+    let m = grouped.get(r.screenName);
+    if (!m) {
+      const def = meta.get(r.screenName);
+      m = {
+        screenName: r.screenName,
+        screenLabel: def?.label ?? r.screenName,
+        description: def?.description,
+        timeHorizon: def?.timeHorizon,
+        symbols: [],
+      };
+      grouped.set(r.screenName, m);
     }
-    map.set(r.symbol, entry);
+    m.symbols.push(r.symbol);
   }
-  return map;
-}
-
-function gatherWatchlistAlerts(
-  date: string,
-  watchlist: string[],
-  db: DatabaseType,
-): WatchlistAlert[] {
-  const signals = loadSignalsForDate(date, watchlist, db);
-  const alerts: WatchlistAlert[] = [];
-
-  for (const symbol of watchlist) {
-    const s = signals.get(symbol);
-    if (!s) continue;
-
-    if (s.rsi != null && s.rsi >= 70) {
-      alerts.push({
-        symbol,
-        signal: 'RSI 14',
-        value: s.rsi,
-        description: 'Overbought - watch for pullback',
-      });
-    }
-    if (s.rsi != null && s.rsi <= 30) {
-      alerts.push({
-        symbol,
-        signal: 'RSI 14',
-        value: s.rsi,
-        description: 'Oversold - potential bounce',
-      });
-    }
-    if (s.volRatio != null && s.volRatio >= 2) {
-      alerts.push({
-        symbol,
-        signal: 'Volume',
-        value: s.volRatio,
-        description: 'Unusual volume - investigate news',
-      });
-    }
-    if (s.pctFromHigh != null && s.pctFromHigh >= -2) {
-      alerts.push({
-        symbol,
-        signal: '52W High',
-        value: s.pctFromHigh,
-        description: 'Within 2% of 52-week high',
-      });
-    }
-    if (s.pctFromLow != null && s.pctFromLow <= 5) {
-      alerts.push({
-        symbol,
-        signal: '52W Low',
-        value: s.pctFromLow,
-        description: 'Within 5% of 52-week low',
-      });
-    }
-  }
-  return alerts;
+  return [...grouped.values()];
 }
 
 function gatherMovers(

@@ -55,12 +55,22 @@ export interface ThesisCard {
   triggerReason: string;
 }
 
+export interface ScreenMatch {
+  screenName: string;
+  screenLabel: string;
+  symbols: string[];
+  description?: string;
+  timeHorizon?: string;
+}
+
 export interface BriefingData {
   date: string;
   mood: MarketMood;
   /** LLM-generated narrative summary of market conditions. */
   moodNarrative?: string;
   watchlistAlerts: WatchlistAlert[];
+  /** Screens that fired today (Phase 2). */
+  screenMatches?: ScreenMatch[];
   topGainers: MoverRow[];
   topLosers: MoverRow[];
   news: NewsRow[];
@@ -84,6 +94,7 @@ export function renderBriefing(data: BriefingData): string {
     ${renderHeader(data.date)}
     ${renderMood(data.mood, data.moodNarrative)}
     ${renderWatchlistAlerts(data.watchlistAlerts)}
+    ${renderScreenMatches(data.screenMatches)}
     ${renderMovers(data.topGainers, data.topLosers)}
     ${renderAiPicks(data.theses, data.aiPicksDisabled)}
     ${renderNews(data.news)}
@@ -165,6 +176,35 @@ function renderWatchlistAlerts(alerts: WatchlistAlert[]): string {
         <thead><tr><th>Symbol</th><th>Signal</th><th>Value</th><th>Note</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
+    </section>`;
+}
+
+function renderScreenMatches(matches?: ScreenMatch[]): string {
+  if (!matches || matches.length === 0) return '';
+  const totalMatches = matches.reduce((s, m) => s + m.symbols.length, 0);
+  if (totalMatches === 0) return '';
+
+  const blocks = matches
+    .filter((m) => m.symbols.length > 0)
+    .map((m) => {
+      const tag = m.timeHorizon
+        ? `<span class="tag">${esc(m.timeHorizon.toUpperCase())}</span>`
+        : '';
+      const desc = m.description ? `<p class="muted">${esc(m.description)}</p>` : '';
+      const chips = m.symbols.map((s) => `<span class="symbol-chip">${esc(s)}</span>`).join(' ');
+      return `
+        <div class="screen-block">
+          <h3>${esc(m.screenLabel)} ${tag}</h3>
+          ${desc}
+          <div class="symbol-chips">${chips}</div>
+        </div>`;
+    })
+    .join('');
+
+  return `
+    <section class="card">
+      <h2>Screens Fired Today (${totalMatches})</h2>
+      ${blocks}
     </section>`;
 }
 
@@ -434,6 +474,15 @@ function baseStyles(): string {
     .sentiment-badge.positive { background: #dcfce7; color: var(--positive); }
     .sentiment-badge.negative { background: #fee2e2; color: var(--negative); }
     .sentiment-badge.neutral { background: #f3f4f6; color: var(--muted); }
+    .screen-block { padding: 12px; border: 1px solid var(--border); border-radius: 8px;
+      background: #fafbfd; margin-bottom: 10px; }
+    .screen-block:last-child { margin-bottom: 0; }
+    .screen-block h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px;
+      font-size: 14px; color: var(--accent); }
+    .screen-block .muted { margin: 0 0 8px; font-size: 12px; }
+    .symbol-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .symbol-chip { display: inline-block; padding: 2px 8px; border-radius: 4px;
+      background: #eef4f8; color: var(--accent); font-weight: 600; font-size: 12px; }
     footer { margin-top: 18px; padding: 14px 0; text-align: center; color: var(--muted);
       font-size: 11px; }
     .disclaimer { max-width: 600px; margin: 0 auto; font-style: italic; }
