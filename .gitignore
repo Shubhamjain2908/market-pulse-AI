@@ -1,0 +1,45 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# local data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# coverage / caches
+coverage/
+.nyc_output/
+.cache/
+.turbo/
+
+# generated docs (the spec docx is generated from new.cjs)
+market-pulse-ai-spec.docx
+
+# briefing artifacts
+briefings/
