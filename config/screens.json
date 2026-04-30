@@ -1,39 +1,39 @@
 {
   "$schema": "./schemas/screens.schema.json",
-  "description": "Screen definitions evaluated against the `signals` table. Each criterion has a signal name, an operator, and a value. A stock matches a screen when ALL criteria are true.",
+  "description": "Screen definitions evaluated against the unified signal lookup (technical signals + fundamentals + flow). A stock matches a screen when ALL criteria are true. Tune the thresholds in this file; no code changes required.",
   "screens": [
     {
       "name": "momentum_breakout",
       "label": "Momentum Breakout",
-      "description": "52-week high break with strong volume and healthy RSI.",
+      "description": "Price near 52-week high on above-average volume with healthy (not yet overbought) RSI and a confirmed trend.",
       "timeHorizon": "short",
       "criteria": [
-        { "signal": "pct_from_52w_high", "op": "gte", "value": -1 },
-        { "signal": "volume_ratio_20d", "op": "gte", "value": 2 },
-        { "signal": "rsi_14", "op": "between", "value": [55, 70] },
+        { "signal": "pct_from_52w_high", "op": "gte", "value": -3 },
+        { "signal": "volume_ratio_20d", "op": "gte", "value": 1.5 },
+        { "signal": "rsi_14", "op": "between", "value": [55, 75] },
         { "signal": "close", "op": "gt_signal", "value": "sma_50" }
       ]
     },
     {
       "name": "quality_at_value",
       "label": "Quality at Value",
-      "description": "Profitable, growing companies trading near sector-median valuations.",
+      "description": "Profitable, growing companies trading at reasonable valuations with conservative leverage.",
       "timeHorizon": "long",
       "criteria": [
         { "signal": "roe", "op": "gte", "value": 15 },
-        { "signal": "revenue_growth_yoy", "op": "gte", "value": 20 },
+        { "signal": "profit_growth_yoy", "op": "gte", "value": 10 },
         { "signal": "debt_to_equity", "op": "lte", "value": 1 },
-        { "signal": "peg", "op": "lte", "value": 1.5 }
+        { "signal": "pe", "op": "lte", "value": 35 }
       ]
     },
     {
       "name": "fii_accumulation",
       "label": "FII Accumulation",
-      "description": "Stocks with consistent FII net buying over the last 3+ sessions.",
+      "description": "Stocks holding above their long-term trend while FIIs have been net buyers in the cash segment for several consecutive sessions.",
       "timeHorizon": "medium",
       "criteria": [
         { "signal": "fii_net_streak_days", "op": "gte", "value": 3 },
-        { "signal": "promoter_holding_change_qoq", "op": "gte", "value": 0 },
+        { "signal": "fii_net_5d_sum", "op": "gt", "value": 0 },
         { "signal": "close", "op": "gt_signal", "value": "sma_200" }
       ]
     }
