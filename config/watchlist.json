@@ -1,0 +1,16 @@
+{
+  "$schema": "./schemas/watchlist.schema.json",
+  "description": "Symbols you actively follow. The pipeline always processes the broader universe, but watchlist symbols get extra attention in the daily briefing (alerts, dedicated section).",
+  "symbols": [
+    "RELIANCE",
+    "HDFCBANK",
+    "ICICIBANK",
+    "INFY",
+    "TCS",
+    "LT",
+    "ITC",
+    "BHARTIARTL",
+    "AXISBANK",
+    "KOTAKBANK"
+  ]
+}

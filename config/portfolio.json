@@ -1,0 +1,16 @@
+{
+  "$schema": "./schemas/portfolio.schema.json",
+  "description": "Manual portfolio entry for Phase 1-4. Replaced by Kite Connect sync in Phase 5.",
+  "currency": "INR",
+  "totalCapital": 0,
+  "holdings": [
+    {
+      "symbol": "EXAMPLE",
+      "qty": 0,
+      "avgPrice": 0,
+      "stopLoss": 0,
+      "target": 0,
+      "notes": "Replace this example. Set qty=0 to ignore an entry."
+    }
+  ]
+}
