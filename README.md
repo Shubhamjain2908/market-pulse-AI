@@ -5,12 +5,16 @@ A personal morning-briefing agent for Indian stock markets (NSE/BSE).
 modular pipeline that runs every weekday at 7:30 AM IST and emails you a
 short, actionable briefing before market open.
 
-> **Status:** Phase 3 complete. The full AI-enhanced pipeline runs end-to-end:
-> Yahoo/NSE/Screener/RSS data ingestion, technical indicators (SMA/EMA/RSI/
-> ATR/volume/52W), LLM sentiment scoring on news headlines, AI thesis
-> generation for top-signal stocks, and an AI-composed HTML briefing with
-> market mood narrative and thesis cards. Supports Cursor Agent, Anthropic,
-> OpenAI, and Vertex AI (Gemini) as LLM backends. See [the roadmap](#roadmap).
+> **Status:** Phases 0–3 shipped. Phase 2 added a JSON-driven screen engine
+> (Momentum Breakout, Quality at Value, FII Accumulation), first-class
+> watchlist alerts, and a backtest harness that replays historical EOD data
+> to give every screen a hit-rate / drawdown profile. The full AI-enhanced
+> pipeline runs end-to-end: Yahoo/NSE/Screener/RSS data ingestion, technical
+> indicators (SMA/EMA/RSI/ATR/volume/52W), LLM sentiment scoring on news
+> headlines, AI thesis generation for top-signal stocks, and an AI-composed
+> HTML briefing with market mood narrative, thesis cards, and a "screens
+> fired today" section. Supports Cursor Agent, Anthropic, OpenAI, and
+> Vertex AI (Gemini) as LLM backends. See [the roadmap](#roadmap).
 
 ---
 
@@ -115,8 +119,10 @@ pnpm cli migrate           # apply DB migrations
 pnpm cli ingest            # stage 1 - pull data
 pnpm cli ingest -s RELIANCE,INFY
 pnpm cli enrich            # stage 2 - compute signals
-pnpm cli screen            # stage 3 - apply screens
+pnpm cli screen            # stage 3 - run screens + alert scan
 pnpm cli screen -n momentum_breakout
+pnpm cli backtest -s 2025-10-01 -e 2026-04-30 -h 10  # historical replay
+pnpm cli backtest -s 2025-10-01 -e 2026-04-30 -n momentum_breakout
 pnpm cli sentiment         # score news headlines via LLM
 pnpm cli thesis            # generate AI theses for top-signal stocks
 pnpm cli thesis -n 3       # limit to 3 theses
@@ -160,6 +166,35 @@ Set `LLM_PROVIDER` in `.env`:
 Adding a new provider: implement [`LlmProvider`](src/llm/types.ts) and
 register it in [`src/llm/factory.ts`](src/llm/factory.ts). Nothing else
 changes.
+
+### Screen DSL
+
+Screens are evaluated against a unified signal lookup that pulls from three
+sources transparently:
+
+| Source                    | Signals                                                                      |
+| ------------------------- | ---------------------------------------------------------------------------- |
+| `signals` table (technical) | `close`, `sma_20`, `sma_50`, `sma_200`, `ema_9`, `ema_21`, `rsi_14`, `atr_14`, `volume_ratio_20d`, `pct_from_52w_high`, `pct_from_52w_low` |
+| `fundamentals` table      | `pe`, `pb`, `peg`, `roe`, `roce`, `debt_to_equity`, `revenue_growth_yoy`, `profit_growth_yoy`, `promoter_holding_pct`, `promoter_holding_change_qoq`, `dividend_yield`, `market_cap` |
+| `fii_dii` table (computed) | `fii_net`, `dii_net`, `fii_net_5d_sum`, `dii_net_5d_sum`, `fii_net_streak_days`, `dii_net_streak_days` |
+
+Operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `between` (tuple value),
+`gt_signal` / `lt_signal` (compares two signals — e.g. `close > sma_50`).
+
+Edit [`config/screens.json`](config/screens.json) and re-run
+`pnpm cli screen`. No code changes required.
+
+### Backtest
+
+`pnpm cli backtest -s 2025-10-01 -e 2026-04-30 -h 10` replays every
+configured screen against historical EOD data:
+
+- Each session in the window where a screen matches becomes a trade.
+- Entry = next-day close. Exit = close after `holdDays` sessions.
+- Per run we record total trades, winning/losing, hit rate, mean/median
+  return, max return, min return, and worst single-trade drawdown.
+- Results land in `backtest_runs` and `backtest_trades` tables for ad-hoc
+  SQL analysis (`sqlite3 data/market-pulse.db`).
 
 ### Switching the market data provider
 
@@ -230,7 +265,7 @@ pnpm build              # tsc -> dist/  (also copies SQL assets)
 | ----- | -------------------- | ------------- | -------------------------------------------------------------------------- |
 | 0     | Foundation           | ✅ shipped    | Repo scaffold, types, DB schema, CLI, LLM provider abstraction             |
 | 1     | Ingest + enrich      | ✅ shipped    | NSE/Yahoo/Screener/RSS ingestors; SMA/EMA/RSI/ATR/volume/52W signals; HTML briefing |
-| 2     | Screening + backtest | next          | JSON screen DSL; momentum / value / FII screens; 6-month backtest harness  |
+| 2     | Screening + backtest | ✅ shipped    | JSON screen DSL; momentum / value / FII screens; first-class watchlist alerts; backtest harness with hit-rate / drawdown |
 | 3     | AI layer             | ✅ shipped    | Anthropic/OpenAI/Cursor providers; sentiment enricher; thesis generator; LLM briefing narrative |
 | 4     | Delivery             | planned       | Cron schedule (7:30 / 15:30 / Sat 8:00); Gmail / Slack / Telegram delivery |
 | 5     | Real-time + Kite     | planned       | Kite Connect ingestor; intraday watchlist alerts; portfolio sync           |
