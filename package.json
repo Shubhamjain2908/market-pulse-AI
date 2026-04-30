@@ -31,6 +31,9 @@
     "screen": "tsx src/cli.ts screen",
     "brief": "tsx src/cli.ts brief",
     "run-all": "tsx src/cli.ts run-all",
+    "daily": "tsx src/cli.ts daily",
+    "kite-login": "tsx src/cli.ts kite-login",
+    "scan": "tsx src/cli.ts scan",
     "prepare": "echo 'skip husky setup until added'"
   },
   "keywords": [

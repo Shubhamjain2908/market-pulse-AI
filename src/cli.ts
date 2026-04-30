@@ -13,6 +13,11 @@
  *   mp thesis            Generate AI theses for top-signal stocks
  *   mp brief             Stage 4 - compose + deliver briefing
  *   mp run-all           Run full pipeline (ingest -> brief)
+ *   mp daily             One-shot: full pipeline + portfolio analysis (recommended)
+ *   mp kite-login        Refresh Zerodha Kite Connect access_token (run daily)
+ *   mp portfolio-sync    Pull holdings from Kite (or manual) into the DB
+ *   mp portfolio-analyse Run LLM-driven HOLD/ADD/TRIM/EXIT analysis per holding
+ *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
  *   mp doctor            Print runtime/config diagnostics
  *
  * Run `mp --help` or `mp <cmd> --help` for full options.
@@ -22,6 +27,9 @@ import { Command } from 'commander';
 import { runBacktester } from './agents/backtester.js';
 import { runBriefingComposer } from './agents/briefing-composer.js';
 import { runDailyIngestor } from './agents/daily-ingestor.js';
+import { runLiveScan } from './agents/live-scanner.js';
+import { analysePortfolio } from './agents/portfolio-analyser.js';
+import { runPortfolioSync } from './agents/portfolio-sync.js';
 import { runSignalEnricher } from './agents/signal-enricher.js';
 import { runStockScreener } from './agents/stock-screener.js';
 import { generateTheses } from './agents/thesis-generator.js';
@@ -30,6 +38,7 @@ import { config } from './config/env.js';
 import { APP_NAME, APP_VERSION } from './constants.js';
 import { closeDb, getDb, migrate } from './db/index.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
+import { runKiteLogin } from './ingestors/kite/auth.js';
 import { logger } from './logger.js';
 
 const program = new Command();
@@ -178,7 +187,7 @@ program
 
 program
   .command('run-all')
-  .description('run full pipeline: ingest -> enrich -> sentiment -> thesis -> brief')
+  .description('run full pipeline: ingest -> enrich -> screen -> sentiment -> thesis -> brief')
   .option('--skip-ai', 'skip all LLM stages (sentiment, thesis, narrative)')
   .action(async (opts: { skipAi?: boolean }) => {
     ensureDb();
@@ -202,6 +211,130 @@ program
     const result = await runBriefingComposer({ date, skipAi: opts.skipAi });
     deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
     logger.info({ date: result.date, delivery: result.delivery }, 'pipeline complete');
+    closeDb();
+  });
+
+program
+  .command('daily')
+  .description('one-shot: full pipeline + portfolio sync + per-holding LLM analysis')
+  .option('--skip-ai', 'skip all LLM stages (sentiment, thesis, portfolio analysis)')
+  .option('--skip-portfolio', 'skip portfolio sync + analysis (rest of pipeline runs)')
+  .action(async (opts: { skipAi?: boolean; skipPortfolio?: boolean }) => {
+    ensureDb();
+    const date = program.opts<{ date?: string }>().date;
+
+    await runDailyIngestor({ date });
+    await runSignalEnricher({ date });
+    await runStockScreener({ date });
+
+    if (!opts.skipPortfolio) {
+      try {
+        await runPortfolioSync({ date });
+      } catch (err) {
+        logger.warn(
+          { err: (err as Error).message },
+          'portfolio sync failed; continuing without portfolio data',
+        );
+      }
+    }
+
+    if (!opts.skipAi) {
+      const sentimentResult = await enrichSentiment();
+      logger.info(sentimentResult, 'sentiment scoring done');
+
+      const thesisResult = await generateTheses({ date });
+      logger.info(
+        { generated: thesisResult.generated, failed: thesisResult.failed },
+        'thesis generation done',
+      );
+
+      if (!opts.skipPortfolio) {
+        const portfolioResult = await analysePortfolio({ date });
+        logger.info(
+          {
+            analysed: portfolioResult.analysed,
+            failed: portfolioResult.failed,
+            byAction: portfolioResult.byAction,
+          },
+          'portfolio analysis done',
+        );
+      }
+    }
+
+    const result = await runBriefingComposer({ date, skipAi: opts.skipAi });
+    deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
+    logger.info(
+      {
+        date: result.date,
+        delivery: result.delivery,
+        portfolioCount: result.portfolioCount,
+        thesesCount: result.thesesCount,
+        screenMatchesCount: result.screenMatchesCount,
+        alertCount: result.alertCount,
+      },
+      'daily run complete',
+    );
+    closeDb();
+  });
+
+program
+  .command('kite-login')
+  .description('refresh Zerodha Kite Connect access_token (interactive)')
+  .action(async () => {
+    const result = await runKiteLogin();
+    logger.info(
+      { user: result.userId, name: result.userName, envPath: result.envPath },
+      'kite access_token saved to .env',
+    );
+  });
+
+program
+  .command('portfolio-sync')
+  .description('sync holdings from Kite (or config/portfolio.json) into the DB')
+  .action(async () => {
+    ensureDb();
+    const date = program.opts<{ date?: string }>().date;
+    const result = await runPortfolioSync({ date });
+    logger.info(result, 'portfolio sync done');
+    closeDb();
+  });
+
+program
+  .command('portfolio-analyse')
+  .description('run LLM-driven HOLD/ADD/TRIM/EXIT analysis on each holding')
+  .option('-s, --symbols <list>', 'comma-separated subset of holdings to analyse')
+  .option('--min-position <inr>', 'skip holdings below this rupee value', '0')
+  .action(async (opts: { symbols?: string; minPosition?: string }) => {
+    ensureDb();
+    const date = program.opts<{ date?: string }>().date;
+    const result = await analysePortfolio({
+      date,
+      symbols: opts.symbols
+        ? opts.symbols.split(',').map((s) => s.trim().toUpperCase())
+        : undefined,
+      minPositionInr: Number(opts.minPosition) || 0,
+    });
+    logger.info(
+      {
+        analysed: result.analysed,
+        failed: result.failed,
+        byAction: result.byAction,
+      },
+      'portfolio analysis done',
+    );
+    closeDb();
+  });
+
+program
+  .command('scan')
+  .description('one-shot intraday LTP refresh via Kite (cron every 5-15 min)')
+  .option('-t, --threshold <pct>', 'pct move that triggers a live alert', '3')
+  .action(async (opts: { threshold?: string }) => {
+    ensureDb();
+    const result = await runLiveScan({
+      alertThresholdPct: Number(opts.threshold) || 3,
+    });
+    logger.info(result, 'live scan done');
     closeDb();
   });
 
