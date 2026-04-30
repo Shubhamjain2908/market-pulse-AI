@@ -48,11 +48,17 @@
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^11.5.0",
+    "cheerio": "^1.2.0",
     "commander": "^12.1.0",
     "croner": "^9.0.0",
     "dotenv": "^16.4.5",
+    "got": "^14.6.6",
+    "p-limit": "^6.2.0",
     "pino": "^9.5.0",
     "pino-pretty": "^11.3.0",
+    "rss-parser": "^3.13.0",
+    "tough-cookie": "^5.1.2",
+    "yahoo-finance2": "^3.14.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
