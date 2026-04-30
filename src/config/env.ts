@@ -20,6 +20,9 @@ const EnvSchema = z.object({
 
   CURSOR_AGENT_BIN: z.string().optional(),
   CURSOR_AGENT_MODEL: z.string().optional(),
+  CURSOR_API_KEY: z.string().optional(),
+  /** Per-call timeout for cursor-agent CLI. Big prompts can take 30-60s. */
+  CURSOR_AGENT_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
 
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-5'),
@@ -36,6 +39,9 @@ const EnvSchema = z.object({
   KITE_API_KEY: z.string().optional(),
   KITE_API_SECRET: z.string().optional(),
   KITE_ACCESS_TOKEN: z.string().optional(),
+  KITE_API_BASE: z.string().url().default('https://api.kite.trade'),
+  /** Where to source portfolio holdings: manual JSON or live from Kite. */
+  PORTFOLIO_SOURCE: z.enum(['manual', 'kite']).default('manual'),
 
   NEWS_API_KEY: z.string().optional(),
 

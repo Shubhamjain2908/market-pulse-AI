@@ -1,15 +1,27 @@
 /**
- * cursor-agent provider. Spawns the local `cursor-agent` CLI in headless
- * print mode (`-p --output-format json`) and parses the structured response.
+ * cursor-agent provider (CLI v3+ compatible).
  *
- * Docs: https://cursor.com/docs/cli/reference/output-format
+ * The newer `cursor-agent` CLI (the same one shipped with Cursor 2026)
+ * is a coding agent that:
+ *   - Reads `CURSOR_API_KEY` from the environment for auth.
+ *   - Takes a prompt as the trailing argument (no `-p` / `--output-format`).
+ *   - Streams tool/status events to stderr (suppressed unless --verbose).
+ *   - Writes the final assistant message as plain text to stdout.
  *
- * Phase 0 ships the adapter shell with full text generation. JSON generation
- * uses `parseAndValidate` to coerce + validate the LLM's text output.
+ * Because cursor-agent is a *coding* agent capable of making file system
+ * changes, we sandbox each invocation by setting `--cwd` to a fresh
+ * temporary directory. That neutralises any accidental "and update the
+ * README while you're at it" behaviour. Our prompts only ever ask for
+ * a structured text reply, so the sandbox is a safety belt, not a
+ * functional dependency.
  */
 
 import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { config } from '../../config/env.js';
+import { child } from '../../logger.js';
 import { parseAndValidate } from '../json.js';
 import type {
   GenerateJsonOptions,
@@ -19,46 +31,43 @@ import type {
   LlmTextResult,
 } from '../types.js';
 
-interface CursorAgentResultEnvelope {
-  type: 'result';
-  subtype: 'success' | 'error';
-  is_error: boolean;
-  duration_ms: number;
-  result: string;
-  session_id?: string;
-  request_id?: string;
-}
+const log = child({ component: 'cursor-agent-provider' });
 
 export interface CursorAgentProviderOptions {
   bin?: string;
   model?: string;
+  apiKey?: string;
+  /** Per-call timeout in ms. Defaults to CURSOR_AGENT_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
 
 export class CursorAgentProvider implements LlmProvider {
   readonly name = 'cursor-agent';
   readonly model: string;
   private readonly bin: string;
+  private readonly apiKey: string | undefined;
+  private readonly timeoutMs: number;
 
   constructor(opts: CursorAgentProviderOptions = {}) {
     this.bin = opts.bin ?? config.CURSOR_AGENT_BIN ?? 'cursor-agent';
     this.model = opts.model ?? config.CURSOR_AGENT_MODEL ?? 'default';
+    this.apiKey = opts.apiKey ?? config.CURSOR_API_KEY;
+    this.timeoutMs = opts.timeoutMs ?? config.CURSOR_AGENT_TIMEOUT_MS;
+    if (!this.apiKey) {
+      log.warn(
+        'CURSOR_API_KEY is not set; cursor-agent will likely fail. Get a key at https://cursor.com/docs/sdk/typescript#authentication',
+      );
+    }
   }
 
   async generateText(opts: GenerateTextOptions): Promise<LlmTextResult> {
     const prompt = this.buildPrompt(opts.system, opts.user);
-    const args = ['-p', '--output-format', 'json'];
-    if (this.model && this.model !== 'default') {
-      args.push('--model', this.model);
-    }
-    args.push(prompt);
-
     const started = Date.now();
-    const stdout = await this.runProcess(args, opts.signal);
-    const envelope = this.parseEnvelope(stdout);
+    const stdout = await this.runProcess(prompt, opts.signal);
     return {
-      text: envelope.result,
+      text: stdout.trim(),
       model: this.model,
-      usage: { durationMs: envelope.duration_ms ?? Date.now() - started },
+      usage: { durationMs: Date.now() - started },
     };
   }
 
@@ -67,24 +76,24 @@ export class CursorAgentProvider implements LlmProvider {
     let lastErr: unknown;
     let lastRaw = '';
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const text = await this.generateText({
-        ...opts,
-        user:
-          attempt === 0
-            ? opts.user
-            : `${opts.user}\n\nIMPORTANT: Return ONLY valid JSON matching the requested schema. Previous attempt failed validation.`,
-      });
+      // The coding-agent variant likes to wrap responses in conversational
+      // prose. Restate the JSON-only contract on every retry.
+      const userPrompt =
+        attempt === 0
+          ? `${opts.user}\n\nRespond with ONLY a single valid JSON object that matches the schema. No commentary, no markdown fences, no explanation before or after.`
+          : `${opts.user}\n\nThe previous attempt failed JSON validation. Respond with ONLY a single valid JSON object that matches the schema. No prose, no markdown.`;
+
+      const text = await this.generateText({ ...opts, user: userPrompt });
       lastRaw = text.text;
       try {
         const data = parseAndValidate(text.text, opts.schema);
-        return {
-          data,
-          raw: text.text,
-          model: this.model,
-          usage: text.usage,
-        };
+        return { data, raw: text.text, model: this.model, usage: text.usage };
       } catch (err) {
         lastErr = err;
+        log.debug(
+          { attempt, err: (err as Error).message, snippet: text.text.slice(0, 200) },
+          'cursor-agent JSON validation failed, retrying',
+        );
       }
     }
     throw lastErr instanceof Error
@@ -96,32 +105,20 @@ export class CursorAgentProvider implements LlmProvider {
     return `[SYSTEM]\n${system.trim()}\n\n[TASK]\n${user.trim()}`;
   }
 
-  private parseEnvelope(stdout: string): CursorAgentResultEnvelope {
-    const trimmed = stdout.trim();
-    if (!trimmed) {
-      throw new Error('cursor-agent produced empty output');
-    }
-    let parsed: CursorAgentResultEnvelope;
-    try {
-      parsed = JSON.parse(trimmed) as CursorAgentResultEnvelope;
-    } catch (err) {
-      throw new Error(
-        `cursor-agent did not emit JSON envelope. First 500 chars: ${trimmed.slice(0, 500)}`,
-        { cause: err },
-      );
-    }
-    if (parsed.is_error) {
-      throw new Error(`cursor-agent reported error: ${parsed.result}`);
-    }
-    return parsed;
-  }
-
-  private runProcess(args: string[], signal?: AbortSignal): Promise<string> {
+  private runProcess(prompt: string, signal?: AbortSignal): Promise<string> {
     return new Promise((resolve, reject) => {
+      const sandbox = mkdtempSync(join(tmpdir(), 'mp-cursor-'));
+      const args: string[] = ['--cwd', sandbox, '--', prompt];
+
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      if (this.apiKey) env.CURSOR_API_KEY = this.apiKey;
+
       const child = spawn(this.bin, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         signal,
+        env,
       });
+
       let stdout = '';
       let stderr = '';
       child.stdout.on('data', (chunk: Buffer) => {
@@ -130,8 +127,31 @@ export class CursorAgentProvider implements LlmProvider {
       child.stderr.on('data', (chunk: Buffer) => {
         stderr += chunk.toString('utf8');
       });
-      child.on('error', (err) => reject(err));
+
+      const timeout = setTimeout(() => {
+        child.kill('SIGTERM');
+        reject(
+          new Error(
+            `cursor-agent timed out after ${this.timeoutMs}ms. Last stderr: ${stderr.trim().slice(0, 500)}`,
+          ),
+        );
+      }, this.timeoutMs);
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        try {
+          rmSync(sandbox, { recursive: true, force: true });
+        } catch {
+          // best effort
+        }
+      };
+
+      child.on('error', (err) => {
+        cleanup();
+        reject(err);
+      });
       child.on('close', (code) => {
+        cleanup();
         if (code === 0) {
           resolve(stdout);
         } else {
