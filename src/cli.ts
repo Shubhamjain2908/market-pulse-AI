@@ -15,13 +15,12 @@
  * Run `mp --help` or `mp <cmd> --help` for full options.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
 import { Command } from 'commander';
 import { runBriefingComposer } from './agents/briefing-composer.js';
 import { runDailyIngestor } from './agents/daily-ingestor.js';
 import { runSignalEnricher } from './agents/signal-enricher.js';
 import { runStockScreener } from './agents/stock-screener.js';
+import { deliverToFile } from './briefing/index.js';
 import { config } from './config/env.js';
 import { APP_NAME, APP_VERSION } from './constants.js';
 import { closeDb, getDb, migrate } from './db/index.js';
@@ -120,8 +119,9 @@ program
   });
 
 /**
- * Phase 0 only supports the `file` delivery channel. Other channels log a
- * warning and skip - real implementations land in Phase 4.
+ * Phase 1 supports the `file` channel. Other channels log a warning and
+ * skip - real implementations (Gmail SMTP, Slack, Telegram) land in
+ * Phase 4.
  */
 function deliverBriefing(
   html: string,
@@ -131,15 +131,11 @@ function deliverBriefing(
   if (method !== 'file') {
     logger.warn(
       { delivery: method },
-      'non-file delivery not implemented in Phase 0 - briefing not delivered',
+      'non-file delivery not implemented yet - briefing not delivered',
     );
     return;
   }
-  const outDir = resolve(process.cwd(), config.BRIEFING_OUTPUT_DIR);
-  mkdirSync(outDir, { recursive: true });
-  const outPath = join(outDir, `briefing-${date}.html`);
-  writeFileSync(outPath, html, 'utf8');
-  logger.info({ outPath }, 'briefing written');
+  deliverToFile(html, date);
 }
 
 program

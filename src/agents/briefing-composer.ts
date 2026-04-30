@@ -1,14 +1,17 @@
 /**
- * Briefing Composer agent. Phase 0 placeholder - emits a tiny HTML stub so
- * the delivery pathway can be exercised end-to-end before Phase 1 lands.
+ * Briefing Composer agent. Phase 1 produces a template-rendered HTML
+ * briefing - no LLM involvement. Phase 3 will replace the placeholder
+ * AI-picks card with actual thesis output.
  */
 
-import { SEBI_DISCLAIMER } from '../constants.js';
-import { logger } from '../logger.js';
+import { composeBriefing } from '../briefing/composer.js';
+import { isoDateIst } from '../ingestors/base/dates.js';
+import { child } from '../logger.js';
+
+const log = child({ component: 'briefing-composer' });
 
 export interface BriefRunOptions {
   date?: string;
-  /** Override delivery method for this run. */
   delivery?: 'file' | 'email' | 'slack' | 'telegram';
 }
 
@@ -16,26 +19,29 @@ export interface BriefRunResult {
   date: string;
   html: string;
   delivery: string;
+  alertCount: number;
+  newsCount: number;
 }
 
 export async function runBriefingComposer(opts: BriefRunOptions = {}): Promise<BriefRunResult> {
-  const date = opts.date ?? new Date().toISOString().slice(0, 10);
+  const date = opts.date ?? isoDateIst();
   const delivery = opts.delivery ?? 'file';
-  logger.info({ phase: 'brief', date, delivery }, 'briefing placeholder ran');
 
-  const html = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>Market Pulse AI - ${date}</title>
-</head>
-<body style="font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; line-height: 1.5;">
-  <h1>Market Pulse AI</h1>
-  <p>Briefing pipeline scaffold is live. Real content lands in Phase 3.</p>
-  <hr />
-  <p style="font-size: 0.8rem; color: #666;">${SEBI_DISCLAIMER}</p>
-</body>
-</html>`;
+  const composed = composeBriefing({ date });
+  log.info(
+    {
+      date: composed.date,
+      alerts: composed.data.watchlistAlerts.length,
+      news: composed.data.news.length,
+    },
+    'briefing composed',
+  );
 
-  return { date, html, delivery };
+  return {
+    date: composed.date,
+    html: composed.html,
+    delivery,
+    alertCount: composed.data.watchlistAlerts.length,
+    newsCount: composed.data.news.length,
+  };
 }
