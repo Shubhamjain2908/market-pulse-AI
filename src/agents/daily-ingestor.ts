@@ -7,6 +7,7 @@
  * whole run down. Detailed errors are logged but never thrown.
  */
 
+import { config } from '../config/env.js';
 import { getDb, insertNews, upsertFiiDii, upsertFundamentals, upsertQuotes } from '../db/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import {
@@ -60,17 +61,39 @@ export async function runDailyIngestor(opts: IngestRunOptions = {}): Promise<Ing
   if (quoteIngestor?.fetchQuotes) {
     try {
       await quoteIngestor.init?.(ctx);
-      const r = await quoteIngestor.fetchQuotes(ctx);
-      result.quotesWritten = upsertQuotes(r.data);
-      if (r.failed.length) {
-        result.failures.push({
-          capability: 'quotes',
-          ingestor: quoteIngestor.name,
-          reason: `${r.failed.length} symbols failed: ${r.failed.slice(0, 5).join(', ')}${r.failed.length > 5 ? '...' : ''}`,
-        });
+      const maxR = config.INGEST_QUOTES_MAX_RETRIES;
+      let pending = symbols;
+      let totalWritten = 0;
+      for (let attempt = 0; attempt <= maxR; attempt++) {
+        if (pending.length === 0) break;
+        const r = await quoteIngestor.fetchQuotes({ ...ctx, symbols: pending });
+        totalWritten += upsertQuotes(r.data);
+        if (r.failed.length === 0) {
+          pending = [];
+          break;
+        }
+        pending = r.failed;
+        if (attempt < maxR) {
+          log.warn(
+            { attempt: attempt + 1, failedSymbols: r.failed.length },
+            'quote batch had failures; retrying failed symbols',
+          );
+          await new Promise((res) => setTimeout(res, 2000));
+        } else {
+          result.failures.push({
+            capability: 'quotes',
+            ingestor: quoteIngestor.name,
+            reason: `${r.failed.length} symbols failed after ${maxR + 1} attempt(s): ${r.failed.slice(0, 5).join(', ')}${r.failed.length > 5 ? '...' : ''}`,
+          });
+        }
       }
+      result.quotesWritten = totalWritten;
       log.info(
-        { ingestor: quoteIngestor.name, written: result.quotesWritten, failed: r.failed.length },
+        {
+          ingestor: quoteIngestor.name,
+          written: result.quotesWritten,
+          remainingFailed: pending.length,
+        },
         'quotes ingested',
       );
     } catch (err) {

@@ -7,6 +7,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+import { config } from '../config/env.js';
 import { loadWatchlist } from '../config/loaders.js';
 import { getDb, getLatestHoldings } from '../db/index.js';
 import {
@@ -22,8 +23,6 @@ import { child } from '../logger.js';
 import { type Thesis, ThesisSchema } from '../types/domain.js';
 
 const log = child({ component: 'thesis-generator' });
-
-const MAX_THESES_PER_RUN = 5;
 
 const SYSTEM_PROMPT = `You are a senior Indian equity research analyst (SEBI-registered RIA mindset).
 You produce actionable, concise investment theses for NSE/BSE stocks.
@@ -77,7 +76,7 @@ export async function generateTheses(
   const watchlist = (opts.watchlist ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
   const holdings = getLatestHoldings(db).map((h) => h.symbol.toUpperCase());
   const universe = [...new Set([...watchlist, ...holdings])];
-  const maxTheses = opts.maxTheses ?? MAX_THESES_PER_RUN;
+  const maxTheses = opts.maxTheses ?? config.THESIS_MAX_PER_RUN;
 
   const candidates = rankCandidates(date, universe, db);
   const toGenerate = candidates.slice(0, maxTheses);
@@ -146,10 +145,31 @@ interface Candidate {
   symbol: string;
   interestScore: number;
   signals: Record<string, number>;
+  reasons: string[];
 }
 
 /** Holdings at or below this unrealised P&amp;L % are forced into the candidate pool. */
 const PORTFOLIO_THESIS_LOSS_PCT = -15;
+
+/**
+ * Ordered thesis-interest ranking for the universe (watchlist + holdings).
+ * Used by `generateTheses` and the briefing “why ranked #N” line.
+ */
+export function getThesisRankMeta(
+  date: string,
+  universe: string[],
+  db: DatabaseType,
+): Map<string, { rank: number; reasonsLine: string }> {
+  const ranked = rankCandidates(date, universe, db);
+  const map = new Map<string, { rank: number; reasonsLine: string }>();
+  ranked.forEach((c, i) => {
+    map.set(c.symbol, {
+      rank: i + 1,
+      reasonsLine: c.reasons.length > 0 ? c.reasons.join(' · ') : 'Interesting signals',
+    });
+  });
+  return map;
+}
 
 function rankCandidates(date: string, universe: string[], db: DatabaseType): Candidate[] {
   if (universe.length === 0) return [];
@@ -197,28 +217,54 @@ function rankCandidates(date: string, universe: string[], db: DatabaseType): Can
   for (const symbol of universe) {
     const signals = bySymbol.get(symbol) ?? {};
     let score = 0;
+    const reasons: string[] = [];
 
     const rsi = signals.rsi_14;
     if (rsi != null) {
-      if (rsi >= 70 || rsi <= 30) score += 3;
-      else if (rsi >= 60 || rsi <= 40) score += 1;
+      if (rsi >= 70 || rsi <= 30) {
+        score += 3;
+        reasons.push(rsi >= 70 ? 'RSI stretched (high)' : 'RSI stretched (low)');
+      } else if (rsi >= 60 || rsi <= 40) {
+        score += 1;
+        reasons.push('RSI elevated');
+      }
     }
     const volRatio = signals.volume_ratio_20d;
     if (volRatio != null) {
-      if (volRatio >= 1.5) score += 2;
-      else if (volRatio >= 1.2) score += 1;
+      if (volRatio >= 1.5) {
+        score += 2;
+        reasons.push('Volume vs 20d elevated');
+      } else if (volRatio >= 1.2) {
+        score += 1;
+        reasons.push('Volume uptick');
+      }
     }
     const pctHigh = signals.pct_from_52w_high;
-    if (pctHigh != null && pctHigh >= -3) score += 2;
+    if (pctHigh != null && pctHigh >= -3) {
+      score += 2;
+      reasons.push('Near 52W high');
+    }
     const pctLow = signals.pct_from_52w_low;
-    if (pctLow != null && pctLow <= 5) score += 2;
+    if (pctLow != null && pctLow <= 5) {
+      score += 2;
+      reasons.push('Near 52W low');
+    }
 
-    if (screenSyms.has(symbol)) score += 5;
-    if (alertSyms.has(symbol)) score += 4;
-    if (deepLossSyms.has(symbol)) score += 6;
+    if (screenSyms.has(symbol)) {
+      score += 6;
+      reasons.push('Screen match today');
+    }
+    if (alertSyms.has(symbol)) {
+      score += 5;
+      reasons.push('Watchlist alert today');
+    }
+    if (deepLossSyms.has(symbol)) {
+      score += 7;
+      reasons.push('Portfolio drawdown focus');
+    }
 
     if (score > 0) {
-      candidates.push({ symbol, interestScore: score, signals });
+      candidates.push({ symbol, interestScore: score, signals, reasons });
     }
   }
 

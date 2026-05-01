@@ -72,6 +72,21 @@ const EnvSchema = z.object({
    * trigger gate (deep loss, alerts, news, screens, technical extremes).
    */
   PORTFOLIO_ANALYSIS_DISABLE_LITE: z.enum(['0', '1']).default('0'),
+
+  /** Briefing: news window ending at briefing IST midnight (hours lookback). */
+  BRIEFING_NEWS_WINDOW_HOURS: z.coerce.number().int().min(1).max(168).default(48),
+  /** Max headlines after dedupe and sorting. */
+  BRIEFING_NEWS_LIMIT: z.coerce.number().int().min(1).max(100).default(20),
+  /** `'1'` (default) generate mood LLM paragraph; `'0'` skip to save tokens/latency. */
+  BRIEFING_MOOD_NARRATIVE: z.enum(['0', '1']).default('1'),
+  /** Cap AI thesis cards per daily run (`generateTheses`). */
+  THESIS_MAX_PER_RUN: z.coerce.number().int().min(0).max(25).default(5),
+
+  /** Write `run-summary-{date}.json` next to HTML briefings when `'1'`. */
+  BRIEFING_RUN_SUMMARY_JSON: z.enum(['0', '1']).default('0'),
+
+  /** Yahoo quote fetch retries for symbols that failed (full retry rounds). */
+  INGEST_QUOTES_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

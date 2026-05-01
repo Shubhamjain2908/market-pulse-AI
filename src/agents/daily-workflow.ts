@@ -15,6 +15,7 @@ import { runBriefingComposer } from './briefing-composer.js';
 import { runDailyIngestor } from './daily-ingestor.js';
 import { analysePortfolio } from './portfolio-analyser.js';
 import { runPortfolioSync } from './portfolio-sync.js';
+import { maybeWriteDailyRunSummary } from './run-summary.js';
 import { runSignalEnricher } from './signal-enricher.js';
 import { runStockScreener } from './stock-screener.js';
 import { detectStopLossBreaches } from './stop-loss-detector.js';
@@ -61,6 +62,22 @@ export async function runDailyWorkflow(
       marketClosure: closure,
       delivery: config.BRIEFING_DELIVERY,
     });
+    maybeWriteDailyRunSummary({
+      schemaVersion: 1,
+      generatedAt: new Date().toISOString(),
+      date: briefing.date,
+      holidayMode: true,
+      marketClosureLabel: closure.label,
+      delivery: briefing.delivery,
+      counts: {
+        alerts: briefing.alertCount,
+        screenMatchSymbols: briefing.screenMatchesCount,
+        news: briefing.newsCount,
+        theses: briefing.thesesCount,
+        portfolioHoldings: briefing.portfolioCount,
+      },
+      hasMoodNarrative: briefing.hasNarrative,
+    });
     return {
       date: briefing.date,
       alertCount: briefing.alertCount,
@@ -102,7 +119,7 @@ export async function runDailyWorkflow(
     const sentimentResult = await enrichSentiment();
     log.info(sentimentResult, 'sentiment scoring done');
 
-    const thesisResult = await generateTheses({ date });
+    const thesisResult = await generateTheses({ date, maxTheses: config.THESIS_MAX_PER_RUN });
     thesisRun = {
       generated: thesisResult.generated,
       failed: thesisResult.failed,
@@ -131,6 +148,23 @@ export async function runDailyWorkflow(
     skipAi: opts.skipAi,
     thesisRun: opts.skipAi ? undefined : thesisRun,
     delivery: config.BRIEFING_DELIVERY,
+  });
+
+  maybeWriteDailyRunSummary({
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    date: briefing.date,
+    holidayMode: false,
+    delivery: briefing.delivery,
+    counts: {
+      alerts: briefing.alertCount,
+      screenMatchSymbols: briefing.screenMatchesCount,
+      news: briefing.newsCount,
+      theses: briefing.thesesCount,
+      portfolioHoldings: briefing.portfolioCount,
+    },
+    thesisRun: opts.skipAi ? undefined : thesisRun,
+    hasMoodNarrative: briefing.hasNarrative,
   });
 
   return {

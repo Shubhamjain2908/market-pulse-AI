@@ -16,7 +16,7 @@ import {
 import { MockLlmProvider } from '../../src/llm/providers/mock.js';
 import type { FiiDiiRow, NewsItem, RawQuote, Signal } from '../../src/types/domain.js';
 
-describe('briefing composer (Phase 3)', () => {
+describe('briefing composer (Phase 3–4)', () => {
   let dbPath: string;
   let db: ReturnType<typeof getDb>;
   let llm: MockLlmProvider;
@@ -90,6 +90,28 @@ describe('briefing composer (Phase 3)', () => {
         high: 24050,
         low: 23880,
         close: 24000,
+        volume: 0,
+        source: 'test',
+      },
+      {
+        symbol: 'DOW_JONES',
+        exchange: 'NSE',
+        date: today,
+        open: 38000,
+        high: 39000,
+        low: 37800,
+        close: 38600,
+        volume: 0,
+        source: 'test',
+      },
+      {
+        symbol: 'DOW_JONES',
+        exchange: 'NSE',
+        date: '2026-04-29',
+        open: 37500,
+        high: 38100,
+        low: 37400,
+        close: 38000,
         volume: 0,
         source: 'test',
       },
@@ -170,8 +192,48 @@ describe('briefing composer (Phase 3)', () => {
     expect(result.html).toContain('Bear Case');
     expect(result.html).toContain('Why now:');
     expect(result.html).toContain('₹2,900');
+    expect(result.html).toContain('Global Cues');
+    expect(result.html).toContain('Dow Jones');
+    expect(result.html).toContain('#1 by signal score');
     expect(result.data.theses).toHaveLength(1);
     expect(result.data.aiPicksStatus.kind).toBe('ok');
+  });
+
+  it('respects moodNarrativeDisabled', async () => {
+    const result = await composeBriefing(
+      { date: today, watchlist: ['RELIANCE'], moodNarrativeDisabled: true },
+      db,
+      llm,
+    );
+    expect(result.data.moodNarrative).toBeUndefined();
+    expect(llm.calls.filter((c) => c.method === 'generateText')).toHaveLength(0);
+  });
+
+  it('respects newsWindowHours and newsLimit', async () => {
+    insertNews(
+      [
+        {
+          headline: 'Fresh headline',
+          source: 'Test',
+          url: 'https://example.com/fresh',
+          publishedAt: `${today}T12:00:00.000+05:30`,
+        },
+        {
+          headline: 'Stale headline',
+          source: 'Test',
+          url: 'https://example.com/stale',
+          publishedAt: '2026-04-28T12:00:00.000+05:30',
+        },
+      ],
+      db,
+    );
+    const result = await composeBriefing(
+      { date: today, watchlist: ['RELIANCE'], newsWindowHours: 24, newsLimit: 5 },
+      db,
+      llm,
+    );
+    expect(result.data.news.some((n) => n.headline === 'Fresh headline')).toBe(true);
+    expect(result.data.news.some((n) => n.headline === 'Stale headline')).toBe(false);
   });
 
   it('includes mood narrative from LLM', async () => {

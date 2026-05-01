@@ -53,12 +53,15 @@ export function startScheduler(): SchedulerHandle {
 }
 
 async function runScheduledJob(tag: string): Promise<void> {
-  log.info({ tag }, 'scheduled job started');
+  const t0 = Date.now();
+  log.info({ tag, health: 'started' }, 'scheduled job started');
   try {
     const result = await runDailyWorkflow();
     log.info(
       {
         tag,
+        health: 'ok',
+        durationMs: Date.now() - t0,
         date: result.date,
         delivery: result.delivery,
         alerts: result.alertCount,
@@ -69,7 +72,7 @@ async function runScheduledJob(tag: string): Promise<void> {
       'scheduled job finished',
     );
   } catch (err) {
-    log.error({ tag, err }, 'scheduled job failed');
+    log.error({ tag, health: 'error', durationMs: Date.now() - t0, err }, 'scheduled job failed');
   } finally {
     closeDb();
   }
