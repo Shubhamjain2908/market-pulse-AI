@@ -30,7 +30,10 @@ const EnvSchema = z.object({
   GOOGLE_VERTEX_PROJECT: z.string().optional(),
   GOOGLE_VERTEX_LOCATION: z.string().default('us-central1'),
   GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
-  VERTEX_MODEL: z.string().default('gemini-2.0-pro'),
+  /** Vertex Gemini model id (see Cloud docs “Gemini” model reference). */
+  VERTEX_MODEL: z.string().default('gemini-2.5-flash'),
+  /** Per-request HTTP timeout for Vertex generateContent (large prompts). */
+  VERTEX_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
 
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4o'),
@@ -59,6 +62,13 @@ const EnvSchema = z.object({
 
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
+
+  /**
+   * Parallel LLM calls when analysing portfolio holdings (`mp daily`,
+   * `mp portfolio-analyse`). Higher = faster wall-clock but more Vertex QPS;
+   * tune down if you hit 429 RESOURCE_EXHAUSTED.
+   */
+  PORTFOLIO_ANALYSIS_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(8),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

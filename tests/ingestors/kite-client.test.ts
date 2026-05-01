@@ -146,7 +146,9 @@ describe('KiteClient', () => {
     expect(new KiteClient({ apiKey: 'k', apiSecret: 's', accessToken: 't' }).hasSession()).toBe(
       true,
     );
-    expect(new KiteClient({ apiKey: 'k', apiSecret: 's' }).hasSession()).toBe(false);
+    expect(new KiteClient({ apiKey: 'k', apiSecret: 's', accessToken: '' }).hasSession()).toBe(
+      false,
+    );
   });
 
   it('loginUrl encodes the api_key', () => {

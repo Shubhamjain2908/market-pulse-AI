@@ -49,7 +49,7 @@ export class KiteClient {
   constructor(opts: KiteClientOptions = {}) {
     this.apiKey = opts.apiKey ?? config.KITE_API_KEY ?? '';
     this.apiSecret = opts.apiSecret ?? config.KITE_API_SECRET;
-    this.accessToken = opts.accessToken ?? config.KITE_ACCESS_TOKEN;
+    this.accessToken = opts.accessToken !== undefined ? opts.accessToken : config.KITE_ACCESS_TOKEN;
     if (!this.apiKey) {
       throw new Error(
         'KITE_API_KEY is not set. Add your Kite Connect API key to .env (https://kite.trade > My Apps).',

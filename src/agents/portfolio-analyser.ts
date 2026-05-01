@@ -13,7 +13,9 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+import pLimit from 'p-limit';
 import { z } from 'zod';
+import { config } from '../config/env.js';
 import {
   type PortfolioAnalysisRow,
   type PortfolioHoldingRow,
@@ -85,6 +87,12 @@ export interface PortfolioAnalyserOptions {
   symbols?: string[];
   /** Skip holdings whose qty * avgPrice is below this rupee value. */
   minPositionInr?: number;
+  /**
+   * Max concurrent Vertex / LLM calls. Defaults to PORTFOLIO_ANALYSIS_CONCURRENCY
+   * (env). Prior to this knob, every holding ran sequentially — 88 holdings ×
+   * ~10s ≈ 15 minutes wall-clock.
+   */
+  concurrency?: number;
 }
 
 export interface PortfolioAnalyserResult {
@@ -102,6 +110,7 @@ export async function analysePortfolio(
 ): Promise<PortfolioAnalyserResult> {
   const date = opts.date ?? isoDateIst();
   const minInr = opts.minPositionInr ?? 0;
+  const concurrency = opts.concurrency ?? config.PORTFOLIO_ANALYSIS_CONCURRENCY;
 
   const allHoldings = getLatestHoldings(db);
   const filtered = allHoldings
@@ -113,20 +122,31 @@ export async function analysePortfolio(
     return { date, analysed: 0, failed: 0, byAction: empty(), rows: [] };
   }
 
+  log.info({ date, holdings: filtered.length, concurrency }, 'portfolio analyser starting');
+
+  const limit = pLimit(concurrency);
+  const outcomes = await Promise.all(
+    filtered.map((h) =>
+      limit(async () => {
+        try {
+          const row = await analyseOne(h, date, db, llm);
+          return { ok: true as const, row };
+        } catch (err) {
+          log.warn(
+            { symbol: h.symbol, err: (err as Error).message },
+            'portfolio analysis failed for holding',
+          );
+          return { ok: false as const };
+        }
+      }),
+    ),
+  );
+
   const results: PortfolioAnalysisRow[] = [];
   let failed = 0;
-
-  for (const h of filtered) {
-    try {
-      const row = await analyseOne(h, date, db, llm);
-      results.push(row);
-    } catch (err) {
-      failed++;
-      log.warn(
-        { symbol: h.symbol, err: (err as Error).message },
-        'portfolio analysis failed for holding',
-      );
-    }
+  for (const o of outcomes) {
+    if (o.ok) results.push(o.row);
+    else failed++;
   }
 
   upsertPortfolioAnalysis(results, db);

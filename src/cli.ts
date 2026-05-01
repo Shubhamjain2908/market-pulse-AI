@@ -304,7 +304,11 @@ program
   .description('run LLM-driven HOLD/ADD/TRIM/EXIT analysis on each holding')
   .option('-s, --symbols <list>', 'comma-separated subset of holdings to analyse')
   .option('--min-position <inr>', 'skip holdings below this rupee value', '0')
-  .action(async (opts: { symbols?: string; minPosition?: string }) => {
+  .option(
+    '-j, --concurrency <n>',
+    'parallel LLM calls (default: PORTFOLIO_ANALYSIS_CONCURRENCY from env)',
+  )
+  .action(async (opts: { symbols?: string; minPosition?: string; concurrency?: string }) => {
     ensureDb();
     const date = program.opts<{ date?: string }>().date;
     const result = await analysePortfolio({
@@ -313,6 +317,7 @@ program
         ? opts.symbols.split(',').map((s) => s.trim().toUpperCase())
         : undefined,
       minPositionInr: Number(opts.minPosition) || 0,
+      concurrency: opts.concurrency ? Number(opts.concurrency) : undefined,
     });
     logger.info(
       {
@@ -373,6 +378,8 @@ program
       pipeline: {
         marketDataProvider: config.MARKET_DATA_PROVIDER,
         llmProvider: config.LLM_PROVIDER,
+        vertexModel: config.LLM_PROVIDER === 'vertex' ? config.VERTEX_MODEL : undefined,
+        portfolioAnalysisConcurrency: config.PORTFOLIO_ANALYSIS_CONCURRENCY,
         briefingDelivery: config.BRIEFING_DELIVERY,
         databasePath: config.DATABASE_PATH,
         nodeEnv: config.NODE_ENV,
@@ -382,6 +389,7 @@ program
         anthropic: redact(config.ANTHROPIC_API_KEY),
         openai: redact(config.OPENAI_API_KEY),
         kite: redact(config.KITE_API_KEY),
+        googleApplicationCredentials: redact(config.GOOGLE_APPLICATION_CREDENTIALS),
         smtp: redact(config.SMTP_USER),
         slack: redact(config.SLACK_WEBHOOK_URL),
         telegram: redact(config.TELEGRAM_BOT_TOKEN),

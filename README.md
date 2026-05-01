@@ -75,7 +75,7 @@ Two abstractions keep the system portable:
 
 ## Tech stack
 
-- **Runtime:** Node.js 20 + TypeScript (strict, ESM)
+- **Runtime:** Node.js 22 + TypeScript (strict, ESM)
 - **Package manager:** pnpm 10
 - **Storage:** SQLite via `better-sqlite3`
 - **Scheduling:** `croner` (timezone-aware)
@@ -148,6 +148,7 @@ pnpm cli kite-login        # interactive: refresh access_token (daily)
 pnpm cli portfolio-sync    # snapshot current holdings to DB
 pnpm cli portfolio-analyse # LLM-driven action recommendation per holding
 pnpm cli portfolio-analyse -s INFY,HDFCBANK
+pnpm cli portfolio-analyse -j 12    # override parallel calls for speed/tuning
 pnpm cli scan              # one-shot intraday LTP refresh + live alerts
                            # (cron every 5-15 min during market hours)
 
@@ -160,17 +161,24 @@ All commands accept `-d 2026-04-30` to target a specific trading date
 ### Verifying the LLM is configured
 
 `scripts/smoke-llm.mts` runs three calls of escalating complexity (text →
-small JSON → realistic thesis prompt) so you can confirm `CURSOR_API_KEY`
-(or any other configured provider) is wired up before kicking off a full
-run:
+small JSON → realistic thesis prompt) so you can confirm the active `LLM_PROVIDER`
+(including Vertex / Gemini) is wired up before kicking off a full run:
 
 ```bash
 pnpm tsx scripts/smoke-llm.mts
-# -> ✓ text — 11.7s
-# -> ✓ json — 10.2s
-# -> ✓ thesis — 10.4s
+# -> ✓ text — …
+# -> ✓ json — …
+# -> ✓ thesis — …
 # -> LLM smoke test passed.
 ```
+
+### How long does `pnpm daily` take?
+
+Rough breakdown:
+
+- **Portfolio analysis** — one LLM JSON call **per holding**. Until recently these ran **strictly one after another**, so a large book dominates wall-clock time (for example ~88 holdings × ~10 s each with Cursor Agent ≈ **15 minutes** for this stage alone).
+- **Parallelism** — set `PORTFOLIO_ANALYSIS_CONCURRENCY` (default **8**) so Vertex/Gemini processes multiple holdings at once. Expect the portfolio stage to shrink to on the order of **⌈N / concurrency⌉ × (latency per call)** — often **~2–6 minutes** for 80+ names at concurrency 8 and ~3–8 s per Flash call, depending on quota and prompt size. If Vertex returns `429` / rate-limit errors, lower concurrency.
+- **Other LLM work** — batched news sentiment, up to five watchlist theses, optional mood narrative: typically **~1–4 minutes** combined on Vertex Flash (highly variable).
 
 ---
 
@@ -193,13 +201,13 @@ Three places, in order of precedence:
 
 Set `LLM_PROVIDER` in `.env`:
 
-| Value          | Requires                                                  | Notes                                       |
-| -------------- | --------------------------------------------------------- | ------------------------------------------- |
-| `cursor-agent` | `cursor-agent` CLI installed and signed in (default)      | Uses your Cursor subscription, no API key   |
-| `anthropic`    | `ANTHROPIC_API_KEY`                                       | Adapter implemented in Phase 3              |
-| `vertex`       | `GOOGLE_VERTEX_PROJECT` + `GOOGLE_APPLICATION_CREDENTIALS` | Gemini via Vertex AI, implemented in Phase 3 |
-| `openai`       | `OPENAI_API_KEY`                                          | Adapter implemented in Phase 3              |
-| `mock`         | Nothing                                                   | Deterministic stub for tests                |
+| Value          | Requires | Notes |
+| -------------- | -------- | ----- |
+| `cursor-agent` | `CURSOR_API_KEY` + `cursor-agent` CLI on `PATH` | Uses Cursor Agent v3; monthly request caps apply |
+| `vertex`       | `GOOGLE_VERTEX_PROJECT`; ADC via `GOOGLE_APPLICATION_CREDENTIALS` **or** `gcloud auth application-default login` | **Recommended for large portfolios** — Gemini on Vertex AI, usage billed monthly ([model reference](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions)). Default model id: `gemini-2.5-flash` (env `VERTEX_MODEL`). For heavier reasoning use `gemini-2.5-pro` |
+| `anthropic`    | `ANTHROPIC_API_KEY` | Claude via REST |
+| `openai`       | `OPENAI_API_KEY` | GPT via REST |
+| `mock`         | Nothing | Deterministic stub for tests |
 
 Adding a new provider: implement [`LlmProvider`](src/llm/types.ts) and
 register it in [`src/llm/factory.ts`](src/llm/factory.ts). Nothing else
