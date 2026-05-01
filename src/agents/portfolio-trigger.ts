@@ -6,8 +6,16 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import type { PortfolioHoldingRow } from '../db/index.js';
 
-/** Unrealised loss at or below this level always forces a full review. */
-export const PORTFOLIO_DEEP_LOSS_PCT = -30;
+/**
+ * Unrealised loss at or below this level always forces a full LLM portfolio review.
+ * Override with `PORTFOLIO_FULL_REVIEW_LOSS_PCT` (e.g. `-15`).
+ */
+export function getPortfolioDeepLossPct(): number {
+  const raw = process.env.PORTFOLIO_FULL_REVIEW_LOSS_PCT;
+  if (raw === undefined || raw === '') return -15;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : -15;
+}
 
 export interface SignalSnapshot {
   rsi?: number;
@@ -81,7 +89,7 @@ export function needsPortfolioLlmReview(
 ): boolean {
   if (isPortfolioLiteDisabled()) return true;
 
-  if (h.pnlPct != null && h.pnlPct <= PORTFOLIO_DEEP_LOSS_PCT) return true;
+  if (h.pnlPct != null && h.pnlPct <= getPortfolioDeepLossPct()) return true;
 
   const alert = db
     .prepare(
@@ -136,18 +144,61 @@ export function buildLiteSnapshotCopy(
   const snap = parseSignalSnapshot(s);
   const line = formatTechnicalLine(snap);
   const pnl = h.pnlPct != null ? `${h.pnlPct.toFixed(1)}%` : 'n/a';
+
+  const bullPoints: string[] = [];
+  const bearPoints: string[] = [];
+
+  if (snap.rsi != null && snap.rsi < 38) {
+    bullPoints.push(
+      `RSI ${snap.rsi.toFixed(0)} — momentum washed out; bounce risk if trend intact`,
+    );
+  }
+  if (snap.volRatio != null && snap.volRatio >= 1.2) {
+    bullPoints.push(`Volume ${snap.volRatio.toFixed(2)}× 20d avg — participation backs moves`);
+  }
+  if (snap.vsSma20Pct != null && snap.vsSma20Pct < -2) {
+    bullPoints.push(
+      `Price ${snap.vsSma20Pct.toFixed(1)}% below SMA20 — room to mean-revert vs short-term mean`,
+    );
+  }
+  if (snap.pct52wLow != null && snap.pct52wLow <= 8) {
+    bullPoints.push(`Only ${snap.pct52wLow.toFixed(1)}% off 52W low — valuation cushion vs peaks`);
+  }
+  if (h.pnlPct != null && h.pnlPct > 8) {
+    bullPoints.push(`Unrealised +${h.pnlPct.toFixed(1)}% — profit buffer for pullbacks`);
+  }
+
+  if (snap.rsi != null && snap.rsi > 62) {
+    bearPoints.push(`RSI ${snap.rsi.toFixed(0)} — extension; pullback risk into resistance`);
+  }
+  if (snap.volRatio != null && snap.volRatio < 0.85) {
+    bearPoints.push(`Volume ${snap.volRatio.toFixed(2)}× 20d — weak participation on up moves`);
+  }
+  if (snap.pct52wHigh != null && snap.pct52wHigh >= -3) {
+    bearPoints.push(
+      `${Math.abs(snap.pct52wHigh).toFixed(1)}% off 52W high — crowded zone for adds`,
+    );
+  }
+  if (snap.vsSma20Pct != null && snap.vsSma20Pct > 4) {
+    bearPoints.push(`+${snap.vsSma20Pct.toFixed(1)}% vs SMA20 — short-term stretched`);
+  }
+  if (h.pnlPct != null && h.pnlPct < -8) {
+    bearPoints.push(`Unrealised ${h.pnlPct.toFixed(1)}% — needs repair vs entry / thesis`);
+  }
+
+  if (bullPoints.length === 0) {
+    bullPoints.push('Technicals neutral — no clear oversold edge in this snapshot');
+  }
+  if (bearPoints.length === 0) {
+    bearPoints.push('No major technical red flags in snapshot (RSI / vol / 52W band)');
+  }
+
   return {
-    thesis: `Snapshot only (no full LLM call — quiet vs automated triggers). ${line}. Unrealised P&L ${pnl} vs entry.`,
-    bullPoints:
-      snap.rsi != null && snap.rsi < 40
-        ? [`RSI oversold territory (${snap.rsi.toFixed(0)})`]
-        : ['No automated bull trigger'],
-    bearPoints:
-      snap.rsi != null && snap.rsi > 60
-        ? [`Momentum stretched (RSI ${snap.rsi.toFixed(0)})`]
-        : ['No automated bear trigger'],
+    thesis: `Technical snapshot (lite path — no full LLM call this run). ${line}. Unrealised P&L ${pnl} vs entry.`,
+    bullPoints,
+    bearPoints,
     triggerReason:
-      'Below portfolio LLM review threshold — macro context is in Market Mood; see technicals above.',
+      'Lite snapshot — full review runs on deeper loss threshold, alerts, news/screens, or extreme signals. See Market Mood for flows.',
   };
 }
 

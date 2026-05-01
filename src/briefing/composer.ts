@@ -12,8 +12,13 @@ import { technicalSummaryLine } from '../agents/portfolio-trigger.js';
 import { getThesisRankMeta } from '../agents/thesis-generator.js';
 import { getAlertsForDate } from '../analysers/alerts.js';
 import { config } from '../config/env.js';
-import { loadScreens, loadWatchlist } from '../config/loaders.js';
-import { getDb, getLatestHoldings, getPortfolioAnalysisForDate } from '../db/index.js';
+import { loadScreens, loadSectorMap, loadWatchlist } from '../config/loaders.js';
+import {
+  type PortfolioHoldingRow,
+  getDb,
+  getLatestHoldings,
+  getPortfolioAnalysisForDate,
+} from '../db/index.js';
 import { getThesesForDate } from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
@@ -29,6 +34,7 @@ import {
   type MoverRow,
   type NewsRow,
   type PortfolioPositionCard,
+  type PortfolioRiskRollup,
   type PortfolioSummary,
   type ScreenMatch,
   type ThesisCard,
@@ -50,6 +56,8 @@ export interface ComposeBriefingOptions {
     generated: number;
     failed: number;
     candidateCount: number;
+    eligibleUniverseSize: number;
+    watchlistSize: number;
   };
   /** Override `config.BRIEFING_NEWS_WINDOW_HOURS` (e.g. tests). */
   newsWindowHours?: number;
@@ -84,9 +92,12 @@ export async function composeBriefing(
   const newsHours = opts.newsWindowHours ?? config.BRIEFING_NEWS_WINDOW_HOURS;
   const newsLimit = opts.newsLimit ?? config.BRIEFING_NEWS_LIMIT;
   const news = gatherNews(newsHours, date, watchlist, db, newsLimit);
+  const holdingsSet = new Set(getLatestHoldings(db).map((h) => h.symbol.toUpperCase()));
+  const thesisUniverse = watchlist.filter((s) => !holdingsSet.has(s.toUpperCase()));
+  const thesisEligibleSet = new Set(thesisUniverse.map((s) => s.toUpperCase()));
   const rankMeta =
-    !opts.skipAi && !opts.marketClosure ? getThesisRankMeta(date, watchlist, db) : undefined;
-  const theses = gatherTheses(date, db, rankMeta);
+    !opts.skipAi && !opts.marketClosure ? getThesisRankMeta(date, thesisUniverse, db) : undefined;
+  const theses = gatherTheses(date, db, rankMeta, thesisEligibleSet);
   const screenMatches = gatherScreenMatches(date, db);
   const portfolio = gatherPortfolio(date, db);
 
@@ -166,6 +177,18 @@ function resolveAiPicksStatus(
   if (thesisRun && thesisRun.failed > 0 && thesisRun.generated === 0) {
     return { kind: 'all_failed', failed: thesisRun.failed };
   }
+  if (
+    thesisRun &&
+    thesesLen === 0 &&
+    thesisRun.eligibleUniverseSize === 0 &&
+    thesisRun.watchlistSize > 0
+  ) {
+    return {
+      kind: 'empty',
+      reason: 'all_watchlist_owned',
+      candidateCount: thesisRun.candidateCount,
+    };
+  }
   return {
     kind: 'empty',
     reason: 'no_candidates',
@@ -233,9 +256,15 @@ function gatherTheses(
   date: string,
   db: DatabaseType,
   rankMeta?: Map<string, { rank: number; reasonsLine: string }>,
+  /** When set, only show thesis cards for symbols eligible for AI Picks (watchlist ∩ ¬holdings). */
+  eligibleSymbols?: Set<string>,
 ): ThesisCard[] {
   const rows = getThesesForDate(date, db);
-  return rows.map((r) => {
+  const filtered =
+    eligibleSymbols != null
+      ? rows.filter((r) => eligibleSymbols.has(r.symbol.toUpperCase()))
+      : rows;
+  return filtered.map((r) => {
     const meta = rankMeta?.get(r.symbol);
     return {
       symbol: r.symbol,
@@ -297,6 +326,8 @@ function gatherPortfolio(date: string, db: DatabaseType): PortfolioSummary | und
   if (holdings.length === 0) return undefined;
   const analysis = getPortfolioAnalysisForDate(date, db);
   const analysisBySymbol = new Map(analysis.map((a) => [a.symbol, a]));
+  const sectorMap = loadSectorMap();
+  const riskRollup = buildPortfolioRiskRollup(holdings, sectorMap);
 
   const positions: PortfolioPositionCard[] = holdings.map((h) => {
     const a = analysisBySymbol.get(h.symbol);
@@ -348,6 +379,76 @@ function gatherPortfolio(date: string, db: DatabaseType): PortfolioSummary | und
     dayChangePct,
     source: (holdings[0]?.source as 'kite' | 'manual') ?? 'manual',
     positions,
+    riskRollup,
+  };
+}
+
+function buildPortfolioRiskRollup(
+  holdings: PortfolioHoldingRow[],
+  sectorMap: Record<string, string>,
+): PortfolioRiskRollup | undefined {
+  if (holdings.length === 0) return undefined;
+
+  const enriched = holdings.map((h) => {
+    const px = h.lastPrice ?? h.avgPrice;
+    const valueInr = h.qty * px;
+    return { ...h, valueInr };
+  });
+
+  const totalValue = enriched.reduce((s, p) => s + p.valueInr, 0);
+  if (totalValue <= 0) return undefined;
+
+  const topWeights = [...enriched]
+    .sort((a, b) => b.valueInr - a.valueInr)
+    .slice(0, 5)
+    .map((p) => ({
+      symbol: p.symbol,
+      weightPct: (p.valueInr / totalValue) * 100,
+      valueInr: p.valueInr,
+    }));
+
+  const topLosers = enriched
+    .filter((p) => p.pnlPct != null && p.pnlPct < 0)
+    .sort((a, b) => (a.pnlPct ?? 0) - (b.pnlPct ?? 0))
+    .slice(0, 3)
+    .map((p) => ({
+      symbol: p.symbol,
+      pnlPct: p.pnlPct ?? 0,
+      pnlInr: p.pnl ?? 0,
+    }));
+
+  const drawdownBuckets = {
+    gt0: 0,
+    zeroToNeg10: 0,
+    neg10ToNeg20: 0,
+    ltNeg20: 0,
+  };
+  for (const p of enriched) {
+    const pct = p.pnlPct;
+    if (pct == null) continue;
+    if (pct > 0) drawdownBuckets.gt0++;
+    else if (pct >= -10) drawdownBuckets.zeroToNeg10++;
+    else if (pct >= -20) drawdownBuckets.neg10ToNeg20++;
+    else drawdownBuckets.ltNeg20++;
+  }
+
+  const sectorAgg = new Map<string, number>();
+  for (const p of enriched) {
+    const sector = sectorMap[p.symbol.toUpperCase()] ?? 'Unknown';
+    sectorAgg.set(sector, (sectorAgg.get(sector) ?? 0) + p.valueInr);
+  }
+  const sectorWeights = [...sectorAgg.entries()]
+    .map(([sector, v]) => ({
+      sector,
+      weightPct: (v / totalValue) * 100,
+    }))
+    .sort((a, b) => b.weightPct - a.weightPct);
+
+  return {
+    topWeights,
+    topLosers,
+    drawdownBuckets,
+    sectorWeights,
   };
 }
 

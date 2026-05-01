@@ -9,6 +9,7 @@ import {
   insertNews,
   migrate,
   upsertFiiDii,
+  upsertHoldings,
   upsertQuotes,
   upsertSignals,
   upsertThesis,
@@ -193,6 +194,8 @@ describe('briefing composer (Phase 3–4)', () => {
     expect(result.html).toContain('Why now:');
     expect(result.html).toContain('₹2,900');
     expect(result.html).toContain('Global Cues');
+    expect(result.html).toContain('Nifty 50 spot');
+    expect(result.html).not.toContain('GIFT Nifty');
     expect(result.html).toContain('Dow Jones');
     expect(result.html).toContain('#1 by signal score');
     expect(result.data.theses).toHaveLength(1);
@@ -277,6 +280,57 @@ describe('briefing composer (Phase 3–4)', () => {
     });
     expect(result.html).toContain('NSE closed');
     expect(result.html).toContain('Maharashtra Day');
+  });
+
+  it('shows AI Picks empty copy when the watchlist overlaps holdings', async () => {
+    const result = await composeBriefing(
+      {
+        date: today,
+        watchlist: ['ZZTOP'],
+        thesisRun: {
+          generated: 0,
+          failed: 0,
+          candidateCount: 0,
+          eligibleUniverseSize: 0,
+          watchlistSize: 2,
+        },
+      },
+      db,
+      llm,
+    );
+
+    expect(result.data.aiPicksStatus).toEqual({
+      kind: 'empty',
+      reason: 'all_watchlist_owned',
+      candidateCount: 0,
+    });
+    expect(result.html).toContain('already in My Portfolio');
+  });
+
+  it('includes portfolio risk rollup when holdings exist', async () => {
+    upsertHoldings(
+      [
+        {
+          symbol: 'INFY',
+          exchange: 'NSE',
+          asOf: today,
+          qty: 10,
+          avgPrice: 1500,
+          lastPrice: 1450,
+          pnl: -500,
+          pnlPct: -3.3,
+          dayChange: 0,
+          dayChangePct: 0,
+          product: 'CNC',
+          source: 'kite',
+        },
+      ],
+      db,
+    );
+    const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
+    expect(result.html).toContain('Portfolio risk snapshot');
+    expect(result.html).toContain('Top weights');
+    expect(result.html).toContain('INFY');
   });
 
   it('includes sentiment badges in news section', async () => {

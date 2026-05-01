@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getDb, insertNews, migrate } from '../../src/db/index.js';
-import { enrichSentiment } from '../../src/enrichers/sentiment/enricher.js';
+import { enrichSentiment, validateSentimentBatch } from '../../src/enrichers/sentiment/enricher.js';
 import { MockLlmProvider } from '../../src/llm/providers/mock.js';
 import type { NewsItem } from '../../src/types/domain.js';
 
@@ -62,11 +62,30 @@ describe('sentiment enricher', () => {
     }>;
 
     expect(rows).toHaveLength(2);
+    const beats = rows.find((r) => r.headline.includes('beats'));
+    const weak = rows.find((r) => r.headline.includes('weak'));
+    expect(beats?.sentiment).toBeGreaterThan(0.3);
+    expect(weak?.sentiment).toBeLessThan(0);
     for (const r of rows) {
       expect(r.sentiment).not.toBeNull();
       expect(r.sentiment).toBeGreaterThanOrEqual(-1);
       expect(r.sentiment).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('validateSentimentBatch rejects missing or extra ids', () => {
+    expect(() => validateSentimentBatch([1, 2], [{ id: 1, sentiment: 0.2 }])).toThrow(
+      /count mismatch/,
+    );
+    expect(() =>
+      validateSentimentBatch(
+        [1, 2],
+        [
+          { id: 1, sentiment: 0.2 },
+          { id: 3, sentiment: 0.1 },
+        ],
+      ),
+    ).toThrow(/mismatch/);
   });
 
   it('skips already-scored headlines when unscoredOnly=true', async () => {

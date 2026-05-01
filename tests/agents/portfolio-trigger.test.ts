@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  PORTFOLIO_DEEP_LOSS_PCT,
+  buildLiteSnapshotCopy,
+  getPortfolioDeepLossPct,
   needsPortfolioLlmReview,
   signalExtremesWarrantReview,
 } from '../../src/agents/portfolio-trigger.js';
@@ -55,9 +56,56 @@ describe('portfolio-trigger', () => {
   });
 
   it('forces full LLM at deep loss threshold', () => {
-    const h = baseHolding('DEEP', PORTFOLIO_DEEP_LOSS_PCT);
+    const h = baseHolding('DEEP', getPortfolioDeepLossPct());
     upsertHoldings([h], db);
     expect(needsPortfolioLlmReview(h, date, db)).toBe(true);
+  });
+
+  it('respects PORTFOLIO_FULL_REVIEW_LOSS_PCT override', () => {
+    process.env.PORTFOLIO_FULL_REVIEW_LOSS_PCT = '-20';
+    const deep = baseHolding('EDGE', -21);
+    const shallow = baseHolding('OK', -18);
+    upsertHoldings([deep, shallow], db);
+    expect(needsPortfolioLlmReview(deep, date, db)).toBe(true);
+    expect(needsPortfolioLlmReview(shallow, date, db)).toBe(false);
+    process.env.PORTFOLIO_FULL_REVIEW_LOSS_PCT = undefined;
+  });
+
+  it('lite snapshot produces deterministic bull and bear commentary', () => {
+    upsertSignals(
+      [
+        { symbol: 'CALM', date, name: 'rsi_14', value: 34, source: 'technical' },
+        {
+          symbol: 'CALM',
+          date,
+          name: 'volume_ratio_20d',
+          value: 1.25,
+          source: 'technical',
+        },
+        {
+          symbol: 'CALM',
+          date,
+          name: 'pct_from_52w_low',
+          value: 4,
+          source: 'technical',
+        },
+        {
+          symbol: 'CALM',
+          date,
+          name: 'pct_from_52w_high',
+          value: -25,
+          source: 'technical',
+        },
+      ],
+      db,
+    );
+    const h = baseHolding('CALM', -12);
+    upsertHoldings([h], db);
+    const copy = buildLiteSnapshotCopy(h, date, db);
+    expect(copy.bullPoints.length).toBeGreaterThan(0);
+    expect(copy.bearPoints.length).toBeGreaterThan(0);
+    expect(copy.thesis).toContain('Technical snapshot');
+    expect(copy.bullPoints.some((b) => /RSI|52W|Volume/i.test(b))).toBe(true);
   });
 
   it('uses lite path when quiet and above deep-loss threshold', () => {

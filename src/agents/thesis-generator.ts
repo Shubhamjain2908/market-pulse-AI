@@ -27,11 +27,18 @@ const log = child({ component: 'thesis-generator' });
 const SYSTEM_PROMPT = `You are a senior Indian equity research analyst (SEBI-registered RIA mindset).
 You produce actionable, concise investment theses for NSE/BSE stocks.
 
+CONTEXT:
+- These ideas are for NEW watchlist opportunities — symbols the reader does NOT already hold.
+  Existing holdings are reviewed separately under My Portfolio.
+
 RULES:
 1. Base your thesis ONLY on the data provided — do not hallucinate financials.
 2. Keep thesis under 200 words. Be specific about catalysts and risks.
 3. entryZone, stopLoss, target must be price ranges in INR (e.g. "₹2,400–₹2,450").
-4. confidenceScore: 1=speculative, 5=moderate conviction, 10=highest conviction.
+4. confidenceScore: Use the FULL 1–10 range (do not cluster around 5–6).
+   - 3–4: mostly technical / weak fundamentals or noisy setup.
+   - 7–8: strong alignment between technicals and fundamentals or clear catalyst path.
+   - 9–10: reserved for exceptional multi-signal, high-conviction setups only.
 5. timeHorizon: "short" (1-4 weeks), "medium" (1-3 months), "long" (3-12 months).
 6. triggerScreen: describe what signal/pattern triggered this analysis.
 7. Always provide at least 1 bull case and 1 bear case.
@@ -62,8 +69,12 @@ export interface ThesisGeneratorResult {
   date: string;
   generated: number;
   failed: number;
-  /** Watchlist + holdings considered “interesting” before the max-thesis cap. */
+  /** Candidates with score > 0 after ranking (before max-thesis cap). */
   candidateCount: number;
+  /** Watchlist symbols excluding current holdings — thesis eligibility universe. */
+  eligibleUniverseSize: number;
+  /** Raw watchlist symbol count for messaging when AI Picks is empty. */
+  watchlistSize: number;
   theses: StoredThesis[];
 }
 
@@ -74,8 +85,10 @@ export async function generateTheses(
 ): Promise<ThesisGeneratorResult> {
   const date = opts.date ?? isoDateIst();
   const watchlist = (opts.watchlist ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
-  const holdings = getLatestHoldings(db).map((h) => h.symbol.toUpperCase());
-  const universe = [...new Set([...watchlist, ...holdings])];
+  const holdingsUpper = getLatestHoldings(db).map((h) => h.symbol.toUpperCase());
+  const holdingSet = new Set(holdingsUpper);
+  /** AI Picks: watchlist names not already in the portfolio. */
+  const universe = watchlist.filter((s) => !holdingSet.has(s));
   const maxTheses = opts.maxTheses ?? config.THESIS_MAX_PER_RUN;
 
   const candidates = rankCandidates(date, universe, db);
@@ -83,10 +96,22 @@ export async function generateTheses(
 
   if (toGenerate.length === 0) {
     log.info(
-      { universe: universe.length, ranked: candidates.length },
+      {
+        universe: universe.length,
+        watchlist: watchlist.length,
+        ranked: candidates.length,
+      },
       'no candidates with interesting signals for thesis generation',
     );
-    return { date, generated: 0, failed: 0, candidateCount: candidates.length, theses: [] };
+    return {
+      date,
+      generated: 0,
+      failed: 0,
+      candidateCount: candidates.length,
+      eligibleUniverseSize: universe.length,
+      watchlistSize: watchlist.length,
+      theses: [],
+    };
   }
 
   log.info({ candidates: toGenerate.map((c) => c.symbol) }, 'generating theses for top candidates');
@@ -134,7 +159,15 @@ export async function generateTheses(
     'thesis generation complete',
   );
 
-  return { date, generated, failed, candidateCount: candidates.length, theses };
+  return {
+    date,
+    generated,
+    failed,
+    candidateCount: candidates.length,
+    eligibleUniverseSize: universe.length,
+    watchlistSize: watchlist.length,
+    theses,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -148,11 +181,8 @@ interface Candidate {
   reasons: string[];
 }
 
-/** Holdings at or below this unrealised P&amp;L % are forced into the candidate pool. */
-const PORTFOLIO_THESIS_LOSS_PCT = -15;
-
 /**
- * Ordered thesis-interest ranking for the universe (watchlist + holdings).
+ * Ordered thesis-interest ranking for the thesis universe (typically watchlist ∩ ¬holdings).
  * Used by `generateTheses` and the briefing “why ranked #N” line.
  */
 export function getThesisRankMeta(
@@ -207,11 +237,6 @@ function rankCandidates(date: string, universe: string[], db: DatabaseType): Can
       }>
     ).map((r) => r.symbol.toUpperCase()),
   );
-  const deepLossSyms = new Set(
-    getLatestHoldings(db)
-      .filter((h) => h.pnlPct != null && h.pnlPct <= PORTFOLIO_THESIS_LOSS_PCT)
-      .map((h) => h.symbol.toUpperCase()),
-  );
 
   const candidates: Candidate[] = [];
   for (const symbol of universe) {
@@ -257,10 +282,6 @@ function rankCandidates(date: string, universe: string[], db: DatabaseType): Can
     if (alertSyms.has(symbol)) {
       score += 5;
       reasons.push('Watchlist alert today');
-    }
-    if (deepLossSyms.has(symbol)) {
-      score += 7;
-      reasons.push('Portfolio drawdown focus');
     }
 
     if (score > 0) {

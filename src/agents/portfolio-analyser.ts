@@ -22,8 +22,9 @@ import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import {
-  PORTFOLIO_DEEP_LOSS_PCT,
   buildLiteSnapshotCopy,
+  getLatestSignalsMap,
+  getPortfolioDeepLossPct,
   needsPortfolioLlmReview,
 } from './portfolio-trigger.js';
 import { buildStockContext } from './thesis-generator.js';
@@ -60,6 +61,8 @@ Rules:
 3. ADD/TRIM/EXIT need a concrete catalyst from the provided data — name it in triggerReason.
 4. Conviction is 0..1. Below 0.4 → HOLD by default unless exit evidence is strong.
 5. suggestedStop / suggestedTarget are optional INR numbers.
+6. Do NOT recommend ADD when RSI_14 > 70 or price is within ~3% of the 52-week high
+   (pct_from_52w_high >= -3). In those cases prefer HOLD and cite overbought / extended setup.
 
 Output ONLY a single JSON object matching the schema. No markdown fences.
 
@@ -76,10 +79,40 @@ Schema:
   "suggestedTarget": number | null
 }`;
 
-const DEEP_LOSS_ADDON = `
-CRITICAL — UNREALISED LOSS >= ${Math.abs(PORTFOLIO_DEEP_LOSS_PCT)}%:
+function portfolioDeepLossAddon(): string {
+  const t = Math.abs(getPortfolioDeepLossPct());
+  return `
+CRITICAL — UNREALISED LOSS >= ${t}%:
 HOLD is only acceptable if idiosyncratic recovery evidence exists in the supplied data.
 Otherwise prefer TRIM or EXIT and say why. Cite the drawdown magnitude in triggerReason.`;
+}
+
+/** Code-level enforcement if the model ignores ADD restrictions (RSI / 52W extension). */
+export function applyPortfolioAddGuardrails(
+  action: PortfolioAction,
+  signals: Record<string, number>,
+): PortfolioAction {
+  if (action.action !== 'ADD') return action;
+  const rsi = signals.rsi_14;
+  const pctHi = signals.pct_from_52w_high;
+  const overbought = rsi != null && rsi > 70;
+  const near52wHigh = pctHi != null && pctHi >= -3;
+  if (!overbought && !near52wHigh) return action;
+
+  const bits: string[] = [];
+  if (overbought) bits.push(`RSI ${rsi?.toFixed(0)} > 70`);
+  if (near52wHigh) bits.push(`≤3% from 52W high (${pctHi?.toFixed(1)}% off high)`);
+  const suffix = `[Guardrail: ${bits.join('; ')} — HOLD vs ADD into extension.]`;
+  let triggerReason = `${action.triggerReason} ${suffix}`;
+  if (triggerReason.length > 280) triggerReason = `${triggerReason.slice(0, 276)}…`;
+
+  return {
+    ...action,
+    action: 'HOLD',
+    conviction: Math.min(action.conviction, 0.55),
+    triggerReason,
+  };
+}
 
 export interface PortfolioAnalyserOptions {
   date?: string;
@@ -230,8 +263,8 @@ async function analyseOne(
 ): Promise<PortfolioAnalysisRow> {
   const stockContext = buildStockContext(h.symbol, date, db, 'portfolio');
   const positionContext = buildPositionContext(h, date, db);
-  const deep = h.pnlPct != null && h.pnlPct <= PORTFOLIO_DEEP_LOSS_PCT;
-  const system = deep ? `${PORTFOLIO_SYSTEM}\n${DEEP_LOSS_ADDON}` : PORTFOLIO_SYSTEM;
+  const deep = h.pnlPct != null && h.pnlPct <= getPortfolioDeepLossPct();
+  const system = deep ? `${PORTFOLIO_SYSTEM}${portfolioDeepLossAddon()}` : PORTFOLIO_SYSTEM;
 
   const prompt = `${positionContext}\n\n${stockContext}`;
   const result = await llm.generateJson({
@@ -240,7 +273,8 @@ async function analyseOne(
     schema: PortfolioActionSchema,
     maxRetries: 1,
   });
-  const a: PortfolioAction = result.data;
+  const signals = getLatestSignalsMap(h.symbol, date, db);
+  const a: PortfolioAction = applyPortfolioAddGuardrails(result.data, signals);
 
   return {
     symbol: h.symbol,

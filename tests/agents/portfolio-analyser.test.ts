@@ -10,6 +10,7 @@ import {
   migrate,
   upsertHoldings,
   upsertQuotes,
+  upsertSignals,
 } from '../../src/db/index.js';
 import { MockLlmProvider } from '../../src/llm/providers/mock.js';
 import type { RawQuote } from '../../src/types/domain.js';
@@ -126,6 +127,15 @@ describe('portfolio analyser', () => {
     const filtered = await analysePortfolio({ date, minPositionInr: 60_000 }, db, llm2);
     expect(filtered.analysed).toBe(1);
     expect(filtered.rows[0]?.symbol).toBe('INFY');
+  });
+
+  it('downgrades ADD to HOLD when RSI is overbought (post-LLM guardrail)', async () => {
+    upsertSignals([{ symbol: 'INFY', date, name: 'rsi_14', value: 72, source: 'technical' }], db);
+    const llm = new MockLlmProvider();
+    const result = await analysePortfolio({ date, symbols: ['INFY'] }, db, llm);
+    const infy = result.rows.find((r) => r.symbol === 'INFY');
+    expect(infy?.action).toBe('HOLD');
+    expect(infy?.triggerReason).toContain('Guardrail');
   });
 
   it('returns empty result when there are no holdings', async () => {
