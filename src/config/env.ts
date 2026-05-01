@@ -14,9 +14,7 @@ const EnvSchema = z.object({
 
   DATABASE_PATH: z.string().default('./data/market-pulse.db'),
 
-  LLM_PROVIDER: z
-    .enum(['cursor-agent', 'anthropic', 'vertex', 'openai', 'mock'])
-    .default('vertex'),
+  LLM_PROVIDER: z.enum(['cursor-agent', 'anthropic', 'vertex', 'openai', 'mock']).default('vertex'),
 
   CURSOR_AGENT_BIN: z.string().optional(),
   CURSOR_AGENT_MODEL: z.string().optional(),

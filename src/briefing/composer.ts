@@ -280,6 +280,8 @@ function alertSignalLabel(kind: string): string {
       return '52W High';
     case 'near_52w_low':
       return '52W Low';
+    case 'stop_loss_breach':
+      return 'Stop Loss';
     default:
       return kind;
   }

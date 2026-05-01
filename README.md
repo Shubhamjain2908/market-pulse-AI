@@ -5,13 +5,15 @@ A personal morning-briefing agent for Indian stock markets (NSE/BSE).
 modular pipeline that runs every weekday at 7:30 AM IST and emails you a
 short, actionable briefing before market open.
 
-> **Status:** Phases 0–3 + 5 shipped. Phase 5 adds Zerodha Kite Connect
+> **Status:** Phases 0–5 shipped (Delivery included). Phase 5 adds Zerodha Kite Connect
 > integration, a per-holding LLM-driven HOLD/ADD/TRIM/EXIT analyser, an
 > intraday LTP scanner, four additional built-in screens (RSI Oversold
 > Bounce, Golden Cross, Volume Breakout, Dividend Compounder), and a
 > single-command `pnpm daily` that runs the entire pipeline end-to-end and
 > produces a briefing with a "My Portfolio" section showing each
-> position's recommended action. The earlier phases provide: a JSON-driven
+> position's recommended action. Phase 4 now adds croner scheduling
+> (07:30 / 15:30 weekdays, Sat 08:00 IST), Gmail SMTP delivery via
+> nodemailer, and stop-loss breach detection alerts. The earlier phases provide: a JSON-driven
 > screen engine, first-class watchlist alerts, a backtest harness, LLM
 > sentiment scoring, AI thesis generation, and an AI-composed HTML
 > briefing. Supports Cursor Agent, Anthropic, OpenAI, and Vertex AI
@@ -151,6 +153,9 @@ pnpm cli portfolio-analyse -s INFY,HDFCBANK
 pnpm cli portfolio-analyse -j 12    # override parallel calls for speed/tuning
 pnpm cli scan              # one-shot intraday LTP refresh + live alerts
                            # (cron every 5-15 min during market hours)
+pnpm cli schedule          # start built-in croner schedule:
+                           # weekdays 07:30 + 15:30, Saturday 08:00 (IST)
+pnpm cli schedule --run-now
 
 pnpm cli doctor            # config diagnostics (no secrets)
 ```
@@ -287,6 +292,12 @@ To enable it:
    ```
    The briefing now contains a "My Portfolio" section right under the
    market-mood banner, with every position's recommended action.
+5. Optional automation:
+   ```
+   pnpm schedule
+   ```
+   Starts recurring jobs at 07:30 / 15:30 on weekdays and 08:00 on
+   Saturdays (IST), using your configured delivery channel.
 
 If you'd rather skip Kite entirely, leave `PORTFOLIO_SOURCE=manual` (the
 default) and edit `config/portfolio.json`. Same downstream output —
@@ -299,6 +310,29 @@ watchlist and current holdings, persists each tick to `intraday_quotes`,
 and flags any symbol whose intraday move exceeds `--threshold` (default
 `3` percent) as a live alert. Cron-friendly — the command exits on
 completion, so a `*/10 * * * *` entry during market hours is enough.
+
+### Gmail delivery (nodemailer)
+
+Set in `.env`:
+
+```
+BRIEFING_DELIVERY=email
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=you@gmail.com
+SMTP_PASS=<gmail-app-password>
+SMTP_FROM=you@gmail.com
+SMTP_TO=you@gmail.com
+```
+
+Use a Gmail **App Password** (free), not your account password.
+
+### Stop-loss breach alerts
+
+The workflow reads `stopLoss` values from `config/portfolio.json` and
+compares them with latest known prices (Kite LTP preferred, fallback to
+latest EOD close). Breaches are persisted to the `alerts` table with
+kind `stop_loss_breach` and appear in the briefing's alerts section.
 
 ---
 
@@ -363,7 +397,7 @@ pnpm build              # tsc -> dist/  (also copies SQL assets)
 | 1     | Ingest + enrich      | ✅ shipped    | NSE/Yahoo/Screener/RSS ingestors; SMA/EMA/RSI/ATR/volume/52W signals; HTML briefing |
 | 2     | Screening + backtest | ✅ shipped    | JSON screen DSL; momentum / value / FII screens; first-class watchlist alerts; backtest harness with hit-rate / drawdown |
 | 3     | AI layer             | ✅ shipped    | Anthropic/OpenAI/Cursor providers; sentiment enricher; thesis generator; LLM briefing narrative |
-| 4     | Delivery             | partial       | File output shipping; cron schedule + Gmail / Slack / Telegram channels still TODO |
+| 4     | Delivery             | ✅ shipped    | Croner schedule (07:30 / 15:30 weekdays, Sat 08:00 IST), Gmail SMTP delivery via nodemailer, stop-loss breach detector |
 | 5     | Real-time + Kite     | ✅ shipped    | Kite Connect HTTP client + interactive login; portfolio sync + per-holding LLM HOLD/ADD/TRIM/EXIT analyser; intraday LTP scanner; 4 new screens; single-command `pnpm daily` |
 
 ---

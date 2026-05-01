@@ -18,6 +18,7 @@
  *   mp portfolio-sync    Pull holdings from Kite (or manual) into the DB
  *   mp portfolio-analyse Run LLM-driven HOLD/ADD/TRIM/EXIT analysis per holding
  *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
+ *   mp schedule          Start croner jobs (07:30 / 15:30 weekdays, Sat 08:00)
  *   mp doctor            Print runtime/config diagnostics
  *
  * Run `mp --help` or `mp <cmd> --help` for full options.
@@ -27,19 +28,21 @@ import { Command } from 'commander';
 import { runBacktester } from './agents/backtester.js';
 import { runBriefingComposer } from './agents/briefing-composer.js';
 import { runDailyIngestor } from './agents/daily-ingestor.js';
+import { runDailyWorkflow } from './agents/daily-workflow.js';
 import { runLiveScan } from './agents/live-scanner.js';
 import { analysePortfolio } from './agents/portfolio-analyser.js';
 import { runPortfolioSync } from './agents/portfolio-sync.js';
 import { runSignalEnricher } from './agents/signal-enricher.js';
 import { runStockScreener } from './agents/stock-screener.js';
 import { generateTheses } from './agents/thesis-generator.js';
-import { deliverToFile } from './briefing/index.js';
+import { deliverToEmail, deliverToFile } from './briefing/index.js';
 import { config } from './config/env.js';
 import { APP_NAME, APP_VERSION } from './constants.js';
 import { closeDb, getDb, migrate } from './db/index.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
 import { logger } from './logger.js';
+import { startScheduler } from './scheduler/market-scheduler.js';
 
 const program = new Command();
 
@@ -180,7 +183,7 @@ program
         delivery: opts.delivery,
         skipAi: opts.skipAi,
       });
-      deliverBriefing(result.html, result.date, opts.delivery ?? config.BRIEFING_DELIVERY);
+      await deliverBriefing(result.html, result.date, opts.delivery ?? config.BRIEFING_DELIVERY);
       closeDb();
     },
   );
@@ -209,7 +212,7 @@ program
     }
 
     const result = await runBriefingComposer({ date, skipAi: opts.skipAi });
-    deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
+    await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
     logger.info({ date: result.date, delivery: result.delivery }, 'pipeline complete');
     closeDb();
   });
@@ -222,51 +225,16 @@ program
   .action(async (opts: { skipAi?: boolean; skipPortfolio?: boolean }) => {
     ensureDb();
     const date = program.opts<{ date?: string }>().date;
-
-    await runDailyIngestor({ date });
-    await runSignalEnricher({ date });
-    await runStockScreener({ date });
-
-    if (!opts.skipPortfolio) {
-      try {
-        await runPortfolioSync({ date });
-      } catch (err) {
-        logger.warn(
-          { err: (err as Error).message },
-          'portfolio sync failed; continuing without portfolio data',
-        );
-      }
-    }
-
-    if (!opts.skipAi) {
-      const sentimentResult = await enrichSentiment();
-      logger.info(sentimentResult, 'sentiment scoring done');
-
-      const thesisResult = await generateTheses({ date });
-      logger.info(
-        { generated: thesisResult.generated, failed: thesisResult.failed },
-        'thesis generation done',
-      );
-
-      if (!opts.skipPortfolio) {
-        const portfolioResult = await analysePortfolio({ date });
-        logger.info(
-          {
-            analysed: portfolioResult.analysed,
-            failed: portfolioResult.failed,
-            byAction: portfolioResult.byAction,
-          },
-          'portfolio analysis done',
-        );
-      }
-    }
-
-    const result = await runBriefingComposer({ date, skipAi: opts.skipAi });
-    deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
+    const result = await runDailyWorkflow({
+      date,
+      skipAi: opts.skipAi,
+      skipPortfolio: opts.skipPortfolio,
+    });
+    await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
     logger.info(
       {
         date: result.date,
-        delivery: result.delivery,
+        delivery: config.BRIEFING_DELIVERY,
         portfolioCount: result.portfolioCount,
         thesesCount: result.thesesCount,
         screenMatchesCount: result.screenMatchesCount,
@@ -343,24 +311,51 @@ program
     closeDb();
   });
 
-/**
- * Phase 1 supports the `file` channel. Other channels log a warning and
- * skip - real implementations (Gmail SMTP, Slack, Telegram) land in
- * Phase 4.
- */
-function deliverBriefing(
+program
+  .command('schedule')
+  .description('start croner schedule (07:30 / 15:30 weekdays, Sat 08:00 IST)')
+  .option('--run-now', 'run one cycle immediately on startup')
+  .action(async (opts: { runNow?: boolean }) => {
+    ensureDb();
+    if (opts.runNow) {
+      const now = await runDailyWorkflow();
+      await deliverBriefing(now.html, now.date, config.BRIEFING_DELIVERY);
+      logger.info({ date: now.date }, 'initial run-now cycle complete');
+      closeDb();
+    }
+    const handle = startScheduler();
+    process.on('SIGINT', () => {
+      handle.stop();
+      closeDb();
+      process.exit(0);
+    });
+    process.on('SIGTERM', () => {
+      handle.stop();
+      closeDb();
+      process.exit(0);
+    });
+    await new Promise<void>(() => {
+      // Intentionally never resolved; process exits on SIGINT/SIGTERM handlers.
+    });
+  });
+
+async function deliverBriefing(
   html: string,
   date: string,
   method: 'file' | 'email' | 'slack' | 'telegram',
-): void {
-  if (method !== 'file') {
-    logger.warn(
-      { delivery: method },
-      'non-file delivery not implemented yet - briefing not delivered',
-    );
+): Promise<void> {
+  if (method === 'file') {
+    deliverToFile(html, date);
     return;
   }
-  deliverToFile(html, date);
+  if (method === 'email') {
+    await deliverToEmail(html, date);
+    return;
+  }
+  logger.warn(
+    { delivery: method },
+    'delivery channel not implemented yet - briefing not delivered',
+  );
 }
 
 program

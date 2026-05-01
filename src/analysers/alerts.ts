@@ -24,7 +24,8 @@ export type AlertKind =
   | 'rsi_oversold'
   | 'volume_spike'
   | 'near_52w_high'
-  | 'near_52w_low';
+  | 'near_52w_low'
+  | 'stop_loss_breach';
 
 export interface Alert {
   symbol: string;

@@ -10,6 +10,7 @@
  * never has to care which source produced the row.
  */
 
+import type { Database as DatabaseType } from 'better-sqlite3';
 import { config } from '../config/env.js';
 import { loadPortfolio } from '../config/loaders.js';
 import { type PortfolioHoldingRow, getDb, upsertHoldings } from '../db/index.js';
@@ -31,15 +32,16 @@ export interface PortfolioSyncResult {
 export async function runPortfolioSync(opts: { date?: string } = {}): Promise<PortfolioSyncResult> {
   const date = opts.date ?? isoDateIst();
   const source = config.PORTFOLIO_SOURCE;
+  const db = getDb();
 
   let rows: PortfolioHoldingRow[];
   if (source === 'kite') {
     rows = await fetchKiteHoldings(date);
   } else {
-    rows = readManualHoldings(date);
+    rows = readManualHoldings(date, db);
   }
 
-  upsertHoldings(rows, getDb());
+  upsertHoldings(rows, db);
 
   const totalValue = rows.reduce((s, r) => s + r.qty * (r.lastPrice ?? r.avgPrice), 0);
   const totalPnl = rows.reduce((s, r) => s + (r.pnl ?? 0), 0);
@@ -103,21 +105,46 @@ async function fetchKiteHoldings(date: string): Promise<PortfolioHoldingRow[]> {
     });
 }
 
-function readManualHoldings(date: string): PortfolioHoldingRow[] {
+function readManualHoldings(date: string, db: DatabaseType): PortfolioHoldingRow[] {
   const portfolio = loadPortfolio();
   return portfolio.holdings.map<PortfolioHoldingRow>((h) => ({
+    ...resolveManualPnl(h.symbol.toUpperCase(), h.avgPrice, h.qty, date, db),
     symbol: h.symbol.toUpperCase(),
     exchange: 'NSE',
     asOf: date,
     qty: h.qty,
     avgPrice: h.avgPrice,
-    lastPrice: null,
-    pnl: null,
-    pnlPct: null,
     dayChange: null,
     dayChangePct: null,
     product: null,
     source: 'manual',
     raw: null,
   }));
+}
+
+function resolveManualPnl(
+  symbol: string,
+  avgPrice: number,
+  qty: number,
+  date: string,
+  db: DatabaseType,
+): Pick<PortfolioHoldingRow, 'lastPrice' | 'pnl' | 'pnlPct'> {
+  const row = db
+    .prepare(
+      `
+      SELECT close
+      FROM quotes
+      WHERE symbol = ? AND date <= ?
+      ORDER BY date DESC
+      LIMIT 1
+    `,
+    )
+    .get(symbol, date) as { close?: number } | undefined;
+  const lastPrice = row?.close ?? null;
+  if (lastPrice == null || avgPrice <= 0) {
+    return { lastPrice: null, pnl: null, pnlPct: null };
+  }
+  const pnl = (lastPrice - avgPrice) * qty;
+  const pnlPct = (lastPrice / avgPrice - 1) * 100;
+  return { lastPrice, pnl, pnlPct };
 }

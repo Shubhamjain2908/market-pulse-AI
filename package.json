@@ -34,6 +34,7 @@
     "daily": "tsx src/cli.ts daily",
     "kite-login": "tsx src/cli.ts kite-login",
     "scan": "tsx src/cli.ts scan",
+    "schedule": "tsx src/cli.ts schedule",
     "prepare": "echo 'skip husky setup until added'"
   },
   "keywords": [
@@ -58,6 +59,7 @@
     "croner": "^9.0.0",
     "dotenv": "^16.4.5",
     "got": "^14.6.6",
+    "nodemailer": "^8.0.7",
     "openai": "^6.35.0",
     "p-limit": "^6.2.0",
     "pino": "^9.5.0",
@@ -71,6 +73,7 @@
     "@biomejs/biome": "^1.9.4",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
+    "@types/nodemailer": "^8.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
