@@ -142,9 +142,13 @@ export async function enrichSentiment(
 
         validateSentimentBatch(expectedIds, result.data);
 
+        const headlineById = new Map(batch.map((r) => [r.id, r.headline]));
+
         const tx = db.transaction(() => {
           for (const item of result.data) {
-            const clamped = Math.max(-1, Math.min(1, item.sentiment));
+            const headline = headlineById.get(item.id) ?? '';
+            const nudged = nudgeIndianEarningsScore(headline, item.sentiment);
+            const clamped = Math.max(-1, Math.min(1, nudged));
             updateStmt.run(clamped, item.id);
             stats.scored++;
           }
@@ -180,4 +184,52 @@ export async function enrichSentiment(
 
 function escapeForPrompt(s: string): string {
   return s.replace(/"/g, '\\"').replace(/\n/g, ' ');
+}
+
+/**
+ * Structural correction for the LLM's chronic under-confidence on Indian earnings/order
+ * headlines. If the model returns a near-neutral score for a clearly-positive headline
+ * (e.g. "Q4 profit jumps 42%", "PAT soars 5-fold", "bags large order"), lift it to a
+ * mildly-positive band so the briefing's sentiment-magnitude filter does not drop it.
+ *
+ * Symmetric handling for clearly-negative phrasing ("PAT slumps", "loss widens"). Only
+ * adjusts when the LLM was already in the soft `[-0.20, +0.20]` range — strong scores
+ * from the model are respected as-is.
+ *
+ * Exported for unit tests.
+ */
+export function nudgeIndianEarningsScore(headline: string, current: number): number {
+  if (current >= 0.4 || current <= -0.4) return current;
+
+  const positive =
+    /(profit|pat|net\s*profit|earnings|revenue|topline)\s*(jumps|jumped|surge[ds]?|soar[ds]?|rises|rose|up\b|grew|grows|climbs|climbed|increase[ds]?|expand[ds]?)/i.test(
+      headline,
+    ) ||
+    /q[1-4]\s+(results|profit|pat|revenue).*(beat|beats|jump|surge|rise|grow|up\b|expansion|increase|soar)/i.test(
+      headline,
+    ) ||
+    /(bags|wins|secures)\s+(large\s+)?order|order\s+(win|inflow)/i.test(headline) ||
+    /margin(s)?\s+expand|record\s+(profit|revenue)|all-time\s+high/i.test(headline) ||
+    /pat\s+(up|surges|soars|increase[ds]?)|profit\s+(soars|doubles|triples|five[-\s]?fold)/i.test(
+      headline,
+    );
+
+  if (positive && current < 0.45) {
+    return 0.45;
+  }
+
+  const negative =
+    /(profit|pat|net\s*profit|earnings|revenue)\s*(slump|slumps|drop|drops|fall|falls|decline|declines|miss|misses)/i.test(
+      headline,
+    ) ||
+    /loss\s+(widens|widen|swings|deepens)/i.test(headline) ||
+    /downgrade[ds]?|cut\s+to\s+(sell|underperform)|fraud|probe\s+by\s+(sebi|cbi|ed)/i.test(
+      headline,
+    );
+
+  if (negative && current > -0.45) {
+    return -0.45;
+  }
+
+  return current;
 }

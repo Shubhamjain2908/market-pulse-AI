@@ -570,8 +570,34 @@ function newsRelevanceScore(n: NewsRow, watchlist: Set<string>): number {
 }
 
 /**
- * Pulls recent headlines anchored to the briefing calendar date (replay-safe), drops
- * duplicate headlines, and surfaces watchlist-tagged symbols first.
+ * Deterministic noise patterns: feeds that are not actionable for an Indian-equity
+ * watchlist briefing. Sentiment scoring is unreliable here (the LLM keeps returning
+ * 0.10 for "any-financial-context" headlines), so we strip them by URL/source before
+ * any sentiment-based filtering.
+ */
+const NOISE_URL_PATTERNS: RegExp[] = [
+  /\/markets\/us-stocks\//i,
+  /\/quote-of-the-day-/i,
+  /\/liveblog\//i,
+];
+
+export function isNoiseHeadline(n: { url: string }): boolean {
+  return NOISE_URL_PATTERNS.some((re) => re.test(n.url));
+}
+
+/**
+ * Sentiment magnitude required to keep a non-watchlist, untagged headline.
+ * Set deliberately below the architect's `0.3` cutoff so that domestic earnings
+ * the LLM under-scores at `0.10` (e.g. "Q4 profit jumps 42%") still survive
+ * after the enricher's keyword nudge lifts them above this floor.
+ */
+const NEWS_SENTIMENT_KEEP_MAGNITUDE = 0.2;
+
+/**
+ * Pulls recent headlines anchored to the briefing calendar date (replay-safe),
+ * removes deterministic noise (US-stocks live blogs, "quote of the day", etc.),
+ * drops duplicate headlines, and applies a sentiment-magnitude floor while
+ * always keeping watchlist-tagged items.
  */
 function gatherNews(
   hours: number,
@@ -599,18 +625,26 @@ function gatherNews(
   const seen = new Set<string>();
   const deduped: NewsRow[] = [];
   for (const r of rows) {
+    if (isNoiseHeadline(r)) continue;
     const key = normalizeNewsHeadline(r.headline);
     if (seen.has(key)) continue;
     seen.add(key);
     deduped.push(r);
   }
 
-  deduped.sort((a, b) => {
+  const filtered = deduped.filter((n) => {
+    const sym = n.symbol?.toUpperCase();
+    if (sym && watchlist.has(sym)) return true;
+    if (n.sentiment == null) return true;
+    return Math.abs(n.sentiment) >= NEWS_SENTIMENT_KEEP_MAGNITUDE;
+  });
+
+  filtered.sort((a, b) => {
     const ra = newsRelevanceScore(a, watchlist);
     const rb = newsRelevanceScore(b, watchlist);
     if (rb !== ra) return rb - ra;
     return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
   });
 
-  return deduped.slice(0, limit);
+  return filtered.slice(0, limit);
 }
