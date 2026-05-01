@@ -42,7 +42,7 @@ const PortfolioActionSchema = z.object({
   suggestedStop: z.number().nullable().optional(),
   suggestedTarget: z.number().nullable().optional(),
 });
-type PortfolioAction = z.infer<typeof PortfolioActionSchema>;
+export type PortfolioAction = z.infer<typeof PortfolioActionSchema>;
 
 const PORTFOLIO_SYSTEM = `You are a senior Indian-equity portfolio review analyst. The user already
 OWNS the position you are analysing. Recommend ONE of four actions based ONLY on the data provided:
@@ -63,6 +63,10 @@ Rules:
 5. suggestedStop / suggestedTarget are optional INR numbers.
 6. Do NOT recommend ADD when RSI_14 > 70 or price is within ~3% of the 52-week high
    (pct_from_52w_high >= -3). In those cases prefer HOLD and cite overbought / extended setup.
+7. AVERAGING DOWN: If you recommend ADD on a position with negative unrealised P&L, you MUST:
+   (a) state the % gain from \`Last price\` to \`Avg buy price\` (breakeven gain) in \`triggerReason\`;
+   (b) ensure \`suggestedStop\` is far enough below current price that breakeven gain <= ~1.5x
+   the stop's downside %. If R:R is worse than 1.5x or breakeven > 12%, default to HOLD and explain why.
 
 Output ONLY a single JSON object matching the schema. No markdown fences.
 
@@ -87,31 +91,58 @@ HOLD is only acceptable if idiosyncratic recovery evidence exists in the supplie
 Otherwise prefer TRIM or EXIT and say why. Cite the drawdown magnitude in triggerReason.`;
 }
 
-/** Code-level enforcement if the model ignores ADD restrictions (RSI / 52W extension). */
+/** Code-level enforcement: ADD into extension (RSI / 52W) and averaging-down R:R. */
 export function applyPortfolioAddGuardrails(
   action: PortfolioAction,
   signals: Record<string, number>,
+  position: { pnlPct: number | null; lastPrice: number | null },
 ): PortfolioAction {
   if (action.action !== 'ADD') return action;
+
   const rsi = signals.rsi_14;
   const pctHi = signals.pct_from_52w_high;
   const overbought = rsi != null && rsi > 70;
   const near52wHigh = pctHi != null && pctHi >= -3;
-  if (!overbought && !near52wHigh) return action;
+  if (overbought || near52wHigh) {
+    const bits: string[] = [];
+    if (overbought) bits.push(`RSI ${rsi?.toFixed(0)} > 70`);
+    if (near52wHigh) bits.push(`≤3% from 52W high (${pctHi?.toFixed(1)}% off high)`);
+    const suffix = `[Guardrail: ${bits.join('; ')} — HOLD vs ADD into extension.]`;
+    let triggerReason = `${action.triggerReason} ${suffix}`;
+    if (triggerReason.length > 280) triggerReason = `${triggerReason.slice(0, 276)}…`;
 
-  const bits: string[] = [];
-  if (overbought) bits.push(`RSI ${rsi?.toFixed(0)} > 70`);
-  if (near52wHigh) bits.push(`≤3% from 52W high (${pctHi?.toFixed(1)}% off high)`);
-  const suffix = `[Guardrail: ${bits.join('; ')} — HOLD vs ADD into extension.]`;
-  let triggerReason = `${action.triggerReason} ${suffix}`;
-  if (triggerReason.length > 280) triggerReason = `${triggerReason.slice(0, 276)}…`;
+    return {
+      ...action,
+      action: 'HOLD',
+      conviction: Math.min(action.conviction, 0.55),
+      triggerReason,
+    };
+  }
 
-  return {
-    ...action,
-    action: 'HOLD',
-    conviction: Math.min(action.conviction, 0.55),
-    triggerReason,
-  };
+  const { pnlPct, lastPrice } = position;
+  if (pnlPct != null && pnlPct < -8) {
+    const breakevenGainPct = -pnlPct;
+    let stopDownsidePct = 0;
+    if (action.suggestedStop != null && lastPrice != null && lastPrice > 0) {
+      stopDownsidePct = ((lastPrice - action.suggestedStop) / lastPrice) * 100;
+    }
+    const passes =
+      stopDownsidePct >= 4 && breakevenGainPct <= 1.5 * stopDownsidePct && breakevenGainPct <= 15;
+
+    if (!passes) {
+      const suffix = `[Guardrail: averaging down requires R:R; breakeven +${breakevenGainPct.toFixed(1)}% vs stop -${stopDownsidePct.toFixed(1)}%]`;
+      let triggerReason = `${action.triggerReason} ${suffix}`;
+      if (triggerReason.length > 280) triggerReason = `${triggerReason.slice(0, 276)}…`;
+      return {
+        ...action,
+        action: 'HOLD',
+        conviction: Math.min(action.conviction, 0.55),
+        triggerReason,
+      };
+    }
+  }
+
+  return action;
 }
 
 export interface PortfolioAnalyserOptions {
@@ -274,7 +305,10 @@ async function analyseOne(
     maxRetries: 1,
   });
   const signals = getLatestSignalsMap(h.symbol, date, db);
-  const a: PortfolioAction = applyPortfolioAddGuardrails(result.data, signals);
+  const a: PortfolioAction = applyPortfolioAddGuardrails(result.data, signals, {
+    pnlPct: h.pnlPct ?? null,
+    lastPrice: h.lastPrice ?? null,
+  });
 
   return {
     symbol: h.symbol,

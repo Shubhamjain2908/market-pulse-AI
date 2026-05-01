@@ -2,7 +2,7 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { composeBriefing } from '../../src/briefing/composer.js';
+import { composeBriefing, validateMoodNarrative } from '../../src/briefing/composer.js';
 import {
   closeDb,
   getDb,
@@ -15,6 +15,7 @@ import {
   upsertThesis,
 } from '../../src/db/index.js';
 import { MockLlmProvider } from '../../src/llm/providers/mock.js';
+import type { LlmJsonResult, LlmProvider, LlmTextResult } from '../../src/llm/types.js';
 import type { FiiDiiRow, NewsItem, RawQuote, Signal } from '../../src/types/domain.js';
 
 describe('briefing composer (Phase 3–4)', () => {
@@ -247,6 +248,45 @@ describe('briefing composer (Phase 3–4)', () => {
     expect(llm.calls.some((c) => c.method === 'generateText')).toBe(true);
   });
 
+  it('omits mood narrative when LLM returns a one-word reply (invalid narrative)', async () => {
+    const badLlm: LlmProvider = {
+      name: 'bad',
+      model: 'bad',
+      async generateText(): Promise<LlmTextResult> {
+        return { text: 'Aggressive', model: 'bad', usage: { durationMs: 1 } };
+      },
+      async generateJson<T>(): Promise<LlmJsonResult<T>> {
+        throw new Error('not used in this test');
+      },
+    };
+    const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, badLlm);
+    expect(result.data.moodNarrative).toBeUndefined();
+    expect(result.html).not.toMatch(/<div class="mood-narrative">/);
+  });
+
+  it('retries once and uses mood narrative when the second attempt is valid', async () => {
+    let textCalls = 0;
+    const recoverLlm: LlmProvider = {
+      name: 'recover',
+      model: 'recover',
+      async generateText(): Promise<LlmTextResult> {
+        textCalls++;
+        const text =
+          textCalls === 1
+            ? 'Short'
+            : 'Domestic institutions provide a cushion as overseas investors remain selective. The tape shows narrow leadership with higher volatility. Watch: rate path, flows, and large-cap earnings.';
+        return { text, model: 'recover', usage: { durationMs: 1 } };
+      },
+      async generateJson<T>(): Promise<LlmJsonResult<T>> {
+        throw new Error('not used in this test');
+      },
+    };
+    const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, recoverLlm);
+    expect(textCalls).toBe(2);
+    expect(result.data.moodNarrative).toBeTruthy();
+    expect(result.html).toContain('mood-narrative');
+  });
+
   it('skips AI when skipAi=true', async () => {
     const result = await composeBriefing(
       { date: today, watchlist: ['RELIANCE'], skipAi: true },
@@ -412,6 +452,40 @@ describe('briefing composer (Phase 3–4)', () => {
 
     const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
     expect(result.data.news.some((n) => n.symbol === 'RELIANCE')).toBe(true);
+  });
+
+  it('classifies ETF/SGB sectors in portfolio risk rollup', async () => {
+    upsertHoldings(
+      [
+        {
+          symbol: 'GOLDBEES',
+          exchange: 'NSE',
+          asOf: today,
+          qty: 100,
+          avgPrice: 60,
+          lastPrice: 62,
+          pnl: 200,
+          pnlPct: 3,
+          dayChange: 0,
+          dayChangePct: 0,
+          product: 'CNC',
+          source: 'kite',
+        },
+      ],
+      db,
+    );
+    const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
+    expect(result.html).toContain('Gold ETF');
+  });
+
+  it('validates mood narrative length and sentence punctuation', () => {
+    expect(() =>
+      validateMoodNarrative(
+        'Flows skew cautious while domestic buyers stabilise the tape. India VIX implies event risk into macro prints. Watch: HDFC Bank, crude, and US futures.',
+      ),
+    ).not.toThrow();
+    expect(() => validateMoodNarrative('Aggressive')).toThrow();
+    expect(() => validateMoodNarrative('Only three words here')).toThrow();
   });
 
   it('includes sentiment badges in news section', async () => {

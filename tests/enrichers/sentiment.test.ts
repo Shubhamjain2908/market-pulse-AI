@@ -137,6 +137,25 @@ describe('sentiment enricher', () => {
     );
   });
 
+  it('nudgeIndianEarningsScore lifts screener-style bullish momentum headlines', () => {
+    expect(
+      nudgeIndianEarningsScore('ITC among stocks flashing bullish breakout signals', 0.1),
+    ).toBe(0.4);
+    expect(
+      nudgeIndianEarningsScore(
+        'Adani Ports among 4 stocks that hit 52-week highs after monthly rally',
+        0.1,
+      ),
+    ).toBe(0.4);
+    expect(
+      nudgeIndianEarningsScore('ABC breakout above SMA20 with volume', 0.05),
+    ).toBeGreaterThanOrEqual(0.4);
+    expect(nudgeIndianEarningsScore('XYZ rallied up to a fresh resistance test', 0.08)).toBe(0.4);
+    expect(
+      nudgeIndianEarningsScore('PQR breaks out above moving average on strong flows', 0.12),
+    ).toBe(0.4);
+  });
+
   it('nudgeIndianEarningsScore is a no-op for noise / generic headlines', () => {
     expect(nudgeIndianEarningsScore('Markets edge higher as Big Tech earnings beat', 0.1)).toBe(
       0.1,
