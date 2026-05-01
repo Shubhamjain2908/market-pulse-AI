@@ -205,7 +205,9 @@ function renderMood(
     ),
   ].join('');
 
-  const narrativeHtml = narrative ? `<div class="mood-narrative">${esc(narrative)}</div>` : '';
+  const narrativeHtml = narrative
+    ? `<p class="section-lede muted">Plain-language read — figures stay in the cards above.</p><div class="mood-narrative">${esc(narrative)}</div>`
+    : '';
 
   return `
     <section class="card">
@@ -259,6 +261,7 @@ function renderWatchlistAlerts(alerts: WatchlistAlert[]): string {
   return `
     <section class="card">
       <h2>Watchlist Alerts</h2>
+      <p class="section-lede muted">Automated threshold crosses — confirm vs your plan before acting.</p>
       <table>
         <thead><tr><th>Symbol</th><th>Signal</th><th>Value</th><th>Note</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -298,6 +301,7 @@ function renderPortfolio(p?: PortfolioSummary): string {
   return `
     <section class="card">
       <h2>My Portfolio <span class="muted">· source: ${esc(p.source)}</span></h2>
+      <p class="section-lede muted">Recommendations come from today&apos;s saved analysis — align with your risk limits.</p>
       ${summary}
       <div class="position-cards">${cards}</div>
     </section>`;
@@ -337,7 +341,7 @@ function renderPositionCard(c: PortfolioPositionCard): string {
 
   const thesis = c.thesis ? `<p class="position-thesis">${esc(c.thesis)}</p>` : '';
   const trigger = c.triggerReason
-    ? `<p class="position-trigger"><span class="muted">Trigger:</span> ${esc(c.triggerReason)}</p>`
+    ? `<p class="position-trigger"><span class="muted">Review:</span> ${esc(c.triggerReason)}</p>`
     : '';
   const bull = c.bullPoints.length
     ? `<div class="point-list bull"><div class="point-label">+</div><ul>${c.bullPoints.map((b) => `<li>${esc(b)}</li>`).join('')}</ul></div>`
@@ -408,6 +412,7 @@ function renderScreenMatches(matches?: ScreenMatch[]): string {
   return `
     <section class="card">
       <h2>Screens Fired Today (${totalMatches})</h2>
+      <p class="section-lede muted">A research funnel from your screen rules — not a buy list.</p>
       ${blocks}
     </section>`;
 }
@@ -423,6 +428,7 @@ function renderMovers(gainers: MoverRow[], losers: MoverRow[]): string {
   return `
     <section class="card">
       <h2>Top Movers (Watchlist)</h2>
+      <p class="section-lede muted">Largest % moves vs prior session close among watchlist names.</p>
       <div class="grid grid-2">
         <div>
           <h3>Gainers</h3>
@@ -502,6 +508,7 @@ function renderAiPicks(theses: ThesisCard[] | undefined, status: AiPicksSectionS
             ${t.confidence}/10
           </span>
         </div>
+        <div class="thesis-why-now"><strong>Why now:</strong> ${esc(t.triggerReason)}</div>
         <p class="thesis-body">${esc(t.thesis)}</p>
         <div class="thesis-levels">
           <span class="level positive">Entry: ${esc(t.entryZone)}</span>
@@ -518,7 +525,6 @@ function renderAiPicks(theses: ThesisCard[] | undefined, status: AiPicksSectionS
             <ul class="thesis-list">${bearItems}</ul>
           </div>
         </div>
-        <div class="thesis-trigger muted">Triggered by: ${esc(t.triggerReason)}</div>
       </div>`;
     })
     .join('');
@@ -526,6 +532,7 @@ function renderAiPicks(theses: ThesisCard[] | undefined, status: AiPicksSectionS
   return `
     <section class="card">
       <h2>AI Picks &middot; Top ${theses.length}</h2>
+      <p class="section-lede muted">Ideas ranked from today&apos;s signals — verify against your process; not instructions.</p>
       ${cards}
     </section>`;
 }
@@ -555,6 +562,7 @@ function renderNews(news: NewsRow[]): string {
   return `
     <section class="card">
       <h2>News &middot; Last 48h</h2>
+      <p class="section-lede muted">Watchlist-tagged headlines are prioritised when present.</p>
       <ul class="news">${items}</ul>
     </section>`;
 }
@@ -662,6 +670,7 @@ function baseStyles(): string {
     td.positive { color: var(--positive); font-weight: 600; }
     td.negative { color: var(--negative); font-weight: 600; }
     .muted { color: var(--muted); font-size: 13px; }
+    .section-lede { margin: 0 0 12px; max-width: 42rem; line-height: 1.45; }
     .news { list-style: none; padding: 0; margin: 0; }
     .news li { padding: 8px 0; border-bottom: 1px solid var(--border); }
     .news li:last-child { border-bottom: none; }
@@ -677,6 +686,7 @@ function baseStyles(): string {
     .thesis-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px;
       margin-bottom: 12px; background: #fafbfd; }
     .thesis-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .thesis-why-now { font-size: 13px; line-height: 1.45; margin: 0 0 8px; color: var(--text); }
     .thesis-symbol { font-size: 18px; font-weight: 700; color: var(--accent); }
     .thesis-horizon { font-size: 11px; }
     .thesis-confidence { font-size: 12px; color: var(--muted); position: relative;
@@ -693,7 +703,6 @@ function baseStyles(): string {
     .bear-header { color: var(--negative); font-size: 13px; margin: 0 0 4px; }
     .thesis-list { margin: 0; padding-left: 18px; font-size: 13px; }
     .thesis-list li { margin-bottom: 2px; }
-    .thesis-trigger { margin-top: 8px; font-size: 11px; }
     .sentiment-badge { display: inline-block; padding: 1px 6px; border-radius: 4px;
       font-size: 10px; font-weight: 600; letter-spacing: 0.03em; vertical-align: middle;
       margin-left: 4px; }

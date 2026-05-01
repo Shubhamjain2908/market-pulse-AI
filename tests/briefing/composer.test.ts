@@ -132,7 +132,7 @@ describe('briefing composer (Phase 3)', () => {
         headline: 'Reliance Q4 results beat estimates',
         source: 'ET Markets',
         url: 'https://example.com/reliance-q4',
-        publishedAt: new Date().toISOString(),
+        publishedAt: `${today}T10:30:00.000+05:30`,
         symbol: 'RELIANCE',
         sentiment: 0.7,
       },
@@ -168,6 +168,7 @@ describe('briefing composer (Phase 3)', () => {
     expect(result.html).toContain('RELIANCE');
     expect(result.html).toContain('Bull Case');
     expect(result.html).toContain('Bear Case');
+    expect(result.html).toContain('Why now:');
     expect(result.html).toContain('₹2,900');
     expect(result.data.theses).toHaveLength(1);
     expect(result.data.aiPicksStatus.kind).toBe('ok');
