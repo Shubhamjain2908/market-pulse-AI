@@ -14,6 +14,7 @@
  *   mp brief             Stage 4 - compose + deliver briefing
  *   mp run-all           Run full pipeline (ingest -> brief)
  *   mp daily             One-shot: full pipeline + portfolio analysis (recommended)
+ *   mp sync-sectors      Cache Yahoo sector/industry in `symbols` (for portfolio sector rollup)
  *   mp kite-login        Refresh Zerodha Kite Connect access_token (run daily)
  *   mp portfolio-sync    Pull holdings from Kite (or manual) into the DB
  *   mp portfolio-analyse Run LLM-driven HOLD/ADD/TRIM/EXIT analysis per holding
@@ -43,7 +44,9 @@ import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
 import { logger } from './logger.js';
+import { defaultIngestSymbolUniverse } from './market/ingest-symbols.js';
 import { getMarketClosure } from './market/nse-calendar.js';
+import { syncSymbolSectorsFromYahoo } from './market/yahoo-sectors.js';
 import { startScheduler } from './scheduler/market-scheduler.js';
 
 const program = new Command();
@@ -77,6 +80,29 @@ program
     const date = program.opts<{ date?: string }>().date;
     const result = await runDailyIngestor({ date, symbols });
     logger.info(result, 'ingest complete');
+    closeDb();
+  });
+
+program
+  .command('sync-sectors')
+  .description(
+    'fetch Yahoo Finance sector/industry for symbols missing rows in `symbols` (watchlist + holdings + benchmarks skipped)',
+  )
+  .option('-s, --symbols <list>', 'comma-separated symbols (default: full ingest universe)')
+  .option('--force', 'refresh sector even when already cached')
+  .action(async (opts: { symbols?: string; force?: boolean }) => {
+    ensureDb();
+    const explicit = opts.symbols
+      ?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const universe = explicit?.length
+      ? explicit.map((s) => s.toUpperCase())
+      : defaultIngestSymbolUniverse(getDb());
+    const result = await syncSymbolSectorsFromYahoo(universe, getDb(), {
+      force: Boolean(opts.force),
+    });
+    logger.info(result, 'sync-sectors complete');
     closeDb();
   });
 

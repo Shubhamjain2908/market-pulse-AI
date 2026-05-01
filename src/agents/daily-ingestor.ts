@@ -18,6 +18,7 @@ import {
 } from '../ingestors/index.js';
 import { child } from '../logger.js';
 import { defaultIngestSymbolUniverse } from '../market/ingest-symbols.js';
+import { syncSymbolSectorsFromYahoo } from '../market/yahoo-sectors.js';
 
 const log = child({ component: 'daily-ingestor' });
 
@@ -34,6 +35,8 @@ export interface IngestRunResult {
   fundamentalsWritten: number;
   newsWritten: number;
   fiiDiiWritten: number;
+  /** Rows updated in `symbols` with Yahoo sector/industry (after ingest). */
+  sectorsSynced?: number;
   failures: { capability: IngestorCapability; ingestor: string; reason: string }[];
 }
 
@@ -96,6 +99,12 @@ export async function runDailyIngestor(opts: IngestRunOptions = {}): Promise<Ing
         },
         'quotes ingested',
       );
+      try {
+        const sr = await syncSymbolSectorsFromYahoo(symbols, getDb());
+        result.sectorsSynced = sr.written;
+      } catch (err) {
+        log.warn({ err: (err as Error).message }, 'yahoo sector metadata sync failed');
+      }
     } catch (err) {
       result.failures.push({
         capability: 'quotes',

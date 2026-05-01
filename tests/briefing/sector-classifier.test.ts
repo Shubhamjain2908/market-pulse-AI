@@ -35,6 +35,14 @@ describe('classifySector', () => {
     expect(classifySector('SOMEETF', {})).toBe('Index ETF');
   });
 
+  it('uses Yahoo-backed DB sector when present', () => {
+    expect(classifySector('RANDOM', {}, 'Financial Services')).toBe('Financial Services');
+  });
+
+  it('prefers explicit map over DB sector', () => {
+    expect(classifySector('INFY', explicit, 'Utilities')).toBe('IT');
+  });
+
   it('returns Unknown when unmatched', () => {
     expect(classifySector('ZZUNKNOWN', {})).toBe('Unknown');
   });
