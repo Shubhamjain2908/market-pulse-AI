@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { analysePortfolio } from '../../src/agents/portfolio-analyser.js';
-import { PORTFOLIO_DEEP_LOSS_PCT } from '../../src/agents/portfolio-trigger.js';
+import { getPortfolioDeepLossPct } from '../../src/agents/portfolio-trigger.js';
 import { closeDb, getDb, migrate, upsertHoldings, upsertQuotes } from '../../src/db/index.js';
 import { MockLlmProvider } from '../../src/llm/providers/mock.js';
 import type { RawQuote } from '../../src/types/domain.js';
@@ -41,7 +41,7 @@ describe('portfolio deep-loss prompt', () => {
           avgPrice: 100,
           lastPrice: 45,
           pnl: -5500,
-          pnlPct: PORTFOLIO_DEEP_LOSS_PCT,
+          pnlPct: getPortfolioDeepLossPct(),
           dayChange: 0,
           dayChangePct: 0,
           product: 'CNC',
@@ -71,6 +71,6 @@ describe('portfolio deep-loss prompt', () => {
     const jsonCall = llm.calls.find((c) => c.method === 'generateJson');
     expect(jsonCall).toBeDefined();
     expect(jsonCall?.system).toContain('UNREALISED LOSS');
-    expect(jsonCall?.system).toMatch(/30|%/);
+    expect(jsonCall?.system).toContain(`${Math.abs(getPortfolioDeepLossPct())}%`);
   });
 });

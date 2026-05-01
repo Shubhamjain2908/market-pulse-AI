@@ -21,6 +21,8 @@ export interface BriefRunOptions {
     generated: number;
     failed: number;
     candidateCount: number;
+    eligibleUniverseSize: number;
+    watchlistSize: number;
   };
 }
 

@@ -85,6 +85,18 @@ export interface PortfolioPositionCard {
   technicalSummary?: string | null;
 }
 
+export interface PortfolioRiskRollup {
+  topWeights: Array<{ symbol: string; weightPct: number; valueInr: number }>;
+  topLosers: Array<{ symbol: string; pnlPct: number; pnlInr: number }>;
+  drawdownBuckets: {
+    gt0: number;
+    zeroToNeg10: number;
+    neg10ToNeg20: number;
+    ltNeg20: number;
+  };
+  sectorWeights?: Array<{ sector: string; weightPct: number }>;
+}
+
 export interface PortfolioSummary {
   totalValue: number;
   totalPnl: number;
@@ -93,6 +105,8 @@ export interface PortfolioSummary {
   dayChangePct: number | null;
   source: 'kite' | 'manual';
   positions: PortfolioPositionCard[];
+  /** Concentration / drawdown distribution — optional when totals are computable. */
+  riskRollup?: PortfolioRiskRollup;
 }
 
 export interface ScreenMatch {
@@ -108,7 +122,11 @@ export type AiPicksSectionStatus =
   | { kind: 'ok' }
   | { kind: 'skipped'; reason: 'skip_ai_flag' }
   | { kind: 'holiday'; label: string }
-  | { kind: 'empty'; reason: 'no_candidates'; candidateCount?: number }
+  | {
+      kind: 'empty';
+      reason: 'no_candidates' | 'all_watchlist_owned';
+      candidateCount?: number;
+    }
   | { kind: 'all_failed'; failed: number };
 
 export interface BriefingData {
@@ -244,7 +262,7 @@ function renderGlobalCues(section: GlobalCuesSection): string {
   return `
     <section class="card">
       <h2>Global Cues</h2>
-      <p class="section-lede muted">Overnight / US session markers from Yahoo macro symbols ingested with your pipeline. The GIFT row reuses Nifty 50 spot because USD-denominated GIFT futures are not exposed on this free chart API.</p>
+      <p class="section-lede muted">Overnight / US session markers from Yahoo macro symbols ingested with your pipeline. Nifty 50 spot uses the same cash benchmark series as elsewhere in this report — not USD-denominated offshore futures.</p>
       <div class="grid grid-3">${rows}</div>
     </section>`;
 }
@@ -327,6 +345,8 @@ function renderPortfolio(p?: PortfolioSummary): string {
       </div>
     </div>`;
 
+  const risk = p.riskRollup ? renderPortfolioRiskRollup(p.riskRollup) : '';
+
   const cards = p.positions.map(renderPositionCard).join('');
 
   return `
@@ -334,8 +354,63 @@ function renderPortfolio(p?: PortfolioSummary): string {
       <h2>My Portfolio <span class="muted">· source: ${esc(p.source)}</span></h2>
       <p class="section-lede muted">Recommendations come from today&apos;s saved analysis — align with your risk limits.</p>
       ${summary}
+      ${risk}
       <div class="position-cards">${cards}</div>
     </section>`;
+}
+
+function renderPortfolioRiskRollup(r: PortfolioRiskRollup): string {
+  const tw = r.topWeights
+    .map(
+      (w) =>
+        `<tr><td><strong>${esc(w.symbol)}</strong></td><td>${w.weightPct.toFixed(1)}%</td><td>${formatInr(w.valueInr)}</td></tr>`,
+    )
+    .join('');
+  const losers = r.topLosers
+    .map(
+      (l) =>
+        `<tr><td><strong>${esc(l.symbol)}</strong></td><td class="negative">${l.pnlPct.toFixed(2)}%</td><td>${formatInr(l.pnlInr)}</td></tr>`,
+    )
+    .join('');
+  const b = r.drawdownBuckets;
+  const sectors =
+    r.sectorWeights
+      ?.map((s) => `<tr><td>${esc(s.sector)}</td><td>${s.weightPct.toFixed(1)}%</td></tr>`)
+      .join('') ?? '';
+
+  const sectorBlock =
+    r.sectorWeights && r.sectorWeights.length > 0
+      ? `
+      <div class="risk-col">
+        <h3 class="h-small">Sector mix (mapped)</h3>
+        <table><thead><tr><th>Sector</th><th>Weight</th></tr></thead><tbody>${sectors}</tbody></table>
+      </div>`
+      : '';
+
+  return `
+    <div class="portfolio-risk-rollup">
+      <h3 class="h-small">Portfolio risk snapshot</h3>
+      <div class="grid grid-3">
+        <div class="risk-col">
+          <h3 class="h-small">Top weights</h3>
+          <table><thead><tr><th>Symbol</th><th>Wt%</th><th>Value</th></tr></thead><tbody>${tw}</tbody></table>
+        </div>
+        <div class="risk-col">
+          <h3 class="h-small">Largest unrealised losers (%)</h3>
+          <table><thead><tr><th>Symbol</th><th>P&amp;L%</th><th>P&amp;L</th></tr></thead><tbody>${losers || `<tr><td colspan="3" class="muted">None</td></tr>`}</tbody></table>
+        </div>
+        <div class="risk-col">
+          <h3 class="h-small">P&amp;L distribution</h3>
+          <ul class="muted tight-list">
+            <li>&gt; 0%: <strong>${b.gt0}</strong> positions</li>
+            <li>0% to −10%: <strong>${b.zeroToNeg10}</strong></li>
+            <li>−10% to −20%: <strong>${b.neg10ToNeg20}</strong></li>
+            <li>&lt; −20%: <strong>${b.ltNeg20}</strong></li>
+          </ul>
+        </div>
+      </div>
+      ${sectorBlock}
+    </div>`;
 }
 
 function renderPositionCard(c: PortfolioPositionCard): string {
@@ -510,10 +585,20 @@ function renderAiPicks(theses: ThesisCard[] | undefined, status: AiPicksSectionS
   }
 
   if (!theses || theses.length === 0) {
+    if (status.kind === 'empty' && status.reason === 'all_watchlist_owned') {
+      return `
+      <section class="card">
+        <h2>AI Picks</h2>
+        <p class="muted">Every watchlist symbol is already in My Portfolio — AI Picks are for new ideas and names not yet held. Existing positions are reviewed under My Portfolio.</p>
+      </section>`;
+    }
     const hint =
-      status.kind === 'empty' && status.candidateCount != null && status.candidateCount === 0
+      status.kind === 'empty' && status.reason === 'no_candidates' && status.candidateCount === 0
         ? ' No symbols qualified after ranking — widen watchlist coverage or check screen/alert signals.'
-        : status.kind === 'empty' && status.candidateCount != null && status.candidateCount > 0
+        : status.kind === 'empty' &&
+            status.reason === 'no_candidates' &&
+            status.candidateCount != null &&
+            status.candidateCount > 0
           ? ' Candidates were ranked but no thesis rows appear — check thesis-generation logs.'
           : '';
     return `
@@ -764,6 +849,10 @@ function baseStyles(): string {
     .symbol-chip { display: inline-block; padding: 2px 8px; border-radius: 4px;
       background: #eef4f8; color: var(--accent); font-weight: 600; font-size: 12px; }
     .position-cards { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+    .portfolio-risk-rollup { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+    .portfolio-risk-rollup .h-small { font-size: 13px; margin: 0 0 8px; color: var(--accent); }
+    .portfolio-risk-rollup .risk-col table { font-size: 13px; }
+    .tight-list { margin: 6px 0 0; padding-left: 18px; line-height: 1.5; }
     .position-card { padding: 14px; border: 1px solid var(--border); border-radius: 8px;
       background: #fafbfd; }
     .position-header { display: flex; justify-content: space-between; align-items: center;

@@ -1,7 +1,6 @@
 /**
  * Global cues section: macro indices and FX/commodities from `quotes` (Yahoo ingest).
- * GIFT Nifty is shown as the same session move as Nifty 50 spot — true USD-denominated
- * GIFT futures are not available on the free Yahoo chart API we use.
+ * Nifty 50 spot uses the same cash benchmark series as Market Mood when shown here.
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
@@ -41,12 +40,12 @@ export function gatherGlobalCues(briefingDate: string, db: DatabaseType): Global
     const stale = gift.asOf < briefingDate;
     const sign = gift.changePct >= 0 ? '+' : '';
     rows.push({
-      label: 'GIFT Nifty (proxy)',
+      label: 'Nifty 50 spot',
       display: `${sign}${gift.changePct.toFixed(2)}% · ${formatNum(giftClose.close)}`,
       changePct: gift.changePct,
       asOf: gift.asOf,
       stale,
-      note: 'Session move matches Nifty 50 spot (Yahoo). USD GIFT futures not on this feed.',
+      note: 'Cash Nifty 50 (Yahoo benchmark). Not GIFT-denominated futures.',
     });
   }
 

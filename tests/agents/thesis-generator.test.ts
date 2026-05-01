@@ -8,6 +8,7 @@ import {
   getDb,
   getThesesForDate,
   migrate,
+  upsertHoldings,
   upsertQuotes,
   upsertSignals,
 } from '../../src/db/index.js';
@@ -90,6 +91,8 @@ describe('thesis generator', () => {
 
     expect(result.generated).toBe(1);
     expect(result.failed).toBe(0);
+    expect(result.eligibleUniverseSize).toBe(1);
+    expect(result.watchlistSize).toBe(1);
     expect(result.theses).toHaveLength(1);
     expect(result.theses[0]?.symbol).toBe('RELIANCE');
     expect(result.theses[0]?.thesis).toBeTruthy();
@@ -97,6 +100,37 @@ describe('thesis generator', () => {
     const stored = getThesesForDate(today, db);
     expect(stored).toHaveLength(1);
     expect(stored[0]?.model).toBe('mock-model');
+  });
+
+  it('does not generate AI picks for symbols already in the portfolio', async () => {
+    upsertHoldings(
+      [
+        {
+          symbol: 'RELIANCE',
+          exchange: 'NSE',
+          asOf: today,
+          qty: 10,
+          avgPrice: 2900,
+          lastPrice: 2940,
+          pnl: 400,
+          pnlPct: 1.5,
+          dayChange: 0,
+          dayChangePct: 0,
+          product: 'CNC',
+          source: 'kite',
+        },
+      ],
+      db,
+    );
+    const result = await generateTheses(
+      { date: today, watchlist: ['RELIANCE'], maxTheses: 3 },
+      db,
+      llm,
+    );
+    expect(result.generated).toBe(0);
+    expect(result.eligibleUniverseSize).toBe(0);
+    expect(result.watchlistSize).toBe(1);
+    expect(llm.calls).toHaveLength(0);
   });
 
   it('skips stocks with no interesting signals', async () => {

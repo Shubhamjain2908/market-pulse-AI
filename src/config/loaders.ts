@@ -91,3 +91,33 @@ function readJsonConfig<T>(path: string, schema: z.ZodType<T>, fresh = false): T
 export function clearConfigCache(): void {
   cache.clear();
 }
+
+const SectorMapSchema = z.record(z.string(), z.string());
+
+/**
+ * Optional symbol → sector labels for briefing portfolio rollup (`config/sector-map.json`).
+ * Missing file or invalid JSON returns `{}` (sectors fall back to "Unknown").
+ */
+export function loadSectorMap(opts: LoaderOptions = {}): Record<string, string> {
+  const path = opts.path ?? resolve(process.cwd(), 'config/sector-map.json');
+  const cacheKey = `sector-map:${path}`;
+  if (!opts.fresh && cache.has(cacheKey)) return cache.get(cacheKey) as Record<string, string>;
+  try {
+    const raw = readFileSync(path, 'utf8');
+    const json: unknown = JSON.parse(raw);
+    const parsed = SectorMapSchema.safeParse(json);
+    if (!parsed.success) {
+      cache.set(cacheKey, {});
+      return {};
+    }
+    const upper: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed.data)) {
+      upper[k.toUpperCase()] = v;
+    }
+    cache.set(cacheKey, upper);
+    return upper;
+  } catch {
+    cache.set(cacheKey, {});
+    return {};
+  }
+}

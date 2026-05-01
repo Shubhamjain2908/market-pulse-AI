@@ -24,6 +24,8 @@ export interface DailyRunSummaryV1 {
     generated: number;
     failed: number;
     candidateCount: number;
+    eligibleUniverseSize: number;
+    watchlistSize: number;
   };
   hasMoodNarrative: boolean;
 }

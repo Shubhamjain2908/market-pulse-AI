@@ -113,7 +113,15 @@ export async function runDailyWorkflow(
   await runSignalEnricher({ date });
   await runStockScreener({ date });
 
-  let thesisRun: { generated: number; failed: number; candidateCount: number } | undefined;
+  let thesisRun:
+    | {
+        generated: number;
+        failed: number;
+        candidateCount: number;
+        eligibleUniverseSize: number;
+        watchlistSize: number;
+      }
+    | undefined;
 
   if (!opts.skipAi) {
     const sentimentResult = await enrichSentiment();
@@ -124,6 +132,8 @@ export async function runDailyWorkflow(
       generated: thesisResult.generated,
       failed: thesisResult.failed,
       candidateCount: thesisResult.candidateCount,
+      eligibleUniverseSize: thesisResult.eligibleUniverseSize,
+      watchlistSize: thesisResult.watchlistSize,
     };
     log.info(
       { generated: thesisResult.generated, failed: thesisResult.failed },

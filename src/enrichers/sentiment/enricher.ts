@@ -26,6 +26,22 @@ const SentimentBatchSchema = z.array(
 );
 type SentimentBatch = z.infer<typeof SentimentBatchSchema>;
 
+/** Every requested news row id must appear exactly once in the model output. */
+export function validateSentimentBatch(expectedIds: number[], items: SentimentBatch): void {
+  const sortedExp = [...expectedIds].sort((a, b) => a - b);
+  const gotIds = items.map((x) => x.id).sort((a, b) => a - b);
+  if (sortedExp.length !== gotIds.length) {
+    throw new Error(
+      `Sentiment count mismatch: expected ${sortedExp.length} ids, got ${gotIds.length}`,
+    );
+  }
+  for (let i = 0; i < sortedExp.length; i++) {
+    if (sortedExp[i] !== gotIds[i]) {
+      throw new Error(`Sentiment id mismatch at ${i}: expected ${sortedExp[i]}, got ${gotIds[i]}`);
+    }
+  }
+}
+
 const SYSTEM_PROMPT = `You are a financial news sentiment classifier for the Indian stock market (NSE/BSE).
 
 Given a batch of news headlines, score each one on a scale from -1.0 to +1.0:
@@ -34,6 +50,18 @@ Given a batch of news headlines, score each one on a scale from -1.0 to +1.0:
    0.0 = neutral (routine announcements, informational)
   +0.5 = bullish (beat estimates, upgrades, expansion plans)
   +1.0 = very bullish (massive order wins, transformative deals)
+
+Indian context: PSU defence shipbuilders, NBFCs, IT services, pharma, and banks behave differently from US peers.
+Earnings beats with explicit profit growth (YoY/QoQ) should score clearly positive (+0.45 to +0.75), not near zero.
+
+Few-shot (headline → sentiment):
+- "Mazagon Dock Q4 profit jumps 42% YoY, margins expand" → +0.65 (strong earnings beat, defence shipbuilder)
+- "Equitas Small Finance Bank Q4 PAT surges five-fold; asset quality stable" → +0.55 (earnings transformation)
+- "SEBI issues show-cause notice to XYZ on disclosure lapses" → -0.70 (regulatory overhang)
+- "Nifty closes flat; FIIs net sellers for third day" → -0.05 (mildly negative macro flow, not about one stock)
+- "Laurus Labs Q4 PAT up 19%; guides steady FY growth" → +0.50 (solid earnings, pharma)
+
+You MUST return one object per input id — same ids, no duplicates, no missing rows.
 
 Be precise. Most general market news is near 0. Company-specific positive/negative events
 are typically in the -0.7 to +0.7 range. Reserve -1.0/+1.0 for extreme events.
@@ -90,38 +118,58 @@ export async function enrichSentiment(
     const batch = rows.slice(i, i + batchSize);
     stats.batches++;
 
-    try {
-      const headlineList = batch
-        .map((r) => {
-          const sym = r.symbol ? ` [${r.symbol}]` : '';
-          const summary = r.summary ? ` — ${r.summary.slice(0, 120)}` : '';
-          return `{ "id": ${r.id}, "headline": "${escapeForPrompt(r.headline)}${sym}${summary}" }`;
-        })
-        .join('\n');
+    const expectedIds = batch.map((r) => r.id);
+    let batchOk = false;
+    let lastErr: Error | undefined;
 
-      const result = await llm.generateJson<SentimentBatch>({
-        system: SYSTEM_PROMPT,
-        user: `Score these ${batch.length} headlines:\n\n${headlineList}`,
-        schema: SentimentBatchSchema,
-        temperature: 0.1,
-        maxRetries: 1,
-      });
+    for (let attempt = 0; attempt < 2 && !batchOk; attempt++) {
+      try {
+        const headlineList = batch
+          .map((r) => {
+            const sym = r.symbol ? ` [${r.symbol}]` : '';
+            const summary = r.summary ? ` — ${r.summary.slice(0, 120)}` : '';
+            return `{ "id": ${r.id}, "headline": "${escapeForPrompt(r.headline)}${sym}${summary}" }`;
+          })
+          .join('\n');
 
-      const tx = db.transaction(() => {
-        for (const item of result.data) {
-          const clamped = Math.max(-1, Math.min(1, item.sentiment));
-          updateStmt.run(clamped, item.id);
-          stats.scored++;
-        }
-      });
-      tx();
+        const result = await llm.generateJson<SentimentBatch>({
+          system: SYSTEM_PROMPT,
+          user: `Score these ${batch.length} headlines:\n\n${headlineList}`,
+          schema: SentimentBatchSchema,
+          temperature: 0.15,
+          maxRetries: 1,
+        });
 
-      log.debug(
-        { batch: stats.batches, scored: result.data.length, model: result.model },
-        'sentiment batch scored',
+        validateSentimentBatch(expectedIds, result.data);
+
+        const tx = db.transaction(() => {
+          for (const item of result.data) {
+            const clamped = Math.max(-1, Math.min(1, item.sentiment));
+            updateStmt.run(clamped, item.id);
+            stats.scored++;
+          }
+        });
+        tx();
+
+        log.debug(
+          { batch: stats.batches, scored: result.data.length, model: result.model, attempt },
+          'sentiment batch scored',
+        );
+        batchOk = true;
+      } catch (err) {
+        lastErr = err as Error;
+        log.warn(
+          { batch: stats.batches, attempt, err: lastErr.message },
+          'sentiment batch attempt failed',
+        );
+      }
+    }
+
+    if (!batchOk) {
+      log.warn(
+        { batch: stats.batches, err: lastErr?.message },
+        'sentiment batch failed after retries',
       );
-    } catch (err) {
-      log.warn({ batch: stats.batches, err: (err as Error).message }, 'sentiment batch failed');
       stats.failed += batch.length;
     }
   }
