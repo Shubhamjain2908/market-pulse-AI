@@ -2,7 +2,11 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { analysePortfolio } from '../../src/agents/portfolio-analyser.js';
+import {
+  type PortfolioAction,
+  analysePortfolio,
+  applyPortfolioAddGuardrails,
+} from '../../src/agents/portfolio-analyser.js';
 import {
   closeDb,
   getDb,
@@ -145,5 +149,52 @@ describe('portfolio analyser', () => {
     expect(result.analysed).toBe(0);
     expect(result.byAction.HOLD).toBe(0);
     expect(llm.calls).toHaveLength(0);
+  });
+
+  const baseAction = (): PortfolioAction => ({
+    symbol: 'ITC',
+    action: 'ADD',
+    conviction: 0.65,
+    thesis: 'Holding for recovery as valuations normalize relative to peers over time.',
+    bullPoints: ['Valuation'],
+    bearPoints: ['Weak tape'],
+    triggerReason: 'Adding into weakness per setup.',
+    suggestedStop: 298,
+    suggestedTarget: null,
+  });
+
+  it('downgrades ADD to HOLD when averaging-down R:R vs stop is poor', () => {
+    const out = applyPortfolioAddGuardrails(
+      baseAction(),
+      { rsi_14: 55, pct_from_52w_high: -15 },
+      {
+        pnlPct: -18.5,
+        lastPrice: 315,
+      },
+    );
+    expect(out.action).toBe('HOLD');
+    expect(out.triggerReason).toContain('averaging down');
+    expect(out.triggerReason).toContain('Guardrail');
+  });
+
+  it('preserves ADD on a shallow loss with a wide enough stop', () => {
+    const out = applyPortfolioAddGuardrails(
+      { ...baseAction(), action: 'ADD', suggestedStop: 280, triggerReason: 'Dip buy.' },
+      { rsi_14: 50, pct_from_52w_high: -20 },
+      { pnlPct: -3.5, lastPrice: 315 },
+    );
+    expect(out.action).toBe('ADD');
+  });
+
+  it('preserves ADD on a winning position even with a tight stop', () => {
+    const out = applyPortfolioAddGuardrails(
+      baseAction(),
+      { rsi_14: 45, pct_from_52w_high: -30 },
+      {
+        pnlPct: 5,
+        lastPrice: 315,
+      },
+    );
+    expect(out.action).toBe('ADD');
   });
 });

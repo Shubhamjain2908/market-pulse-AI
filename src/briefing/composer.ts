@@ -28,6 +28,7 @@ import { INDIA_VIX_BENCHMARK_SYMBOL, NIFTY_BENCHMARK_SYMBOL } from '../market/be
 import { gatherGlobalCues } from '../market/global-cues.js';
 import { latestQuoteClose, sessionChangeVsPriorClose } from '../market/quote-change.js';
 import type { ScreenDefinition } from '../types/domain.js';
+import { classifySector } from './sector-classifier.js';
 import {
   type AiPicksSectionStatus,
   type BriefingData,
@@ -205,7 +206,7 @@ const MOOD_SYSTEM = `You are a concise financial journalist covering Indian equi
 The reader already sees exact FII/DII, India VIX, and Nifty figures in the Market Mood grid
 above your paragraph — do NOT repeat those numbers or restate that table.
 
-Write at most 3 short sentences (one short paragraph):
+Write 2 to 3 complete sentences (40–90 words total, one short paragraph):
 - Connect flows, volatility tone, and index direction into one coherent read (risk-on/off,
   domestic cushion vs foreign selling, breadth hints from the movers/alerts context).
 - Do not invent statistics; only interpret what is implied by the facts supplied below.
@@ -213,8 +214,20 @@ Write at most 3 short sentences (one short paragraph):
 End with exactly one sentence that starts with "Watch:" and lists concrete subjects to
 monitor (sectors, flow tension, macro prints, upcoming events) — not buy/sell wording.
 
+Never respond with a single word or fragment. If the data is sparse, still write a coherent
+two-sentence read plus the Watch sentence.
+
 Never give investment advice. Present tense. Avoid generic filler ("mixed signals",
 "cautious optimism") unless you tie it to a specific fact from the data.`;
+
+/** Rejects truncated / safety-filter one-word outputs so the briefing can omit the block. */
+export function validateMoodNarrative(text: string): void {
+  const t = text.trim();
+  if (t.length < 25) throw new Error('mood narrative too short');
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length < 2) throw new Error('mood narrative too few words');
+  if (!/[.!?]/.test(t)) throw new Error('mood narrative missing sentence terminator');
+}
 
 async function generateMoodNarrative(
   mood: BriefingData['mood'],
@@ -238,14 +251,30 @@ async function generateMoodNarrative(
   if (alerts.length > 0)
     dataPoints.push(`Active alerts: ${alerts.length} (${alerts.map((a) => a.symbol).join(', ')})`);
 
-  const result = await llm.generateText({
+  const baseUser = `Facts for interpretation (do not quote numbers back verbatim):\n${dataPoints.join('\n')}\n\nWrite the mood paragraph per instructions.`;
+
+  let result = await llm.generateText({
     system: MOOD_SYSTEM,
-    user: `Facts for interpretation (do not quote numbers back verbatim):\n${dataPoints.join('\n')}\n\nWrite the mood paragraph per instructions.`,
+    user: baseUser,
     temperature: 0.25,
     maxOutputTokens: 220,
   });
 
-  return result.text.trim();
+  let text = result.text.trim();
+  try {
+    validateMoodNarrative(text);
+    return text;
+  } catch {
+    result = await llm.generateText({
+      system: MOOD_SYSTEM,
+      user: `${baseUser}\n\nTwo complete sentences plus the Watch sentence.`,
+      temperature: 0.25,
+      maxOutputTokens: 220,
+    });
+    text = result.text.trim();
+    validateMoodNarrative(text);
+    return text;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -434,7 +463,7 @@ function buildPortfolioRiskRollup(
 
   const sectorAgg = new Map<string, number>();
   for (const p of enriched) {
-    const sector = sectorMap[p.symbol.toUpperCase()] ?? 'Unknown';
+    const sector = classifySector(p.symbol, sectorMap);
     sectorAgg.set(sector, (sectorAgg.get(sector) ?? 0) + p.valueInr);
   }
   const sectorWeights = [...sectorAgg.entries()]

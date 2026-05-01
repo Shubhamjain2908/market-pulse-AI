@@ -55,11 +55,17 @@ Indian context: PSU defence shipbuilders, NBFCs, IT services, pharma, and banks 
 Earnings beats with explicit profit growth (YoY/QoQ) should score clearly positive (+0.45 to +0.75), not near zero.
 
 Few-shot (headline → sentiment):
-- "Mazagon Dock Q4 profit jumps 42% YoY, margins expand" → +0.65 (strong earnings beat, defence shipbuilder)
-- "Equitas Small Finance Bank Q4 PAT surges five-fold; asset quality stable" → +0.55 (earnings transformation)
-- "SEBI issues show-cause notice to XYZ on disclosure lapses" → -0.70 (regulatory overhang)
-- "Nifty closes flat; FIIs net sellers for third day" → -0.05 (mildly negative macro flow, not about one stock)
-- "Laurus Labs Q4 PAT up 19%; guides steady FY growth" → +0.50 (solid earnings, pharma)
+- "Mazagon Dock Q4 profit jumps 42% YoY, declares dividend" → +0.65
+- "Equitas Small Finance Bank Q4 PAT surges five-fold" → +0.55
+- "ITC among stocks flashing bullish breakout signals" → +0.40
+- "Adani Ports among 4 stocks that hit 52-week highs after monthly rally" → +0.40
+- "Infosys cuts FY26 revenue guidance" → -0.65
+- "Banks create war-risk credit buffers amid Middle East tensions" → -0.30
+- "RBI keeps repo rate unchanged" → 0.0
+- "Nifty closes flat; FIIs net sellers for third day" → -0.05
+
+Do NOT default to +/- 0.10 for any headline that has a clear bullish or bearish keyword
+(breakout, bullish signals, 52-week high, downgrade, fraud, etc.). Use the few-shot bands.
 
 You MUST return one object per input id — same ids, no duplicates, no missing rows.
 
@@ -201,6 +207,13 @@ function escapeForPrompt(s: string): string {
 export function nudgeIndianEarningsScore(headline: string, current: number): number {
   if (current >= 0.4 || current <= -0.4) return current;
 
+  const bullishMomentum =
+    /flashing bullish (signal|signals|breakout)/i.test(headline) ||
+    /break(?:s)?\s+out\s+above (sma|ema|moving average|resistance)/i.test(headline) ||
+    /breakout above (sma|ema|moving average|resistance)/i.test(headline) ||
+    /hits?\s+52[-\s]?week\s+high/i.test(headline) ||
+    /monthly rally|sharp rally|rallied up to/i.test(headline);
+
   const positive =
     /(profit|pat|net\s*profit|earnings|revenue|topline)\s*(jumps|jumped|surge[ds]?|soar[ds]?|rises|rose|up\b|grew|grows|climbs|climbed|increase[ds]?|expand[ds]?)/i.test(
       headline,
@@ -216,6 +229,10 @@ export function nudgeIndianEarningsScore(headline: string, current: number): num
 
   if (positive && current < 0.45) {
     return 0.45;
+  }
+
+  if (bullishMomentum && current < 0.4) {
+    return 0.4;
   }
 
   const negative =
