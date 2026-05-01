@@ -17,6 +17,7 @@ import {
   pickIngestor,
 } from '../ingestors/index.js';
 import { child } from '../logger.js';
+import { BENCHMARK_QUOTE_SYMBOLS } from '../market/benchmarks.js';
 
 const log = child({ component: 'daily-ingestor' });
 
@@ -40,7 +41,8 @@ export async function runDailyIngestor(opts: IngestRunOptions = {}): Promise<Ing
   bootstrapIngestors();
 
   const date = opts.date ?? isoDateIst();
-  const symbols = (opts.symbols ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
+  const base = (opts.symbols ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
+  const symbols = [...new Set([...base, ...BENCHMARK_QUOTE_SYMBOLS])];
   const ctx: IngestorContext = { date, symbols, signal: opts.signal };
 
   const result: IngestRunResult = {

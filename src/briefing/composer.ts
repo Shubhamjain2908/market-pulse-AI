@@ -17,8 +17,10 @@ import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
+import { INDIA_VIX_BENCHMARK_SYMBOL, NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
 import type { ScreenDefinition } from '../types/domain.js';
 import {
+  type AiPicksSectionStatus,
   type BriefingData,
   type MoverRow,
   type NewsRow,
@@ -37,6 +39,14 @@ export interface ComposeBriefingOptions {
   watchlist?: string[];
   /** Skip all LLM calls (Phase 1 mode). */
   skipAi?: boolean;
+  /** Weekend / NSE holiday — banner only; callers should also skip pipeline LLMs. */
+  marketClosure?: { kind: 'weekend' | 'holiday'; label: string };
+  /** Populated when `generateTheses` ran in the same workflow — drives AI Picks empty-state copy. */
+  thesisRun?: {
+    generated: number;
+    failed: number;
+    candidateCount: number;
+  };
 }
 
 export interface ComposedBriefing {
@@ -52,7 +62,7 @@ export async function composeBriefing(
 ): Promise<ComposedBriefing> {
   const date = opts.date ?? isoDateIst();
   const watchlist = (opts.watchlist ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
-  const useAi = !opts.skipAi;
+  const allowMoodLlm = !opts.skipAi && !opts.marketClosure;
 
   const mood = gatherMood(date, db);
   const watchlistAlerts = gatherWatchlistAlerts(date, db);
@@ -65,7 +75,7 @@ export async function composeBriefing(
 
   let moodNarrative: string | undefined;
   if (
-    useAi &&
+    allowMoodLlm &&
     (mood.fiiNet != null || mood.diiNet != null || topGainers.length > 0 || topLosers.length > 0)
   ) {
     try {
@@ -85,10 +95,18 @@ export async function composeBriefing(
     }
   }
 
+  const aiPicksStatus = resolveAiPicksStatus(
+    Boolean(opts.skipAi),
+    opts.marketClosure,
+    theses.length,
+    opts.thesisRun,
+  );
+
   const data: BriefingData = {
     date,
     mood,
     moodNarrative,
+    marketClosure: opts.marketClosure,
     watchlistAlerts,
     screenMatches: screenMatches.length > 0 ? screenMatches : undefined,
     portfolio,
@@ -96,7 +114,7 @@ export async function composeBriefing(
     topLosers,
     news,
     theses: theses.length > 0 ? theses : undefined,
-    aiPicksDisabled: !useAi,
+    aiPicksStatus,
   };
 
   log.info(
@@ -115,6 +133,25 @@ export async function composeBriefing(
   );
 
   return { date, html: renderBriefing(data), data };
+}
+
+function resolveAiPicksStatus(
+  skipAi: boolean,
+  marketClosure: ComposeBriefingOptions['marketClosure'],
+  thesesLen: number,
+  thesisRun?: ComposeBriefingOptions['thesisRun'],
+): AiPicksSectionStatus {
+  if (marketClosure) return { kind: 'holiday', label: marketClosure.label };
+  if (skipAi) return { kind: 'skipped', reason: 'skip_ai_flag' };
+  if (thesesLen > 0) return { kind: 'ok' };
+  if (thesisRun && thesisRun.failed > 0 && thesisRun.generated === 0) {
+    return { kind: 'all_failed', failed: thesisRun.failed };
+  }
+  return {
+    kind: 'empty',
+    reason: 'no_candidates',
+    candidateCount: thesisRun?.candidateCount,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -184,17 +221,72 @@ function gatherTheses(date: string, db: DatabaseType): ThesisCard[] {
 function gatherMood(date: string, db: DatabaseType): BriefingData['mood'] {
   const row = db
     .prepare(`
-      SELECT fii_net AS fiiNet, dii_net AS diiNet
+      SELECT fii_net AS fiiNet, dii_net AS diiNet, date AS d
       FROM fii_dii
       WHERE date <= ? AND segment = 'cash'
       ORDER BY date DESC LIMIT 1
     `)
-    .get(date) as { fiiNet?: number; diiNet?: number } | undefined;
+    .get(date) as { fiiNet?: number; diiNet?: number; d?: string } | undefined;
+
+  const nifty = niftyChangeFromQuotes(NIFTY_BENCHMARK_SYMBOL, date, db);
+  const vix = latestQuoteClose(INDIA_VIX_BENCHMARK_SYMBOL, date, db);
 
   return {
     fiiNet: row?.fiiNet,
     diiNet: row?.diiNet,
+    fiiDiiDate: row?.d,
+    niftyChangePct: nifty?.changePct,
+    niftyBarDate: nifty?.asOf,
+    vix: vix?.close,
+    vixDate: vix?.asOf,
   };
+}
+
+function latestQuoteClose(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+): { close: number; asOf: string } | undefined {
+  const latest = db
+    .prepare(
+      `
+      SELECT date, close FROM quotes
+      WHERE symbol = ? AND date <= ?
+      ORDER BY date DESC LIMIT 1
+    `,
+    )
+    .get(symbol, date) as { date: string; close: number } | undefined;
+  if (!latest) return undefined;
+  return { close: latest.close, asOf: latest.date };
+}
+
+function niftyChangeFromQuotes(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+): { changePct: number; asOf: string } | undefined {
+  const latest = db
+    .prepare(
+      `
+      SELECT date, close FROM quotes
+      WHERE symbol = ? AND date <= ?
+      ORDER BY date DESC LIMIT 1
+    `,
+    )
+    .get(symbol, date) as { date: string; close: number } | undefined;
+  if (!latest) return undefined;
+  const prev = db
+    .prepare(
+      `
+      SELECT close FROM quotes
+      WHERE symbol = ? AND date < ?
+      ORDER BY date DESC LIMIT 1
+    `,
+    )
+    .get(symbol, latest.date) as { close: number } | undefined;
+  if (!prev || prev.close <= 0) return { changePct: 0, asOf: latest.date };
+  const changePct = ((latest.close - prev.close) / prev.close) * 100;
+  return { changePct, asOf: latest.date };
 }
 
 /**

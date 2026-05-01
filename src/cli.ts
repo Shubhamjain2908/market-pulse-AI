@@ -40,8 +40,10 @@ import { config } from './config/env.js';
 import { APP_NAME, APP_VERSION } from './constants.js';
 import { closeDb, getDb, migrate } from './db/index.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
+import { isoDateIst } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
 import { logger } from './logger.js';
+import { getMarketClosure } from './market/nse-calendar.js';
 import { startScheduler } from './scheduler/market-scheduler.js';
 
 const program = new Command();
@@ -194,24 +196,52 @@ program
   .option('--skip-ai', 'skip all LLM stages (sentiment, thesis, narrative)')
   .action(async (opts: { skipAi?: boolean }) => {
     ensureDb();
-    const date = program.opts<{ date?: string }>().date;
+    const date = program.opts<{ date?: string }>().date ?? isoDateIst();
+    const closure = getMarketClosure(date);
+    if (closure) {
+      const result = await runBriefingComposer({
+        date,
+        skipAi: true,
+        marketClosure: closure,
+        delivery: config.BRIEFING_DELIVERY,
+      });
+      await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
+      logger.info(
+        { date: result.date, delivery: result.delivery, holiday: closure.label },
+        'pipeline complete (market closed)',
+      );
+      closeDb();
+      return;
+    }
 
     await runDailyIngestor({ date });
     await runSignalEnricher({ date });
     await runStockScreener({ date });
+
+    let thesisRun: { generated: number; failed: number; candidateCount: number } | undefined;
 
     if (!opts.skipAi) {
       const sentimentResult = await enrichSentiment();
       logger.info(sentimentResult, 'sentiment scoring done');
 
       const thesisResult = await generateTheses({ date });
+      thesisRun = {
+        generated: thesisResult.generated,
+        failed: thesisResult.failed,
+        candidateCount: thesisResult.candidateCount,
+      };
       logger.info(
         { generated: thesisResult.generated, failed: thesisResult.failed },
         'thesis generation done',
       );
     }
 
-    const result = await runBriefingComposer({ date, skipAi: opts.skipAi });
+    const result = await runBriefingComposer({
+      date,
+      skipAi: opts.skipAi,
+      thesisRun: opts.skipAi ? undefined : thesisRun,
+      delivery: config.BRIEFING_DELIVERY,
+    });
     await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
     logger.info({ date: result.date, delivery: result.delivery }, 'pipeline complete');
     closeDb();
@@ -239,6 +269,8 @@ program
         thesesCount: result.thesesCount,
         screenMatchesCount: result.screenMatchesCount,
         alertCount: result.alertCount,
+        holidayMode: result.holidayMode ?? false,
+        marketClosureLabel: result.marketClosureLabel,
       },
       'daily run complete',
     );

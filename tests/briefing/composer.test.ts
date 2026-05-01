@@ -8,12 +8,13 @@ import {
   getDb,
   insertNews,
   migrate,
+  upsertFiiDii,
   upsertQuotes,
   upsertSignals,
   upsertThesis,
 } from '../../src/db/index.js';
 import { MockLlmProvider } from '../../src/llm/providers/mock.js';
-import type { NewsItem, RawQuote, Signal } from '../../src/types/domain.js';
+import type { FiiDiiRow, NewsItem, RawQuote, Signal } from '../../src/types/domain.js';
 
 describe('briefing composer (Phase 3)', () => {
   let dbPath: string;
@@ -69,6 +70,58 @@ describe('briefing composer (Phase 3)', () => {
     ];
     upsertQuotes(quotes, db);
 
+    const bench: RawQuote[] = [
+      {
+        symbol: 'NIFTY_50',
+        exchange: 'NSE',
+        date: today,
+        open: 24000,
+        high: 24100,
+        low: 23900,
+        close: 24080,
+        volume: 0,
+        source: 'test',
+      },
+      {
+        symbol: 'NIFTY_50',
+        exchange: 'NSE',
+        date: '2026-04-29',
+        open: 23900,
+        high: 24050,
+        low: 23880,
+        close: 24000,
+        volume: 0,
+        source: 'test',
+      },
+      {
+        symbol: 'INDIA_VIX',
+        exchange: 'NSE',
+        date: today,
+        open: 14,
+        high: 15,
+        low: 13,
+        close: 14.25,
+        volume: 0,
+        source: 'test',
+      },
+    ];
+    upsertQuotes(bench, db);
+
+    const fii: FiiDiiRow[] = [
+      {
+        date: today,
+        segment: 'cash',
+        fiiBuy: 10000,
+        fiiSell: 9000,
+        fiiNet: 8048,
+        diiBuy: 5000,
+        diiSell: 4800,
+        diiNet: 200,
+        source: 'test',
+      },
+    ];
+    upsertFiiDii(fii, db);
+
     const signals: Signal[] = [
       { symbol: 'RELIANCE', date: today, name: 'rsi_14', value: 72, source: 'technical' },
     ];
@@ -117,7 +170,7 @@ describe('briefing composer (Phase 3)', () => {
     expect(result.html).toContain('Bear Case');
     expect(result.html).toContain('₹2,900');
     expect(result.data.theses).toHaveLength(1);
-    expect(result.data.aiPicksDisabled).toBeFalsy();
+    expect(result.data.aiPicksStatus.kind).toBe('ok');
   });
 
   it('includes mood narrative from LLM', async () => {
@@ -135,9 +188,32 @@ describe('briefing composer (Phase 3)', () => {
       llm,
     );
 
-    expect(result.data.aiPicksDisabled).toBe(true);
+    expect(result.data.aiPicksStatus).toMatchObject({
+      kind: 'skipped',
+      reason: 'skip_ai_flag',
+    });
     expect(result.data.moodNarrative).toBeUndefined();
     expect(llm.calls).toHaveLength(0);
+  });
+
+  it('shows holiday messaging when marketClosure is set', async () => {
+    const result = await composeBriefing(
+      {
+        date: '2026-05-01',
+        skipAi: true,
+        marketClosure: { kind: 'holiday', label: 'Maharashtra Day' },
+        watchlist: ['RELIANCE'],
+      },
+      db,
+      llm,
+    );
+
+    expect(result.data.aiPicksStatus).toEqual({
+      kind: 'holiday',
+      label: 'Maharashtra Day',
+    });
+    expect(result.html).toContain('NSE closed');
+    expect(result.html).toContain('Maharashtra Day');
   });
 
   it('includes sentiment badges in news section', async () => {

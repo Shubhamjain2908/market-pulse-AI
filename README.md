@@ -5,7 +5,12 @@ A personal morning-briefing agent for Indian stock markets (NSE/BSE).
 modular pipeline that runs every weekday at 7:30 AM IST and emails you a
 short, actionable briefing before market open.
 
-> **Status:** Phases 0–5 shipped (Delivery included). Phase 5 adds Zerodha Kite Connect
+> **Status:** Phases 0–5 shipped (Delivery included). **Report quality Phase 1**
+> shipped: NSE holiday/weekend guard (no pointless ingest when cash market is
+> closed), Market Mood shows Nifty Δ / India VIX / dated FII-DII with `[prev]`
+> labels, explicit AI Picks section states (skipped / holiday / empty / all
+> failed), and broader thesis candidates (screens, alerts, portfolio
+> drawdown). Phase 5 adds Zerodha Kite Connect
 > integration, a per-holding LLM-driven HOLD/ADD/TRIM/EXIT analyser, an
 > intraday LTP scanner, four additional built-in screens (RSI Oversold
 > Bounce, Golden Cross, Volume Breakout, Dividend Compounder), and a
@@ -350,6 +355,7 @@ market-pulse-ai/
     llm/            # LlmProvider interface + adapters
     config/         # env loader (zod-validated)
     portfolio/      # holdings tracker (Phase 4)
+    market/         # NSE calendar + benchmark symbol map (report-quality Phase 1)
     backtest/       # historical replay (Phase 2)
     types/          # shared domain types
     cli.ts          # CLI entry
@@ -386,6 +392,20 @@ pnpm build              # tsc -> dist/  (also copies SQL assets)
 - **All env access through `config`.** Never read `process.env` directly.
 - **All LLM JSON validated by zod.** `LlmJsonValidationError` makes failures
   loud.
+
+---
+
+## Report quality roadmap
+
+Improvements driven by briefing review (separate from the historical delivery
+phases 0–5 in the table below).
+
+| Step | Theme                         | Status     | Highlights                                                                 |
+| ---- | ----------------------------- | ---------- | -------------------------------------------------------------------------- |
+| 1    | Trust-breaking output         | ✅ shipped | `getMarketClosure()` + early exit in `runDailyWorkflow` / `run-all`; persistent-data brief with banner; `gatherMood` reads `NIFTY_50` / `INDIA_VIX` from `quotes`; `AiPicksSectionStatus` + `thesisRun` metadata; thesis ranking uses screens, alerts, portfolio loss threshold |
+| 2    | Portfolio analysis quality    | 🔜 next    | Trigger gate, deep-drawdown rules, macro vs stock context, portfolio technicals |
+
+Holiday dates live in [`src/market/nse-calendar.ts`](src/market/nse-calendar.ts) — extend when NSE publishes new calendars.
 
 ---
 

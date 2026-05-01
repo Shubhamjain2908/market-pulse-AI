@@ -8,7 +8,9 @@
 
 import { config } from '../config/env.js';
 import { enrichSentiment } from '../enrichers/sentiment/enricher.js';
+import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
+import { getMarketClosure } from '../market/nse-calendar.js';
 import { runBriefingComposer } from './briefing-composer.js';
 import { runDailyIngestor } from './daily-ingestor.js';
 import { analysePortfolio } from './portfolio-analyser.js';
@@ -36,19 +38,52 @@ export interface DailyWorkflowResult {
   hasNarrative: boolean;
   html: string;
   delivery: 'file' | 'email' | 'slack' | 'telegram';
+  /** True when `date` was a weekend or NSE holiday — no ingest / enrichment / fresh LLMs ran. */
+  holidayMode?: boolean;
+  /** Human-readable closure label when `holidayMode` is true. */
+  marketClosureLabel?: string;
 }
 
 export async function runDailyWorkflow(
   opts: DailyWorkflowOptions = {},
 ): Promise<DailyWorkflowResult> {
-  await runDailyIngestor({ date: opts.date });
-  await runSignalEnricher({ date: opts.date });
-  await runStockScreener({ date: opts.date });
+  const date = opts.date ?? isoDateIst();
+  const closure = getMarketClosure(date);
+
+  if (closure) {
+    log.info(
+      { date, closure },
+      'market closed — persisted-data brief only (no ingest / fresh LLMs)',
+    );
+    const briefing = await runBriefingComposer({
+      date,
+      skipAi: true,
+      marketClosure: closure,
+      delivery: config.BRIEFING_DELIVERY,
+    });
+    return {
+      date: briefing.date,
+      alertCount: briefing.alertCount,
+      screenMatchesCount: briefing.screenMatchesCount,
+      newsCount: briefing.newsCount,
+      thesesCount: briefing.thesesCount,
+      portfolioCount: briefing.portfolioCount,
+      hasNarrative: briefing.hasNarrative,
+      html: briefing.html,
+      delivery: config.BRIEFING_DELIVERY,
+      holidayMode: true,
+      marketClosureLabel: closure.label,
+    };
+  }
+
+  await runDailyIngestor({ date });
+  await runSignalEnricher({ date });
+  await runStockScreener({ date });
 
   if (!opts.skipPortfolio) {
     try {
-      await runPortfolioSync({ date: opts.date });
-      const stopLoss = detectStopLossBreaches({ date: opts.date });
+      await runPortfolioSync({ date });
+      const stopLoss = detectStopLossBreaches({ date });
       log.info(
         { checked: stopLoss.checked, breached: stopLoss.breached },
         'stop-loss detector complete',
@@ -61,18 +96,25 @@ export async function runDailyWorkflow(
     }
   }
 
+  let thesisRun: { generated: number; failed: number; candidateCount: number } | undefined;
+
   if (!opts.skipAi) {
     const sentimentResult = await enrichSentiment();
     log.info(sentimentResult, 'sentiment scoring done');
 
-    const thesisResult = await generateTheses({ date: opts.date });
+    const thesisResult = await generateTheses({ date });
+    thesisRun = {
+      generated: thesisResult.generated,
+      failed: thesisResult.failed,
+      candidateCount: thesisResult.candidateCount,
+    };
     log.info(
       { generated: thesisResult.generated, failed: thesisResult.failed },
       'thesis generation done',
     );
 
     if (!opts.skipPortfolio) {
-      const portfolioResult = await analysePortfolio({ date: opts.date });
+      const portfolioResult = await analysePortfolio({ date });
       log.info(
         {
           analysed: portfolioResult.analysed,
@@ -85,8 +127,9 @@ export async function runDailyWorkflow(
   }
 
   const briefing = await runBriefingComposer({
-    date: opts.date,
+    date,
     skipAi: opts.skipAi,
+    thesisRun: opts.skipAi ? undefined : thesisRun,
     delivery: config.BRIEFING_DELIVERY,
   });
 

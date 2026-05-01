@@ -14,6 +14,14 @@ export interface BriefRunOptions {
   delivery?: 'file' | 'email' | 'slack' | 'telegram';
   /** Skip LLM-generated sections (narrative, etc.). */
   skipAi?: boolean;
+  /** Weekend / NSE holiday — closed-market brief from persisted DB rows only. */
+  marketClosure?: { kind: 'weekend' | 'holiday'; label: string };
+  /** When theses were generated in the same workflow pass (for AI Picks messaging). */
+  thesisRun?: {
+    generated: number;
+    failed: number;
+    candidateCount: number;
+  };
 }
 
 export interface BriefRunResult {
@@ -32,7 +40,12 @@ export async function runBriefingComposer(opts: BriefRunOptions = {}): Promise<B
   const date = opts.date ?? isoDateIst();
   const delivery = opts.delivery ?? 'file';
 
-  const composed = await composeBriefing({ date, skipAi: opts.skipAi });
+  const composed = await composeBriefing({
+    date,
+    skipAi: opts.skipAi,
+    marketClosure: opts.marketClosure,
+    thesisRun: opts.thesisRun,
+  });
   const screenMatches = composed.data.screenMatches?.reduce((s, m) => s + m.symbols.length, 0) ?? 0;
   log.info(
     {

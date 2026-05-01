@@ -15,8 +15,13 @@ import { SEBI_DISCLAIMER } from '../constants.js';
 export interface MarketMood {
   fiiNet?: number;
   diiNet?: number;
+  /** Latest cash-segment FII/DII row date (may be before briefing date). */
+  fiiDiiDate?: string;
   vix?: number;
+  vixDate?: string;
   niftyChangePct?: number;
+  /** Date of the Nifty bar used for Δ (previous session on holidays). */
+  niftyBarDate?: string;
 }
 
 export interface WatchlistAlert {
@@ -91,11 +96,21 @@ export interface ScreenMatch {
   timeHorizon?: string;
 }
 
+/** Why the AI Picks section looks empty or different — avoids ambiguous placeholders. */
+export type AiPicksSectionStatus =
+  | { kind: 'ok' }
+  | { kind: 'skipped'; reason: 'skip_ai_flag' }
+  | { kind: 'holiday'; label: string }
+  | { kind: 'empty'; reason: 'no_candidates'; candidateCount?: number }
+  | { kind: 'all_failed'; failed: number };
+
 export interface BriefingData {
   date: string;
   mood: MarketMood;
   /** LLM-generated narrative summary of market conditions. */
   moodNarrative?: string;
+  /** When set, cash market was closed — banner + no fresh pipeline LLMs. */
+  marketClosure?: { kind: 'weekend' | 'holiday'; label: string };
   watchlistAlerts: WatchlistAlert[];
   /** Screens that fired today (Phase 2). */
   screenMatches?: ScreenMatch[];
@@ -106,8 +121,7 @@ export interface BriefingData {
   theses?: ThesisCard[];
   /** Portfolio summary + per-holding analysis (Phase 5). */
   portfolio?: PortfolioSummary;
-  /** True when the AI thesis section is intentionally empty (Phase 1). */
-  aiPicksDisabled?: boolean;
+  aiPicksStatus: AiPicksSectionStatus;
 }
 
 export function renderBriefing(data: BriefingData): string {
@@ -122,12 +136,12 @@ export function renderBriefing(data: BriefingData): string {
 <body>
   <main class="wrap">
     ${renderHeader(data.date)}
-    ${renderMood(data.mood, data.moodNarrative)}
+    ${renderMood(data.date, data.mood, data.moodNarrative, data.marketClosure)}
     ${renderPortfolio(data.portfolio)}
     ${renderWatchlistAlerts(data.watchlistAlerts)}
     ${renderScreenMatches(data.screenMatches)}
     ${renderMovers(data.topGainers, data.topLosers)}
-    ${renderAiPicks(data.theses, data.aiPicksDisabled)}
+    ${renderAiPicks(data.theses, data.aiPicksStatus)}
     ${renderNews(data.news)}
     ${renderFooter()}
   </main>
@@ -148,15 +162,44 @@ function renderHeader(date: string): string {
     </header>`;
 }
 
-function renderMood(mood: MarketMood, narrative?: string): string {
+function renderMood(
+  briefingDate: string,
+  mood: MarketMood,
+  narrative?: string,
+  marketClosure?: { kind: 'weekend' | 'holiday'; label: string },
+): string {
+  const banner = marketClosure
+    ? `<div class="closure-banner"><strong>NSE closed</strong> (${esc(marketClosure.label)}). Values below are from the latest saved session in your database; dates marked <span class="tag">prev</span> are earlier than ${esc(briefingDate)}.</div>`
+    : '';
+
   const cards = [
-    moodCard('FII Net (Cash)', formatCrore(mood.fiiNet), mood.fiiNet),
-    moodCard('DII Net (Cash)', formatCrore(mood.diiNet), mood.diiNet),
-    moodCard('India VIX', mood.vix != null ? mood.vix.toFixed(2) : '—', null),
+    moodCard(
+      'FII Net (Cash)',
+      formatCroreOrNoData(mood.fiiNet),
+      mood.fiiNet,
+      mood.fiiDiiDate,
+      briefingDate,
+    ),
+    moodCard(
+      'DII Net (Cash)',
+      formatCroreOrNoData(mood.diiNet),
+      mood.diiNet,
+      mood.fiiDiiDate,
+      briefingDate,
+    ),
+    moodCard(
+      'India VIX',
+      mood.vix != null ? mood.vix.toFixed(2) : 'No data',
+      null,
+      mood.vixDate,
+      briefingDate,
+    ),
     moodCard(
       'Nifty 50 Δ',
-      mood.niftyChangePct != null ? `${mood.niftyChangePct.toFixed(2)}%` : '—',
+      mood.niftyChangePct != null ? `${mood.niftyChangePct.toFixed(2)}%` : 'No data',
       mood.niftyChangePct ?? null,
+      mood.niftyBarDate,
+      briefingDate,
     ),
   ].join('');
 
@@ -165,18 +208,29 @@ function renderMood(mood: MarketMood, narrative?: string): string {
   return `
     <section class="card">
       <h2>Market Mood</h2>
+      ${banner}
       <div class="grid grid-4">${cards}</div>
       ${narrativeHtml}
     </section>`;
 }
 
-function moodCard(label: string, value: string, sentiment: number | null | undefined): string {
+function moodCard(
+  label: string,
+  value: string,
+  sentiment: number | null | undefined,
+  metricDate?: string,
+  briefingDate?: string,
+): string {
   const cls =
     sentiment == null ? 'mood neutral' : sentiment > 0 ? 'mood positive' : 'mood negative';
+  let display = value;
+  if (metricDate && briefingDate && metricDate < briefingDate && value !== 'No data') {
+    display = `${value} [prev ${metricDate}]`;
+  }
   return `
     <div class="${cls}">
       <div class="mood-label">${esc(label)}</div>
-      <div class="mood-value">${esc(value)}</div>
+      <div class="mood-value">${esc(display)}</div>
     </div>`;
 }
 
@@ -385,20 +439,40 @@ function moverRow(m: MoverRow, _tone: 'positive' | 'negative'): string {
     </tr>`;
 }
 
-function renderAiPicks(theses?: ThesisCard[], disabled?: boolean): string {
-  if (disabled) {
+function renderAiPicks(theses: ThesisCard[] | undefined, status: AiPicksSectionStatus): string {
+  if (status.kind === 'skipped') {
     return `
       <section class="card ai-placeholder">
         <h2>AI Picks</h2>
-        <p class="muted">AI thesis generation is disabled for this run.</p>
+        <p class="muted">AI thesis generation is disabled for this run (--skip-ai).</p>
+      </section>`;
+  }
+
+  if (status.kind === 'holiday') {
+    return `
+      <section class="card ai-placeholder">
+        <h2>AI Picks</h2>
+        <p class="muted">NSE closed (${esc(status.label)}). Thesis cards were not refreshed today.</p>
+      </section>`;
+  }
+
+  if (status.kind === 'all_failed') {
+    return `
+      <section class="card ai-placeholder">
+        <h2>AI Picks</h2>
+        <p class="muted">Thesis LLM calls failed for every candidate (${esc(String(status.failed))}). Check logs and provider credentials.</p>
       </section>`;
   }
 
   if (!theses || theses.length === 0) {
+    const hint =
+      status.kind === 'empty' && status.candidateCount != null && status.candidateCount === 0
+        ? ' No symbols qualified after ranking.'
+        : '';
     return `
       <section class="card">
         <h2>AI Picks</h2>
-        <p class="muted">No stocks met the signal threshold for AI analysis today.</p>
+        <p class="muted">No stocks met the signal threshold for AI analysis today.${hint}</p>
       </section>`;
   }
 
@@ -505,8 +579,8 @@ function esc(s: string | number | undefined): string {
     .replaceAll("'", '&#39;');
 }
 
-function formatCrore(n: number | undefined): string {
-  if (n == null) return '—';
+function formatCroreOrNoData(n: number | undefined): string {
+  if (n == null) return 'No data';
   const sign = n >= 0 ? '+' : '−';
   return `${sign}₹${Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 1 })} Cr`;
 }
@@ -556,6 +630,8 @@ function baseStyles(): string {
     .hero .subtitle { color: var(--muted); margin: 0; font-size: 13px; }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
       padding: 16px 18px; margin-bottom: 14px; }
+    .closure-banner { margin-bottom: 12px; padding: 10px 12px; background: #fff8e6;
+      border: 1px solid #f0e0a8; border-radius: 8px; font-size: 13px; line-height: 1.45; color: var(--text); }
     .card h2 { margin: 0 0 12px; font-size: 16px; color: var(--accent); }
     .card h3 { margin: 0 0 8px; font-size: 14px; }
     .grid { display: grid; gap: 12px; }

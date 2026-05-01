@@ -8,7 +8,7 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { loadWatchlist } from '../config/loaders.js';
-import { getDb } from '../db/index.js';
+import { getDb, getLatestHoldings } from '../db/index.js';
 import {
   type StoredThesis,
   type UpsertThesisRow,
@@ -63,6 +63,8 @@ export interface ThesisGeneratorResult {
   date: string;
   generated: number;
   failed: number;
+  /** Watchlist + holdings considered “interesting” before the max-thesis cap. */
+  candidateCount: number;
   theses: StoredThesis[];
 }
 
@@ -73,14 +75,19 @@ export async function generateTheses(
 ): Promise<ThesisGeneratorResult> {
   const date = opts.date ?? isoDateIst();
   const watchlist = (opts.watchlist ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
+  const holdings = getLatestHoldings(db).map((h) => h.symbol.toUpperCase());
+  const universe = [...new Set([...watchlist, ...holdings])];
   const maxTheses = opts.maxTheses ?? MAX_THESES_PER_RUN;
 
-  const candidates = rankCandidates(date, watchlist, db);
+  const candidates = rankCandidates(date, universe, db);
   const toGenerate = candidates.slice(0, maxTheses);
 
   if (toGenerate.length === 0) {
-    log.info('no candidates with interesting signals for thesis generation');
-    return { date, generated: 0, failed: 0, theses: [] };
+    log.info(
+      { universe: universe.length, ranked: candidates.length },
+      'no candidates with interesting signals for thesis generation',
+    );
+    return { date, generated: 0, failed: 0, candidateCount: candidates.length, theses: [] };
   }
 
   log.info({ candidates: toGenerate.map((c) => c.symbol) }, 'generating theses for top candidates');
@@ -123,9 +130,12 @@ export async function generateTheses(
   }
 
   const theses = getThesesForDate(date, db);
-  log.info({ generated, failed, total: theses.length }, 'thesis generation complete');
+  log.info(
+    { generated, failed, total: theses.length, candidateCount: candidates.length },
+    'thesis generation complete',
+  );
 
-  return { date, generated, failed, theses };
+  return { date, generated, failed, candidateCount: candidates.length, theses };
 }
 
 // ---------------------------------------------------------------------------
@@ -138,10 +148,13 @@ interface Candidate {
   signals: Record<string, number>;
 }
 
-function rankCandidates(date: string, symbols: string[], db: DatabaseType): Candidate[] {
-  if (symbols.length === 0) return [];
-  const placeholders = symbols.map(() => '?').join(',');
+/** Holdings at or below this unrealised P&amp;L % are forced into the candidate pool. */
+const PORTFOLIO_THESIS_LOSS_PCT = -15;
 
+function rankCandidates(date: string, universe: string[], db: DatabaseType): Candidate[] {
+  if (universe.length === 0) return [];
+
+  const placeholders = universe.map(() => '?').join(',');
   const rows = db
     .prepare(`
       SELECT symbol, name, value FROM signals
@@ -151,7 +164,7 @@ function rankCandidates(date: string, symbols: string[], db: DatabaseType): Cand
           WHERE s2.symbol = signals.symbol AND s2.date <= ?
         )
     `)
-    .all(date, ...symbols, date) as Array<{ symbol: string; name: string; value: number }>;
+    .all(date, ...universe, date) as Array<{ symbol: string; name: string; value: number }>;
 
   const bySymbol = new Map<string, Record<string, number>>();
   for (const r of rows) {
@@ -160,27 +173,60 @@ function rankCandidates(date: string, symbols: string[], db: DatabaseType): Cand
     bySymbol.set(r.symbol, signals);
   }
 
+  const screenSyms = new Set(
+    (
+      db.prepare('SELECT DISTINCT symbol FROM screens WHERE date = ?').all(date) as Array<{
+        symbol: string;
+      }>
+    ).map((r) => r.symbol.toUpperCase()),
+  );
+  const alertSyms = new Set(
+    (
+      db.prepare('SELECT DISTINCT symbol FROM alerts WHERE date = ?').all(date) as Array<{
+        symbol: string;
+      }>
+    ).map((r) => r.symbol.toUpperCase()),
+  );
+  const deepLossSyms = new Set(
+    getLatestHoldings(db)
+      .filter((h) => h.pnlPct != null && h.pnlPct <= PORTFOLIO_THESIS_LOSS_PCT)
+      .map((h) => h.symbol.toUpperCase()),
+  );
+
   const candidates: Candidate[] = [];
-  for (const [symbol, signals] of bySymbol) {
+  for (const symbol of universe) {
+    const signals = bySymbol.get(symbol) ?? {};
     let score = 0;
+
     const rsi = signals.rsi_14;
     if (rsi != null) {
       if (rsi >= 70 || rsi <= 30) score += 3;
       else if (rsi >= 60 || rsi <= 40) score += 1;
     }
     const volRatio = signals.volume_ratio_20d;
-    if (volRatio != null && volRatio >= 1.5) score += 2;
+    if (volRatio != null) {
+      if (volRatio >= 1.5) score += 2;
+      else if (volRatio >= 1.2) score += 1;
+    }
     const pctHigh = signals.pct_from_52w_high;
     if (pctHigh != null && pctHigh >= -3) score += 2;
     const pctLow = signals.pct_from_52w_low;
     if (pctLow != null && pctLow <= 5) score += 2;
+
+    if (screenSyms.has(symbol)) score += 5;
+    if (alertSyms.has(symbol)) score += 4;
+    if (deepLossSyms.has(symbol)) score += 6;
 
     if (score > 0) {
       candidates.push({ symbol, interestScore: score, signals });
     }
   }
 
-  candidates.sort((a, b) => b.interestScore - a.interestScore);
+  candidates.sort((a, b) => {
+    const d = b.interestScore - a.interestScore;
+    if (d !== 0) return d;
+    return a.symbol.localeCompare(b.symbol);
+  });
   return candidates;
 }
 
