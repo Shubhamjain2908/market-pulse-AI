@@ -19,7 +19,7 @@ import {
   getLatestHoldings,
   getPortfolioAnalysisForDate,
 } from '../db/index.js';
-import { getThesesForDate } from '../db/queries.js';
+import { getSymbolSectors, getThesesForDate } from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
@@ -356,7 +356,11 @@ function gatherPortfolio(date: string, db: DatabaseType): PortfolioSummary | und
   const analysis = getPortfolioAnalysisForDate(date, db);
   const analysisBySymbol = new Map(analysis.map((a) => [a.symbol, a]));
   const sectorMap = loadSectorMap();
-  const riskRollup = buildPortfolioRiskRollup(holdings, sectorMap);
+  const sectorFromDb = getSymbolSectors(
+    holdings.map((h) => h.symbol),
+    db,
+  );
+  const riskRollup = buildPortfolioRiskRollup(holdings, sectorMap, sectorFromDb);
 
   const positions: PortfolioPositionCard[] = holdings.map((h) => {
     const a = analysisBySymbol.get(h.symbol);
@@ -415,6 +419,7 @@ function gatherPortfolio(date: string, db: DatabaseType): PortfolioSummary | und
 function buildPortfolioRiskRollup(
   holdings: PortfolioHoldingRow[],
   sectorMap: Record<string, string>,
+  sectorFromDb: Map<string, string>,
 ): PortfolioRiskRollup | undefined {
   if (holdings.length === 0) return undefined;
 
@@ -463,7 +468,7 @@ function buildPortfolioRiskRollup(
 
   const sectorAgg = new Map<string, number>();
   for (const p of enriched) {
-    const sector = classifySector(p.symbol, sectorMap);
+    const sector = classifySector(p.symbol, sectorMap, sectorFromDb.get(p.symbol.toUpperCase()));
     sectorAgg.set(sector, (sectorAgg.get(sector) ?? 0) + p.valueInr);
   }
   const sectorWeights = [...sectorAgg.entries()]

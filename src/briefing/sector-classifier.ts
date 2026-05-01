@@ -1,16 +1,26 @@
 /**
- * Rule-based sector labels when explicit sector-map entries are missing.
- * Covers SGB tickers, gold/silver/liquid BEES, and generic index ETFs.
+ * Sector label for portfolio risk rollup: config overrides, instrument heuristics,
+ * then optional DB sector (from Yahoo `quoteSummary` cached in `symbols` during ingest).
  */
 
-export function classifySector(symbol: string, explicitMap: Record<string, string>): string {
+import { heuristicInstrumentSector } from '../market/instrument-sector-heuristic.js';
+
+/**
+ * @param dbSector - From `symbols.sector` when ingest has populated it (Yahoo); optional.
+ */
+export function classifySector(
+  symbol: string,
+  explicitMap: Record<string, string>,
+  dbSector?: string | null,
+): string {
   const s = symbol.toUpperCase();
   if (explicitMap[s]) return explicitMap[s];
-  if (/-GB$/.test(s)) return 'Sovereign Gold Bond';
-  if (s === 'GOLDBEES' || s === 'GOLDCASE') return 'Gold ETF';
-  if (s === 'SILVERBEES') return 'Silver ETF';
-  if (s === 'LIQUIDCASE' || s === 'LIQUIDBEES') return 'Liquid Fund';
-  if (s === 'JUNIORBEES' || s === 'NIFTYBEES' || s === 'BANKBEES') return 'Index ETF';
-  if (/BEES$/.test(s) || /ETF$/.test(s)) return 'Index ETF';
+
+  const heuristic = heuristicInstrumentSector(s);
+  if (heuristic) return heuristic;
+
+  const fromDb = dbSector?.trim();
+  if (fromDb) return fromDb;
+
   return 'Unknown';
 }

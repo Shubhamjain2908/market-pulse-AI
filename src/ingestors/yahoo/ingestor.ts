@@ -10,7 +10,7 @@
 
 import YahooFinance from 'yahoo-finance2';
 import { child } from '../../logger.js';
-import { YAHOO_CHART_TICKER_OVERRIDES } from '../../market/benchmarks.js';
+import { toYahooFinanceTicker } from '../../market/yahoo-ticker.js';
 import type { RawQuote } from '../../types/domain.js';
 import { isoDateIst } from '../base/dates.js';
 import type { IngestResult, Ingestor, IngestorCapability, IngestorContext } from '../types.js';
@@ -46,7 +46,7 @@ export class YahooIngestor implements Ingestor {
 
     for (const symbol of symbols) {
       try {
-        const ticker = toYahooTicker(symbol);
+        const ticker = toYahooFinanceTicker(symbol);
         const rows = await this.client.chart(ticker, {
           period1,
           period2,
@@ -74,12 +74,4 @@ export class YahooIngestor implements Ingestor {
     }
     return { data: all, failed, source: this.name };
   }
-}
-
-function toYahooTicker(symbol: string): string {
-  const u = symbol.toUpperCase();
-  const override = YAHOO_CHART_TICKER_OVERRIDES[u];
-  if (override) return override;
-  if (symbol.includes('.')) return u;
-  return `${u}.NS`;
 }

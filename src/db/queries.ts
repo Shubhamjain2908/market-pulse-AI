@@ -332,3 +332,65 @@ export function upsertScreenResults(rows: ScreenResult[], db: DatabaseType = get
   tx(rows);
   return rows.length;
 }
+
+// ---------------------------------------------------------------------------
+// Symbol metadata (Yahoo sector / industry cache for briefing rollups)
+// ---------------------------------------------------------------------------
+
+export interface SymbolMetadataRow {
+  symbol: string;
+  sector?: string | null;
+  industry?: string | null;
+  name?: string | null;
+}
+
+/** Returns trimmed Yahoo-backed sectors for the given symbols (when present in DB). */
+export function getSymbolSectors(
+  symbols: string[],
+  db: DatabaseType = getDb(),
+): Map<string, string> {
+  const uniq = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  if (uniq.length === 0) return new Map();
+
+  const placeholders = uniq.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT symbol, sector FROM symbols
+       WHERE symbol IN (${placeholders})
+         AND sector IS NOT NULL AND TRIM(sector) != ''`,
+    )
+    .all(...uniq) as Array<{ symbol: string; sector: string }>;
+
+  const m = new Map<string, string>();
+  for (const r of rows) {
+    m.set(r.symbol.toUpperCase(), r.sector.trim());
+  }
+  return m;
+}
+
+export function upsertSymbolMetadata(
+  rows: SymbolMetadataRow[],
+  db: DatabaseType = getDb(),
+): number {
+  if (rows.length === 0) return 0;
+  const stmt = db.prepare(`
+    INSERT INTO symbols (symbol, exchange, sector, industry, name, is_index, is_active)
+    VALUES (@symbol, 'NSE', @sector, @industry, @name, 0, 1)
+    ON CONFLICT(symbol) DO UPDATE SET
+      sector   = COALESCE(excluded.sector, symbols.sector),
+      industry = COALESCE(excluded.industry, symbols.industry),
+      name     = COALESCE(excluded.name, symbols.name)
+  `);
+  const tx = db.transaction((batch: SymbolMetadataRow[]) => {
+    for (const r of batch) {
+      stmt.run({
+        symbol: r.symbol.toUpperCase(),
+        sector: r.sector ?? null,
+        industry: r.industry ?? null,
+        name: r.name ?? null,
+      });
+    }
+  });
+  tx(rows);
+  return rows.length;
+}
