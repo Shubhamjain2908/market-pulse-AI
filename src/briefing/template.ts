@@ -76,6 +76,8 @@ export interface PortfolioPositionCard {
   bearPoints: string[];
   suggestedStop: number | null;
   suggestedTarget: number | null;
+  /** Latest RSI / volume / 52w context from `signals` (after enrich). */
+  technicalSummary?: string | null;
 }
 
 export interface PortfolioSummary {
@@ -328,6 +330,11 @@ function renderPositionCard(c: PortfolioPositionCard): string {
       </div>
     </div>`;
 
+  const tech =
+    c.technicalSummary != null && c.technicalSummary !== ''
+      ? `<p class="position-tech">${esc(c.technicalSummary)}</p>`
+      : '';
+
   const thesis = c.thesis ? `<p class="position-thesis">${esc(c.thesis)}</p>` : '';
   const trigger = c.triggerReason
     ? `<p class="position-trigger"><span class="muted">Trigger:</span> ${esc(c.triggerReason)}</p>`
@@ -343,6 +350,7 @@ function renderPositionCard(c: PortfolioPositionCard): string {
   return `
     <div class="position-card">
       ${headline}
+      ${tech}
       ${thesis}
       ${trigger}
       ${bull || bear ? `<div class="point-grid">${bull}${bear}</div>` : ''}
@@ -707,6 +715,7 @@ function baseStyles(): string {
     .position-header { display: flex; justify-content: space-between; align-items: center;
       gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
     .position-prices { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .position-tech { margin: 4px 0 2px; font-size: 12px; color: #5a6578; line-height: 1.4; }
     .position-thesis { margin: 6px 0; font-size: 13px; line-height: 1.5; }
     .position-trigger { margin: 4px 0 8px; font-size: 12px; color: #4a5568; }
     .position-levels { margin-top: 6px; font-size: 12px; color: #4a5568; }

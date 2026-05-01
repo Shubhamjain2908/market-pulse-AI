@@ -1,14 +1,13 @@
 /**
  * Daily Ingestor agent. Orchestrates the registered ingestors against the
- * watchlist (and any extra symbols passed in), persists the results to
- * SQLite, and returns a summary.
+ * symbol universe (watchlist + latest portfolio holdings + benchmark quotes,
+ * or explicit symbols), persists the results to SQLite, and returns a summary.
  *
  * Each capability is wrapped in try/catch so a flaky source can't take the
  * whole run down. Detailed errors are logged but never thrown.
  */
 
-import { loadWatchlist } from '../config/loaders.js';
-import { insertNews, upsertFiiDii, upsertFundamentals, upsertQuotes } from '../db/index.js';
+import { getDb, insertNews, upsertFiiDii, upsertFundamentals, upsertQuotes } from '../db/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import {
   type IngestorCapability,
@@ -17,7 +16,7 @@ import {
   pickIngestor,
 } from '../ingestors/index.js';
 import { child } from '../logger.js';
-import { BENCHMARK_QUOTE_SYMBOLS } from '../market/benchmarks.js';
+import { defaultIngestSymbolUniverse } from '../market/ingest-symbols.js';
 
 const log = child({ component: 'daily-ingestor' });
 
@@ -41,8 +40,9 @@ export async function runDailyIngestor(opts: IngestRunOptions = {}): Promise<Ing
   bootstrapIngestors();
 
   const date = opts.date ?? isoDateIst();
-  const base = (opts.symbols ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
-  const symbols = [...new Set([...base, ...BENCHMARK_QUOTE_SYMBOLS])];
+  const symbols = opts.symbols
+    ? opts.symbols.map((s) => s.toUpperCase())
+    : defaultIngestSymbolUniverse(getDb());
   const ctx: IngestorContext = { date, symbols, signal: opts.signal };
 
   const result: IngestRunResult = {

@@ -9,6 +9,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+import { technicalSummaryLine } from '../agents/portfolio-trigger.js';
 import { getAlertsForDate } from '../analysers/alerts.js';
 import { loadScreens, loadWatchlist } from '../config/loaders.js';
 import { getDb, getLatestHoldings, getPortfolioAnalysisForDate } from '../db/index.js';
@@ -327,6 +328,7 @@ function gatherPortfolio(date: string, db: DatabaseType): PortfolioSummary | und
       bearPoints: a?.bearPoints ?? [],
       suggestedStop: a?.suggestedStop ?? null,
       suggestedTarget: a?.suggestedTarget ?? null,
+      technicalSummary: technicalSummaryLine(h.symbol, date, db),
     };
   });
 

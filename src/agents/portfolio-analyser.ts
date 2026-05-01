@@ -1,15 +1,9 @@
 /**
- * Portfolio Analyser. For every holding in the latest portfolio snapshot,
- * assembles a context (current P&L, technical signals, fundamentals, news,
- * screens fired today, alerts) and asks the LLM for a structured
- * HOLD / ADD / TRIM / EXIT recommendation.
+ * Portfolio Analyser. For each holding, either runs a full LLM review (when
+ * triggers fire) or persists a deterministic lite snapshot to save tokens.
  *
- * Persists per-holding analysis to portfolio_analysis. The briefing
- * surfaces it under a "My Portfolio" section.
- *
- * This is the headline Phase 5 deliverable: it answers the user's literal
- * morning question — "given everything that happened, what should I do
- * with each of my positions today?".
+ * Persists per-holding analysis to portfolio_analysis. The briefing surfaces
+ * it under a "My Portfolio" section.
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
@@ -27,6 +21,11 @@ import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
+import {
+  PORTFOLIO_DEEP_LOSS_PCT,
+  buildLiteSnapshotCopy,
+  needsPortfolioLlmReview,
+} from './portfolio-trigger.js';
 import { buildStockContext } from './thesis-generator.js';
 
 const log = child({ component: 'portfolio-analyser' });
@@ -44,9 +43,8 @@ const PortfolioActionSchema = z.object({
 });
 type PortfolioAction = z.infer<typeof PortfolioActionSchema>;
 
-const SYSTEM_PROMPT = `You are a senior Indian-equity portfolio review analyst. The user already
-OWNS the position you are analysing. Your job is to recommend ONE of four
-actions based ONLY on the data provided:
+const PORTFOLIO_SYSTEM = `You are a senior Indian-equity portfolio review analyst. The user already
+OWNS the position you are analysing. Recommend ONE of four actions based ONLY on the data provided:
 
   HOLD  — keep the position as-is, thesis still intact
   ADD   — accumulate more on the current setup
@@ -54,44 +52,39 @@ actions based ONLY on the data provided:
   EXIT  — close the entire position
 
 Rules:
-1. Anchor your reasoning on what's CHANGED since entry: P&L vs entry, recent
-   technical setup, news flow, fundamentals trajectory.
-2. NEVER hallucinate financials. If a data point isn't provided, don't
-   invoke it.
-3. ADD/TRIM/EXIT recommendations require a concrete catalyst — name it in
-   triggerReason.
-4. Conviction is 0..1. Below 0.4 → HOLD by default unless there's a strong
-   exit signal.
-5. suggestedStop / suggestedTarget are optional INR levels (numbers, not
-   strings). Omit if not applicable.
+1. Anchor reasoning on what CHANGED: P&L vs entry, technicals, symbol-specific news,
+   screens/alerts. Do not repeat broad Indian macro flows (FII/DII, USD/INR, crude)
+   in bullPoints or bearPoints unless this company's economics are directly tied
+   to that risk — those appear in the Market Mood section already.
+2. NEVER hallucinate financials. If a data point isn't provided, don't invoke it.
+3. ADD/TRIM/EXIT need a concrete catalyst from the provided data — name it in triggerReason.
+4. Conviction is 0..1. Below 0.4 → HOLD by default unless exit evidence is strong.
+5. suggestedStop / suggestedTarget are optional INR numbers.
 
-Output ONLY a single JSON object matching the schema. No markdown fences,
-no commentary, no greetings. Just the JSON.
+Output ONLY a single JSON object matching the schema. No markdown fences.
 
 Schema:
 {
   "symbol": string,
   "action": "HOLD" | "ADD" | "TRIM" | "EXIT",
   "conviction": number (0..1),
-  "thesis": string (20-800 chars, 2-3 sentences),
+  "thesis": string (20-800 chars),
   "bullPoints": string[] (1-5 items),
   "bearPoints": string[] (1-5 items),
-  "triggerReason": string (one sentence: what changed?),
+  "triggerReason": string,
   "suggestedStop": number | null,
   "suggestedTarget": number | null
 }`;
 
+const DEEP_LOSS_ADDON = `
+CRITICAL — UNREALISED LOSS >= ${Math.abs(PORTFOLIO_DEEP_LOSS_PCT)}%:
+HOLD is only acceptable if idiosyncratic recovery evidence exists in the supplied data.
+Otherwise prefer TRIM or EXIT and say why. Cite the drawdown magnitude in triggerReason.`;
+
 export interface PortfolioAnalyserOptions {
   date?: string;
-  /** Restrict analysis to a subset of symbols (default: every holding). */
   symbols?: string[];
-  /** Skip holdings whose qty * avgPrice is below this rupee value. */
   minPositionInr?: number;
-  /**
-   * Max concurrent Vertex / LLM calls. Defaults to PORTFOLIO_ANALYSIS_CONCURRENCY
-   * (env). Prior to this knob, every holding ran sequentially — 88 holdings ×
-   * ~10s ≈ 15 minutes wall-clock.
-   */
   concurrency?: number;
 }
 
@@ -99,6 +92,8 @@ export interface PortfolioAnalyserResult {
   date: string;
   analysed: number;
   failed: number;
+  fullLlmCount: number;
+  liteCount: number;
   byAction: Record<'HOLD' | 'ADD' | 'TRIM' | 'EXIT', number>;
   rows: PortfolioAnalysisRow[];
 }
@@ -119,14 +114,40 @@ export async function analysePortfolio(
 
   if (filtered.length === 0) {
     log.info({ date }, 'no holdings to analyse — skipping');
-    return { date, analysed: 0, failed: 0, byAction: empty(), rows: [] };
+    return {
+      date,
+      analysed: 0,
+      failed: 0,
+      fullLlmCount: 0,
+      liteCount: 0,
+      byAction: empty(),
+      rows: [],
+    };
   }
 
-  log.info({ date, holdings: filtered.length, concurrency }, 'portfolio analyser starting');
+  const fullQueue: PortfolioHoldingRow[] = [];
+  const liteQueue: PortfolioHoldingRow[] = [];
+  for (const h of filtered) {
+    if (needsPortfolioLlmReview(h, date, db)) fullQueue.push(h);
+    else liteQueue.push(h);
+  }
+
+  log.info(
+    {
+      date,
+      holdings: filtered.length,
+      fullLlm: fullQueue.length,
+      lite: liteQueue.length,
+      concurrency,
+    },
+    'portfolio analyser starting',
+  );
+
+  const liteRows = liteQueue.map((h) => buildLitePortfolioRow(h, date, db));
 
   const limit = pLimit(concurrency);
   const outcomes = await Promise.all(
-    filtered.map((h) =>
+    fullQueue.map((h) =>
       limit(async () => {
         try {
           const row = await analyseOne(h, date, db, llm);
@@ -142,21 +163,63 @@ export async function analysePortfolio(
     ),
   );
 
-  const results: PortfolioAnalysisRow[] = [];
+  const fullResults: PortfolioAnalysisRow[] = [];
   let failed = 0;
   for (const o of outcomes) {
-    if (o.ok) results.push(o.row);
+    if (o.ok) fullResults.push(o.row);
     else failed++;
   }
 
+  const results = [...liteRows, ...fullResults];
   upsertPortfolioAnalysis(results, db);
 
   const byAction = empty();
   for (const r of results) byAction[r.action]++;
 
-  log.info({ date, analysed: results.length, failed, byAction }, 'portfolio analyser complete');
+  log.info(
+    {
+      date,
+      analysed: results.length,
+      failed,
+      fullLlmCount: fullResults.length,
+      liteCount: liteRows.length,
+      byAction,
+    },
+    'portfolio analyser complete',
+  );
 
-  return { date, analysed: results.length, failed, byAction, rows: results };
+  return {
+    date,
+    analysed: results.length,
+    failed,
+    fullLlmCount: fullResults.length,
+    liteCount: liteRows.length,
+    byAction,
+    rows: results,
+  };
+}
+
+function buildLitePortfolioRow(
+  h: PortfolioHoldingRow,
+  date: string,
+  db: DatabaseType,
+): PortfolioAnalysisRow {
+  const copy = buildLiteSnapshotCopy(h, date, db);
+  return {
+    symbol: h.symbol,
+    date,
+    action: 'HOLD',
+    conviction: 0.35,
+    thesis: copy.thesis,
+    bullPoints: copy.bullPoints,
+    bearPoints: copy.bearPoints,
+    triggerReason: copy.triggerReason,
+    suggestedStop: null,
+    suggestedTarget: null,
+    pnlPct: h.pnlPct ?? null,
+    model: 'lite-snapshot-v1',
+    raw: null,
+  };
 }
 
 async function analyseOne(
@@ -165,12 +228,14 @@ async function analyseOne(
   db: DatabaseType,
   llm: LlmProvider,
 ): Promise<PortfolioAnalysisRow> {
-  const stockContext = buildStockContext(h.symbol, date, db);
+  const stockContext = buildStockContext(h.symbol, date, db, 'portfolio');
   const positionContext = buildPositionContext(h, date, db);
+  const deep = h.pnlPct != null && h.pnlPct <= PORTFOLIO_DEEP_LOSS_PCT;
+  const system = deep ? `${PORTFOLIO_SYSTEM}\n${DEEP_LOSS_ADDON}` : PORTFOLIO_SYSTEM;
 
   const prompt = `${positionContext}\n\n${stockContext}`;
   const result = await llm.generateJson({
-    system: SYSTEM_PROMPT,
+    system,
     user: prompt,
     schema: PortfolioActionSchema,
     maxRetries: 1,
@@ -205,7 +270,6 @@ function buildPositionContext(h: PortfolioHoldingRow, date: string, db: Database
   if (h.product) lines.push(`Product: ${h.product}`);
   lines.push(`Source: ${h.source}`);
 
-  // Screens that fired for this symbol in the last 5 sessions.
   const screens = db
     .prepare(`
       SELECT screen_name, date FROM screens
@@ -218,7 +282,6 @@ function buildPositionContext(h: PortfolioHoldingRow, date: string, db: Database
     for (const s of screens) lines.push(`- ${s.date}: ${s.screen_name}`);
   }
 
-  // Active alerts on this symbol.
   const alerts = db
     .prepare(`
       SELECT date, kind, message FROM alerts

@@ -67,6 +67,11 @@ const EnvSchema = z.object({
    * tune down if you hit 429 RESOURCE_EXHAUSTED.
    */
   PORTFOLIO_ANALYSIS_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(8),
+  /**
+   * `'1'` — run full LLM on every holding (no lite snapshots). `'0'` — use the
+   * trigger gate (deep loss, alerts, news, screens, technical extremes).
+   */
+  PORTFOLIO_ANALYSIS_DISABLE_LITE: z.enum(['0', '1']).default('0'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

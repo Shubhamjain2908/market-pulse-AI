@@ -234,7 +234,19 @@ function rankCandidates(date: string, universe: string[], db: DatabaseType): Can
 // Context builder — assembles everything the LLM needs for a single stock
 // ---------------------------------------------------------------------------
 
-export function buildStockContext(symbol: string, date: string, db: DatabaseType): string {
+export type StockContextVariant = 'thesis' | 'portfolio';
+
+/**
+ * Assembles LLM-readable context for one symbol.
+ * - `thesis`: includes broad news (symbol + untagged) and FII/DII flows.
+ * - `portfolio`: stock-specific news only; omits FII/DII (macro belongs in Market Mood).
+ */
+export function buildStockContext(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+  variant: StockContextVariant = 'thesis',
+): string {
   const sections: string[] = [`Analyse ${symbol} as of ${date}.\n`];
 
   const quotes = db
@@ -294,46 +306,76 @@ export function buildStockContext(symbol: string, date: string, db: DatabaseType
     }
   }
 
-  const news = db
-    .prepare(`
+  const news =
+    variant === 'portfolio'
+      ? (db
+          .prepare(
+            `
+      SELECT headline, source, published_at, sentiment FROM news
+      WHERE symbol = ?
+        AND published_at >= datetime(?, '-7 days')
+      ORDER BY published_at DESC LIMIT 10
+    `,
+          )
+          .all(symbol, date) as Array<{
+          headline: string;
+          source: string;
+          published_at: string;
+          sentiment: number | null;
+        }>)
+      : (db
+          .prepare(
+            `
       SELECT headline, source, published_at, sentiment FROM news
       WHERE (symbol = ? OR symbol IS NULL)
         AND published_at >= datetime(?, '-7 days')
       ORDER BY published_at DESC LIMIT 10
-    `)
-    .all(symbol, date) as Array<{
-    headline: string;
-    source: string;
-    published_at: string;
-    sentiment: number | null;
-  }>;
+    `,
+          )
+          .all(symbol, date) as Array<{
+          headline: string;
+          source: string;
+          published_at: string;
+          sentiment: number | null;
+        }>);
 
   if (news.length > 0) {
-    sections.push('\n## Recent News (last 7 days)');
+    sections.push(
+      variant === 'portfolio'
+        ? '\n## Recent News (symbol-tagged only, last 7 days)'
+        : '\n## Recent News (last 7 days)',
+    );
     for (const n of news) {
       const sent = n.sentiment != null ? ` [sentiment: ${n.sentiment.toFixed(2)}]` : '';
       sections.push(`- ${n.headline} (${n.source}, ${n.published_at})${sent}`);
     }
+  } else if (variant === 'portfolio') {
+    sections.push('\n## Recent News (symbol-tagged only, last 7 days)');
+    sections.push('- No symbol-tagged headlines in the window — do not invent company news.');
   }
 
-  const fiiDii = db
-    .prepare(`
+  if (variant === 'thesis') {
+    const fiiDii = db
+      .prepare(
+        `
       SELECT date, segment, fii_net, dii_net FROM fii_dii
       WHERE date <= ? ORDER BY date DESC LIMIT 5
-    `)
-    .all(date) as Array<{
-    date: string;
-    segment: string;
-    fii_net: number;
-    dii_net: number;
-  }>;
+    `,
+      )
+      .all(date) as Array<{
+      date: string;
+      segment: string;
+      fii_net: number;
+      dii_net: number;
+    }>;
 
-  if (fiiDii.length > 0) {
-    sections.push('\n## FII/DII Activity (recent)');
-    for (const f of fiiDii) {
-      sections.push(
-        `${f.date} ${f.segment}: FII net ₹${f.fii_net.toFixed(0)}Cr, DII net ₹${f.dii_net.toFixed(0)}Cr`,
-      );
+    if (fiiDii.length > 0) {
+      sections.push('\n## FII/DII Activity (recent)');
+      for (const f of fiiDii) {
+        sections.push(
+          `${f.date} ${f.segment}: FII net ₹${f.fii_net.toFixed(0)}Cr, DII net ₹${f.dii_net.toFixed(0)}Cr`,
+        );
+      }
     }
   }
 

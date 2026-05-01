@@ -76,10 +76,6 @@ export async function runDailyWorkflow(
     };
   }
 
-  await runDailyIngestor({ date });
-  await runSignalEnricher({ date });
-  await runStockScreener({ date });
-
   if (!opts.skipPortfolio) {
     try {
       await runPortfolioSync({ date });
@@ -95,6 +91,10 @@ export async function runDailyWorkflow(
       );
     }
   }
+
+  await runDailyIngestor({ date });
+  await runSignalEnricher({ date });
+  await runStockScreener({ date });
 
   let thesisRun: { generated: number; failed: number; candidateCount: number } | undefined;
 
