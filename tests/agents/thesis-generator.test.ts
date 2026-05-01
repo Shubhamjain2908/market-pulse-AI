@@ -2,7 +2,7 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { generateTheses } from '../../src/agents/thesis-generator.js';
+import { generateTheses, getThesisRankMeta } from '../../src/agents/thesis-generator.js';
 import {
   closeDb,
   getDb,
@@ -75,6 +75,12 @@ describe('thesis generator', () => {
     upsertSignals(signals, db);
   }
 
+  it('exposes thesis rank meta for briefing labels', () => {
+    const meta = getThesisRankMeta(today, ['RELIANCE'], db);
+    expect(meta.get('RELIANCE')?.rank).toBe(1);
+    expect(meta.get('RELIANCE')?.reasonsLine).toContain('RSI');
+  });
+
   it('generates a thesis for a stock with interesting signals', async () => {
     const result = await generateTheses(
       { date: today, watchlist: ['RELIANCE'], maxTheses: 1 },
@@ -135,6 +141,13 @@ describe('thesis generator', () => {
       },
     ];
     upsertSignals(hot, db);
+
+    db.prepare(
+      `
+      INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+      VALUES ('HOTSTOCK', ?, 'momentum_screen', 1, '{}')
+    `,
+    ).run(today);
 
     const result = await generateTheses(
       { date: today, watchlist: ['RELIANCE', 'HOTSTOCK'], maxTheses: 1 },

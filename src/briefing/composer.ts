@@ -9,7 +9,9 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { technicalSummaryLine } from '../agents/portfolio-trigger.js';
+import { getThesisRankMeta } from '../agents/thesis-generator.js';
 import { getAlertsForDate } from '../analysers/alerts.js';
+import { config } from '../config/env.js';
 import { loadScreens, loadWatchlist } from '../config/loaders.js';
 import { getDb, getLatestHoldings, getPortfolioAnalysisForDate } from '../db/index.js';
 import { getThesesForDate } from '../db/queries.js';
@@ -18,6 +20,8 @@ import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { INDIA_VIX_BENCHMARK_SYMBOL, NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
+import { gatherGlobalCues } from '../market/global-cues.js';
+import { latestQuoteClose, sessionChangeVsPriorClose } from '../market/quote-change.js';
 import type { ScreenDefinition } from '../types/domain.js';
 import {
   type AiPicksSectionStatus,
@@ -47,6 +51,12 @@ export interface ComposeBriefingOptions {
     failed: number;
     candidateCount: number;
   };
+  /** Override `config.BRIEFING_NEWS_WINDOW_HOURS` (e.g. tests). */
+  newsWindowHours?: number;
+  /** Override `config.BRIEFING_NEWS_LIMIT`. */
+  newsLimit?: number;
+  /** Force-disable mood LLM even when AI is enabled. */
+  moodNarrativeDisabled?: boolean;
 }
 
 export interface ComposedBriefing {
@@ -63,19 +73,27 @@ export async function composeBriefing(
   const date = opts.date ?? isoDateIst();
   const watchlist = (opts.watchlist ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
   const allowMoodLlm = !opts.skipAi && !opts.marketClosure;
+  const moodNarrativeEnabled =
+    config.BRIEFING_MOOD_NARRATIVE !== '0' && !opts.moodNarrativeDisabled;
 
   const mood = gatherMood(date, db);
+  const globalCues = gatherGlobalCues(date, db);
   const watchlistAlerts = gatherWatchlistAlerts(date, db);
   const topGainers = gatherMovers(date, watchlist, 'gainers', db);
   const topLosers = gatherMovers(date, watchlist, 'losers', db);
-  const news = gatherNews(48, date, watchlist, db);
-  const theses = gatherTheses(date, db);
+  const newsHours = opts.newsWindowHours ?? config.BRIEFING_NEWS_WINDOW_HOURS;
+  const newsLimit = opts.newsLimit ?? config.BRIEFING_NEWS_LIMIT;
+  const news = gatherNews(newsHours, date, watchlist, db, newsLimit);
+  const rankMeta =
+    !opts.skipAi && !opts.marketClosure ? getThesisRankMeta(date, watchlist, db) : undefined;
+  const theses = gatherTheses(date, db, rankMeta);
   const screenMatches = gatherScreenMatches(date, db);
   const portfolio = gatherPortfolio(date, db);
 
   let moodNarrative: string | undefined;
   if (
     allowMoodLlm &&
+    moodNarrativeEnabled &&
     (mood.fiiNet != null || mood.diiNet != null || topGainers.length > 0 || topLosers.length > 0)
   ) {
     try {
@@ -105,6 +123,7 @@ export async function composeBriefing(
   const data: BriefingData = {
     date,
     mood,
+    globalCues,
     moodNarrative,
     marketClosure: opts.marketClosure,
     watchlistAlerts,
@@ -210,20 +229,29 @@ async function generateMoodNarrative(
 // Thesis cards
 // ---------------------------------------------------------------------------
 
-function gatherTheses(date: string, db: DatabaseType): ThesisCard[] {
+function gatherTheses(
+  date: string,
+  db: DatabaseType,
+  rankMeta?: Map<string, { rank: number; reasonsLine: string }>,
+): ThesisCard[] {
   const rows = getThesesForDate(date, db);
-  return rows.map((r) => ({
-    symbol: r.symbol,
-    thesis: r.thesis,
-    bullCase: r.bullCase,
-    bearCase: r.bearCase,
-    entryZone: r.entryZone,
-    stopLoss: r.stopLoss,
-    target: r.target,
-    timeHorizon: r.timeHorizon,
-    confidence: r.confidence,
-    triggerReason: r.triggerReason,
-  }));
+  return rows.map((r) => {
+    const meta = rankMeta?.get(r.symbol);
+    return {
+      symbol: r.symbol,
+      thesis: r.thesis,
+      bullCase: r.bullCase,
+      bearCase: r.bearCase,
+      entryZone: r.entryZone,
+      stopLoss: r.stopLoss,
+      target: r.target,
+      timeHorizon: r.timeHorizon,
+      confidence: r.confidence,
+      triggerReason: r.triggerReason,
+      rank: meta?.rank,
+      rankBlurb: meta?.reasonsLine,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -240,7 +268,7 @@ function gatherMood(date: string, db: DatabaseType): BriefingData['mood'] {
     `)
     .get(date) as { fiiNet?: number; diiNet?: number; d?: string } | undefined;
 
-  const nifty = niftyChangeFromQuotes(NIFTY_BENCHMARK_SYMBOL, date, db);
+  const nifty = sessionChangeVsPriorClose(NIFTY_BENCHMARK_SYMBOL, date, db);
   const vix = latestQuoteClose(INDIA_VIX_BENCHMARK_SYMBOL, date, db);
 
   return {
@@ -254,57 +282,6 @@ function gatherMood(date: string, db: DatabaseType): BriefingData['mood'] {
   };
 }
 
-function latestQuoteClose(
-  symbol: string,
-  date: string,
-  db: DatabaseType,
-): { close: number; asOf: string } | undefined {
-  const latest = db
-    .prepare(
-      `
-      SELECT date, close FROM quotes
-      WHERE symbol = ? AND date <= ?
-      ORDER BY date DESC LIMIT 1
-    `,
-    )
-    .get(symbol, date) as { date: string; close: number } | undefined;
-  if (!latest) return undefined;
-  return { close: latest.close, asOf: latest.date };
-}
-
-function niftyChangeFromQuotes(
-  symbol: string,
-  date: string,
-  db: DatabaseType,
-): { changePct: number; asOf: string } | undefined {
-  const latest = db
-    .prepare(
-      `
-      SELECT date, close FROM quotes
-      WHERE symbol = ? AND date <= ?
-      ORDER BY date DESC LIMIT 1
-    `,
-    )
-    .get(symbol, date) as { date: string; close: number } | undefined;
-  if (!latest) return undefined;
-  const prev = db
-    .prepare(
-      `
-      SELECT close FROM quotes
-      WHERE symbol = ? AND date < ?
-      ORDER BY date DESC LIMIT 1
-    `,
-    )
-    .get(symbol, latest.date) as { close: number } | undefined;
-  if (!prev || prev.close <= 0) return { changePct: 0, asOf: latest.date };
-  const changePct = ((latest.close - prev.close) / prev.close) * 100;
-  return { changePct, asOf: latest.date };
-}
-
-/**
- * Read alerts from the `alerts` table. The Phase 2 alerts agent is
- * responsible for populating this — the briefing is now a pure read.
- */
 function gatherWatchlistAlerts(date: string, db: DatabaseType): WatchlistAlert[] {
   const rows = getAlertsForDate(date, db);
   return rows.map((a) => ({

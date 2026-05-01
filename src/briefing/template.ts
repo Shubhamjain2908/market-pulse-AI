@@ -11,6 +11,7 @@
  */
 
 import { SEBI_DISCLAIMER } from '../constants.js';
+import type { GlobalCuesSection } from '../market/global-cues.js';
 
 export interface MarketMood {
   fiiNet?: number;
@@ -58,6 +59,10 @@ export interface ThesisCard {
   timeHorizon: string;
   confidence: number;
   triggerReason: string;
+  /** Position after interest ranking (same workflow universe). */
+  rank?: number;
+  /** Short signal summary from ranking (for “why #N”). */
+  rankBlurb?: string;
 }
 
 export interface PortfolioPositionCard {
@@ -109,6 +114,8 @@ export type AiPicksSectionStatus =
 export interface BriefingData {
   date: string;
   mood: MarketMood;
+  /** Global indices / FX / commodities from `quotes` (Yahoo macro symbols). */
+  globalCues: GlobalCuesSection;
   /** LLM-generated narrative summary of market conditions. */
   moodNarrative?: string;
   /** When set, cash market was closed — banner + no fresh pipeline LLMs. */
@@ -139,6 +146,7 @@ export function renderBriefing(data: BriefingData): string {
   <main class="wrap">
     ${renderHeader(data.date)}
     ${renderMood(data.date, data.mood, data.moodNarrative, data.marketClosure)}
+    ${renderGlobalCues(data.globalCues)}
     ${renderPortfolio(data.portfolio)}
     ${renderWatchlistAlerts(data.watchlistAlerts)}
     ${renderScreenMatches(data.screenMatches)}
@@ -215,6 +223,29 @@ function renderMood(
       ${banner}
       <div class="grid grid-4">${cards}</div>
       ${narrativeHtml}
+    </section>`;
+}
+
+function renderGlobalCues(section: GlobalCuesSection): string {
+  if (section.rows.length === 0) return '';
+  const rows = section.rows
+    .map((r) => {
+      const staleTag = r.stale ? ` <span class="tag">prev ${esc(r.asOf ?? '')}</span>` : '';
+      const note = r.note ? `<div class="muted global-cue-note">${esc(r.note)}</div>` : '';
+      const cls = r.changePct == null ? 'neutral' : r.changePct >= 0 ? 'positive' : 'negative';
+      return `
+        <div class="global-cue ${cls}">
+          <div class="mood-label">${esc(r.label)}</div>
+          <div class="mood-value">${esc(r.display)}${staleTag}</div>
+          ${note}
+        </div>`;
+    })
+    .join('');
+  return `
+    <section class="card">
+      <h2>Global Cues</h2>
+      <p class="section-lede muted">Overnight / US session markers from Yahoo macro symbols ingested with your pipeline. The GIFT row reuses Nifty 50 spot because USD-denominated GIFT futures are not exposed on this free chart API.</p>
+      <div class="grid grid-3">${rows}</div>
     </section>`;
 }
 
@@ -481,8 +512,10 @@ function renderAiPicks(theses: ThesisCard[] | undefined, status: AiPicksSectionS
   if (!theses || theses.length === 0) {
     const hint =
       status.kind === 'empty' && status.candidateCount != null && status.candidateCount === 0
-        ? ' No symbols qualified after ranking.'
-        : '';
+        ? ' No symbols qualified after ranking — widen watchlist coverage or check screen/alert signals.'
+        : status.kind === 'empty' && status.candidateCount != null && status.candidateCount > 0
+          ? ' Candidates were ranked but no thesis rows appear — check thesis-generation logs.'
+          : '';
     return `
       <section class="card">
         <h2>AI Picks</h2>
@@ -508,6 +541,11 @@ function renderAiPicks(theses: ThesisCard[] | undefined, status: AiPicksSectionS
             ${t.confidence}/10
           </span>
         </div>
+        ${
+          t.rank != null
+            ? `<div class="thesis-rank muted">#${t.rank} by signal score · ${esc(t.rankBlurb ?? '')}</div>`
+            : ''
+        }
         <div class="thesis-why-now"><strong>Why now:</strong> ${esc(t.triggerReason)}</div>
         <p class="thesis-body">${esc(t.thesis)}</p>
         <div class="thesis-levels">
@@ -652,9 +690,10 @@ function baseStyles(): string {
     .card h3 { margin: 0 0 8px; font-size: 14px; }
     .grid { display: grid; gap: 12px; }
     .grid-2 { grid-template-columns: 1fr 1fr; }
+    .grid-3 { grid-template-columns: repeat(3, 1fr); }
     .grid-4 { grid-template-columns: repeat(4, 1fr); }
     @media (max-width: 600px) {
-      .grid-2, .grid-4 { grid-template-columns: 1fr 1fr; }
+      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; }
     }
     .mood { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
       background: #fafbfd; }
@@ -663,6 +702,11 @@ function baseStyles(): string {
     .mood-value { font-size: 18px; font-weight: 600; margin-top: 4px; }
     .mood.positive .mood-value { color: var(--positive); }
     .mood.negative .mood-value { color: var(--negative); }
+    .global-cue { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+      background: #fafbfd; }
+    .global-cue-note { font-size: 11px; margin-top: 4px; line-height: 1.35; }
+    .global-cue.positive .mood-value { color: var(--positive); }
+    .global-cue.negative .mood-value { color: var(--negative); }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
     th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase;
@@ -687,6 +731,7 @@ function baseStyles(): string {
       margin-bottom: 12px; background: #fafbfd; }
     .thesis-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
     .thesis-why-now { font-size: 13px; line-height: 1.45; margin: 0 0 8px; color: var(--text); }
+    .thesis-rank { font-size: 12px; margin: 0 0 6px; line-height: 1.35; }
     .thesis-symbol { font-size: 18px; font-weight: 700; color: var(--accent); }
     .thesis-horizon { font-size: 11px; }
     .thesis-confidence { font-size: 12px; color: var(--muted); position: relative;

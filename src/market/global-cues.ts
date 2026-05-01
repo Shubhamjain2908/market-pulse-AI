@@ -1,0 +1,80 @@
+/**
+ * Global cues section: macro indices and FX/commodities from `quotes` (Yahoo ingest).
+ * GIFT Nifty is shown as the same session move as Nifty 50 spot — true USD-denominated
+ * GIFT futures are not available on the free Yahoo chart API we use.
+ */
+
+import type { Database as DatabaseType } from 'better-sqlite3';
+import { GLOBAL_MACRO_QUOTE_SYMBOLS, NIFTY_BENCHMARK_SYMBOL } from './benchmarks.js';
+import { latestQuoteClose, sessionChangeVsPriorClose } from './quote-change.js';
+
+export interface GlobalCueRow {
+  label: string;
+  /** Primary cell (often Δ% or level). */
+  display: string;
+  changePct: number | null;
+  asOf?: string;
+  stale: boolean;
+  /** Extra footnote (e.g. proxy explanation). */
+  note?: string;
+}
+
+export interface GlobalCuesSection {
+  rows: GlobalCueRow[];
+}
+
+const MACRO_LABELS: Record<string, string> = {
+  DOW_JONES: 'Dow Jones',
+  NASDAQ: 'Nasdaq Composite',
+  SP500: 'S&P 500',
+  USD_INR: 'USD/INR',
+  CRUDE_WTI: 'WTI crude',
+  DXY: 'US Dollar Index',
+};
+
+export function gatherGlobalCues(briefingDate: string, db: DatabaseType): GlobalCuesSection {
+  const rows: GlobalCueRow[] = [];
+
+  const gift = sessionChangeVsPriorClose(NIFTY_BENCHMARK_SYMBOL, briefingDate, db);
+  const giftClose = latestQuoteClose(NIFTY_BENCHMARK_SYMBOL, briefingDate, db);
+  if (gift && giftClose) {
+    const stale = gift.asOf < briefingDate;
+    const sign = gift.changePct >= 0 ? '+' : '';
+    rows.push({
+      label: 'GIFT Nifty (proxy)',
+      display: `${sign}${gift.changePct.toFixed(2)}% · ${formatNum(giftClose.close)}`,
+      changePct: gift.changePct,
+      asOf: gift.asOf,
+      stale,
+      note: 'Session move matches Nifty 50 spot (Yahoo). USD GIFT futures not on this feed.',
+    });
+  }
+
+  for (const sym of GLOBAL_MACRO_QUOTE_SYMBOLS) {
+    const ch = sessionChangeVsPriorClose(sym, briefingDate, db);
+    const lv = latestQuoteClose(sym, briefingDate, db);
+    if (!ch || !lv) continue;
+    const stale = ch.asOf < briefingDate;
+    const sign = ch.changePct >= 0 ? '+' : '';
+    rows.push({
+      label: MACRO_LABELS[sym] ?? sym,
+      display: `${sign}${ch.changePct.toFixed(2)}% · ${formatMacroLevel(sym, lv.close)}`,
+      changePct: ch.changePct,
+      asOf: ch.asOf,
+      stale,
+    });
+  }
+
+  return { rows };
+}
+
+function formatNum(n: number): string {
+  return n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+}
+
+function formatMacroLevel(symbol: string, close: number): string {
+  if (symbol === 'USD_INR') return `₹${close.toFixed(2)}`;
+  if (symbol === 'CRUDE_WTI') return `$${close.toFixed(2)}`;
+  if (symbol === 'DXY') return close.toFixed(2);
+  return formatNum(close);
+}

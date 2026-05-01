@@ -6,7 +6,7 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { loadWatchlist } from '../config/loaders.js';
 import { getLatestHoldings } from '../db/index.js';
-import { BENCHMARK_QUOTE_SYMBOLS } from './benchmarks.js';
+import { BENCHMARK_QUOTE_SYMBOLS, GLOBAL_MACRO_QUOTE_SYMBOLS } from './benchmarks.js';
 
 /**
  * When `explicit` is omitted, merges watchlist symbols with all symbols from
@@ -16,5 +16,12 @@ import { BENCHMARK_QUOTE_SYMBOLS } from './benchmarks.js';
 export function defaultIngestSymbolUniverse(db: DatabaseType, explicit?: string[]): string[] {
   const base = (explicit ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
   const holdingSyms = getLatestHoldings(db).map((h) => h.symbol.toUpperCase());
-  return [...new Set([...base, ...holdingSyms, ...BENCHMARK_QUOTE_SYMBOLS])];
+  return [
+    ...new Set([
+      ...base,
+      ...holdingSyms,
+      ...BENCHMARK_QUOTE_SYMBOLS,
+      ...GLOBAL_MACRO_QUOTE_SYMBOLS,
+    ]),
+  ];
 }
