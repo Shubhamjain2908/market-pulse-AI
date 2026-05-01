@@ -16,7 +16,7 @@ const EnvSchema = z.object({
 
   LLM_PROVIDER: z
     .enum(['cursor-agent', 'anthropic', 'vertex', 'openai', 'mock'])
-    .default('cursor-agent'),
+    .default('vertex'),
 
   CURSOR_AGENT_BIN: z.string().optional(),
   CURSOR_AGENT_MODEL: z.string().optional(),
