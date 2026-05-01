@@ -333,6 +333,87 @@ describe('briefing composer (Phase 3–4)', () => {
     expect(result.html).toContain('INFY');
   });
 
+  it('drops US-stocks / live-blog / quote-of-the-day noise even when scored neutral', async () => {
+    insertNews(
+      [
+        {
+          headline: 'US stocks today-S&P 500, Nasdaq on course for best month',
+          source: 'et-markets',
+          url: 'https://economictimes.indiatimes.com/markets/us-stocks/news/us-stocks-today.cms',
+          publishedAt: `${today}T12:00:00.000+05:30`,
+          sentiment: 0.1,
+        },
+        {
+          headline: 'Quote of the day by Michael Price',
+          source: 'et-markets',
+          url: 'https://economictimes.indiatimes.com/markets/us-stocks/news/quote-of-the-day-michael-price.cms',
+          publishedAt: `${today}T11:00:00.000+05:30`,
+          sentiment: 0.1,
+        },
+        {
+          headline: 'US Stock Market Today Live',
+          source: 'et-markets',
+          url: 'https://economictimes.indiatimes.com/markets/us-stocks/news/liveblog/123.cms',
+          publishedAt: `${today}T10:00:00.000+05:30`,
+          sentiment: 0.1,
+        },
+      ],
+      db,
+    );
+
+    const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
+    const headlines = result.data.news.map((n) => n.headline);
+    expect(headlines.some((h) => /US stocks today/i.test(h))).toBe(false);
+    expect(headlines.some((h) => /Michael Price/i.test(h))).toBe(false);
+    expect(headlines.some((h) => /US Stock Market Today Live/i.test(h))).toBe(false);
+  });
+
+  it('keeps domestic earnings catalysts even when sentiment is mildly positive', async () => {
+    insertNews(
+      [
+        {
+          headline: 'Mazagon Dock Q4 Results: Profit jumps 42% to Rs 464 crore',
+          source: 'et-markets',
+          url: 'https://economictimes.indiatimes.com/markets/stocks/earnings/mazagon-dock-q4.cms',
+          publishedAt: `${today}T16:00:00.000+05:30`,
+          sentiment: 0.45,
+        },
+        {
+          headline: 'Equitas Small Finance Bank Q4 profit soars 5-fold',
+          source: 'et-markets',
+          url: 'https://economictimes.indiatimes.com/markets/stocks/earnings/equitas-q4.cms',
+          publishedAt: `${today}T15:00:00.000+05:30`,
+          sentiment: 0.45,
+        },
+      ],
+      db,
+    );
+
+    const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
+    const headlines = result.data.news.map((n) => n.headline);
+    expect(headlines.some((h) => /Mazagon Dock/i.test(h))).toBe(true);
+    expect(headlines.some((h) => /Equitas/i.test(h))).toBe(true);
+  });
+
+  it('keeps watchlist-tagged headlines regardless of sentiment magnitude', async () => {
+    insertNews(
+      [
+        {
+          headline: 'RELIANCE technical chart consolidates near support',
+          source: 'et-markets',
+          url: 'https://economictimes.indiatimes.com/markets/stocks/news/reliance-chart.cms',
+          publishedAt: `${today}T14:00:00.000+05:30`,
+          symbol: 'RELIANCE',
+          sentiment: 0.05,
+        },
+      ],
+      db,
+    );
+
+    const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
+    expect(result.data.news.some((n) => n.symbol === 'RELIANCE')).toBe(true);
+  });
+
   it('includes sentiment badges in news section', async () => {
     const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
 

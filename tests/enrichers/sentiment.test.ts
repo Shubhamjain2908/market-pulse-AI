@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getDb, insertNews, migrate } from '../../src/db/index.js';
-import { enrichSentiment, validateSentimentBatch } from '../../src/enrichers/sentiment/enricher.js';
+import {
+  enrichSentiment,
+  nudgeIndianEarningsScore,
+  validateSentimentBatch,
+} from '../../src/enrichers/sentiment/enricher.js';
 import { MockLlmProvider } from '../../src/llm/providers/mock.js';
 import type { NewsItem } from '../../src/types/domain.js';
 
@@ -102,6 +106,42 @@ describe('sentiment enricher', () => {
     expect(result.scored).toBe(0);
     expect(result.batches).toBe(0);
     expect(llm.calls).toHaveLength(0);
+  });
+
+  it('nudgeIndianEarningsScore lifts under-scored Indian earnings catalysts', () => {
+    expect(
+      nudgeIndianEarningsScore('Mazagon Dock Q4 Results: Profit jumps 42% to Rs 464 crore', 0.1),
+    ).toBeGreaterThanOrEqual(0.45);
+    expect(
+      nudgeIndianEarningsScore('Equitas Small Finance Bank Q4 profit soars 5-fold', 0.1),
+    ).toBeGreaterThanOrEqual(0.45);
+    expect(
+      nudgeIndianEarningsScore('Laurus Labs Q4 Results: Cons PAT increased 19%', 0.1),
+    ).toBeGreaterThanOrEqual(0.45);
+    expect(
+      nudgeIndianEarningsScore('XYZ Corp bags large order from Indian Railways', 0.05),
+    ).toBeGreaterThanOrEqual(0.45);
+  });
+
+  it('nudgeIndianEarningsScore respects strong scores from the model', () => {
+    expect(nudgeIndianEarningsScore('Profit jumps 42%', 0.7)).toBe(0.7);
+    expect(nudgeIndianEarningsScore('Loss widens', -0.6)).toBe(-0.6);
+  });
+
+  it('nudgeIndianEarningsScore lowers under-scored bearish phrasing', () => {
+    expect(
+      nudgeIndianEarningsScore('PQR Ltd Q4 net profit slumps 22% YoY on input costs', 0.0),
+    ).toBeLessThanOrEqual(-0.45);
+    expect(nudgeIndianEarningsScore('XYZ loss widens to Rs 120 crore', 0.05)).toBeLessThanOrEqual(
+      -0.45,
+    );
+  });
+
+  it('nudgeIndianEarningsScore is a no-op for noise / generic headlines', () => {
+    expect(nudgeIndianEarningsScore('Markets edge higher as Big Tech earnings beat', 0.1)).toBe(
+      0.1,
+    );
+    expect(nudgeIndianEarningsScore('Quote of the day by Michael Price', 0.1)).toBe(0.1);
   });
 
   it('batches headlines correctly', async () => {
