@@ -186,7 +186,7 @@ pnpm tsx scripts/smoke-llm.mts
 
 Rough breakdown:
 
-- **Portfolio analysis** — one LLM JSON call **per holding**. Until recently these ran **strictly one after another**, so a large book dominates wall-clock time (for example ~88 holdings × ~10 s each with Cursor Agent ≈ **15 minutes** for this stage alone).
+- **Portfolio analysis** — by default, a **trigger gate** decides whether each holding gets a full LLM JSON review (deep unrealised loss, recent alerts/news/screens, or stretched technicals). Otherwise the row is a deterministic **lite snapshot** (token-efficient). Set `PORTFOLIO_ANALYSIS_DISABLE_LITE=1` for legacy behaviour (full LLM on **every** holding). Until recently these ran **strictly one after another**, so a large book dominates wall-clock time when every row is full LLM (for example ~88 holdings × ~10 s each with Cursor Agent ≈ **15 minutes** for this stage alone).
 - **Parallelism** — set `PORTFOLIO_ANALYSIS_CONCURRENCY` (default **8**) so Vertex/Gemini processes multiple holdings at once. Expect the portfolio stage to shrink to on the order of **⌈N / concurrency⌉ × (latency per call)** — often **~2–6 minutes** for 80+ names at concurrency 8 and ~3–8 s per Flash call, depending on quota and prompt size. If Vertex returns `429` / rate-limit errors, lower concurrency.
 - **Other LLM work** — batched news sentiment, up to five watchlist theses, optional mood narrative: typically **~1–4 minutes** combined on Vertex Flash (highly variable).
 
@@ -403,7 +403,7 @@ phases 0–5 in the table below).
 | Step | Theme                         | Status     | Highlights                                                                 |
 | ---- | ----------------------------- | ---------- | -------------------------------------------------------------------------- |
 | 1    | Trust-breaking output         | ✅ shipped | `getMarketClosure()` + early exit in `runDailyWorkflow` / `run-all`; persistent-data brief with banner; `gatherMood` reads `NIFTY_50` / `INDIA_VIX` from `quotes`; `AiPicksSectionStatus` + `thesisRun` metadata; thesis ranking uses screens, alerts, portfolio loss threshold |
-| 2    | Portfolio analysis quality    | 🔜 next    | Trigger gate, deep-drawdown rules, macro vs stock context, portfolio technicals |
+| 2    | Portfolio analysis quality    | ✅ shipped | Trigger gate (`needsPortfolioLlmReview`), deep-loss prompt addon, portfolio-specific stock context, ingest/enrich universe includes holdings + benchmarks, portfolio sync before ingest in `runDailyWorkflow`, briefing cards show `technicalSummaryLine` |
 
 Holiday dates live in [`src/market/nse-calendar.ts`](src/market/nse-calendar.ts) — extend when NSE publishes new calendars.
 

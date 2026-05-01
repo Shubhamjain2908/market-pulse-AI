@@ -22,12 +22,14 @@ describe('portfolio analyser', () => {
   beforeEach(() => {
     dbPath = join(tmpdir(), `mp-pa-${Date.now()}-${Math.random()}.db`);
     process.env.DATABASE_PATH = dbPath;
+    process.env.PORTFOLIO_ANALYSIS_DISABLE_LITE = '1';
     db = getDb({ path: dbPath });
     migrate(db);
     seed();
   });
 
   afterEach(() => {
+    process.env.PORTFOLIO_ANALYSIS_DISABLE_LITE = undefined;
     db.close();
     closeDb();
     for (const suffix of ['', '-wal', '-shm']) {
@@ -94,7 +96,10 @@ describe('portfolio analyser', () => {
 
     expect(result.analysed).toBe(2);
     expect(result.failed).toBe(0);
+    expect(result.fullLlmCount).toBe(2);
+    expect(result.liteCount).toBe(0);
     expect(result.byAction.HOLD).toBe(2);
+    expect(llm.calls).toHaveLength(2);
 
     const persisted = getPortfolioAnalysisForDate(date, db);
     expect(persisted).toHaveLength(2);
