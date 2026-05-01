@@ -2,10 +2,9 @@
  * Briefing composer. Gathers all data from the DB and optional AI layers
  * to produce a complete BriefingData payload, then renders HTML.
  *
- * Phase 3 additions:
- *   - LLM-generated market mood narrative
- *   - AI thesis cards from the `theses` table
- *   - Sentiment scores on news items
+ * Includes mood narrative, thesis cards, sentiment on news, and (report quality
+ * Phase 3) briefing-relative news selection with dedupe plus HTML ledes for
+ * clearer action framing.
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
@@ -69,7 +68,7 @@ export async function composeBriefing(
   const watchlistAlerts = gatherWatchlistAlerts(date, db);
   const topGainers = gatherMovers(date, watchlist, 'gainers', db);
   const topLosers = gatherMovers(date, watchlist, 'losers', db);
-  const news = gatherNews(48, db);
+  const news = gatherNews(48, date, watchlist, db);
   const theses = gatherTheses(date, db);
   const screenMatches = gatherScreenMatches(date, db);
   const portfolio = gatherPortfolio(date, db);
@@ -160,8 +159,20 @@ function resolveAiPicksStatus(
 // ---------------------------------------------------------------------------
 
 const MOOD_SYSTEM = `You are a concise financial journalist covering Indian equity markets.
-Write a 2-4 sentence market mood summary for a morning briefing. Be factual, mention
-specific numbers when available. Never give investment advice. Write in present tense.`;
+
+The reader already sees exact FII/DII, India VIX, and Nifty figures in the Market Mood grid
+above your paragraph — do NOT repeat those numbers or restate that table.
+
+Write at most 3 short sentences (one short paragraph):
+- Connect flows, volatility tone, and index direction into one coherent read (risk-on/off,
+  domestic cushion vs foreign selling, breadth hints from the movers/alerts context).
+- Do not invent statistics; only interpret what is implied by the facts supplied below.
+
+End with exactly one sentence that starts with "Watch:" and lists concrete subjects to
+monitor (sectors, flow tension, macro prints, upcoming events) — not buy/sell wording.
+
+Never give investment advice. Present tense. Avoid generic filler ("mixed signals",
+"cautious optimism") unless you tie it to a specific fact from the data.`;
 
 async function generateMoodNarrative(
   mood: BriefingData['mood'],
@@ -187,9 +198,9 @@ async function generateMoodNarrative(
 
   const result = await llm.generateText({
     system: MOOD_SYSTEM,
-    user: `Market data:\n${dataPoints.join('\n')}\n\nWrite a brief market mood summary.`,
-    temperature: 0.3,
-    maxOutputTokens: 300,
+    user: `Facts for interpretation (do not quote numbers back verbatim):\n${dataPoints.join('\n')}\n\nWrite the mood paragraph per instructions.`,
+    temperature: 0.25,
+    maxOutputTokens: 220,
   });
 
   return result.text.trim();
@@ -469,16 +480,59 @@ function gatherMovers(
   return movers.slice(0, limit);
 }
 
-function gatherNews(hours: number, db: DatabaseType): NewsRow[] {
-  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+function normalizeNewsHeadline(headline: string): string {
+  return headline.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function newsRelevanceScore(n: NewsRow, watchlist: Set<string>): number {
+  const sym = n.symbol?.toUpperCase();
+  if (sym && watchlist.has(sym)) return 4;
+  if (sym) return 2;
+  return 1;
+}
+
+/**
+ * Pulls recent headlines anchored to the briefing calendar date (replay-safe), drops
+ * duplicate headlines, and surfaces watchlist-tagged symbols first.
+ */
+function gatherNews(
+  hours: number,
+  briefingDate: string,
+  watchlistSymbols: string[],
+  db: DatabaseType,
+  limit = 20,
+): NewsRow[] {
+  const watchlist = new Set(watchlistSymbols.map((s) => s.toUpperCase()));
+  const windowEnd = new Date(`${briefingDate}T23:59:59.999+05:30`);
+  const windowStart = new Date(windowEnd.getTime() - hours * 60 * 60 * 1000);
+  const startIso = windowStart.toISOString();
+  const endIso = windowEnd.toISOString();
+
   const rows = db
     .prepare(`
       SELECT headline, source, url, published_at AS publishedAt, symbol, sentiment
       FROM news
-      WHERE published_at >= ?
+      WHERE published_at >= ? AND published_at <= ?
       ORDER BY published_at DESC
-      LIMIT 25
+      LIMIT 120
     `)
-    .all(cutoff) as Array<NewsRow>;
-  return rows;
+    .all(startIso, endIso) as NewsRow[];
+
+  const seen = new Set<string>();
+  const deduped: NewsRow[] = [];
+  for (const r of rows) {
+    const key = normalizeNewsHeadline(r.headline);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(r);
+  }
+
+  deduped.sort((a, b) => {
+    const ra = newsRelevanceScore(a, watchlist);
+    const rb = newsRelevanceScore(b, watchlist);
+    if (rb !== ra) return rb - ra;
+    return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+  });
+
+  return deduped.slice(0, limit);
 }
