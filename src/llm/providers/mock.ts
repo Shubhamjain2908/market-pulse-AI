@@ -78,7 +78,10 @@ export class MockLlmProvider implements LlmProvider {
     this.calls.push({ method: 'generateText', system: opts.system, user: opts.user });
 
     let text = MOCK_NARRATIVE;
-    if (opts.system.includes('sentiment')) {
+    if (opts.system.includes('one sentence only')) {
+      text =
+        'Aggressive FII selling of roughly ₹8,048 Cr overwhelms DII support near ₹3,487 Cr, pushing Nifty down 0.74% with India VIX elevated at 18.46.';
+    } else if (opts.system.includes('sentiment')) {
       text = JSON.stringify(MOCK_SENTIMENT);
     }
 
