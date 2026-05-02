@@ -31,14 +31,18 @@ import { buildStockContext } from './thesis-generator.js';
 
 const log = child({ component: 'portfolio-analyser' });
 
-const PortfolioActionSchema = z.object({
+export const PortfolioActionSchema = z.object({
   symbol: z.string(),
   action: z.enum(['HOLD', 'ADD', 'TRIM', 'EXIT']),
   conviction: z.number().min(0).max(1),
   thesis: z.string().min(20).max(800),
   bullPoints: z.array(z.string().min(1)).min(1).max(5),
   bearPoints: z.array(z.string().min(1)).min(1).max(5),
-  triggerReason: z.string().min(5).max(280),
+  /** LLMs often exceed length; truncate before guardrails so parse succeeds (matches ADD/R:R suffix truncation). */
+  triggerReason: z
+    .string()
+    .min(5)
+    .transform((s) => (s.length <= 280 ? s : `${s.slice(0, 276)}…`)),
   suggestedStop: z.number().nullable().optional(),
   suggestedTarget: z.number().nullable().optional(),
 });
@@ -78,7 +82,7 @@ Schema:
   "thesis": string (20-800 chars),
   "bullPoints": string[] (1-5 items),
   "bearPoints": string[] (1-5 items),
-  "triggerReason": string,
+  "triggerReason": string (5–280 chars — concise "why now"; breakeven % must fit here),
   "suggestedStop": number | null,
   "suggestedTarget": number | null
 }`;

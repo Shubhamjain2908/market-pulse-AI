@@ -394,3 +394,233 @@ export function upsertSymbolMetadata(
   tx(rows);
   return rows.length;
 }
+
+// ---------------------------------------------------------------------------
+// Paper trades (forward-testing ledger)
+// ---------------------------------------------------------------------------
+
+export type PaperTradeSignalType = 'AI_PICK' | 'PORTFOLIO_ADD';
+export type PaperTradeStatus = 'OPEN' | 'CLOSED_WIN' | 'CLOSED_LOSS' | 'CLOSED_TIME';
+export type PaperTradeHorizon = 'short' | 'medium' | 'long';
+
+export interface PaperTradeInsertRow {
+  symbol: string;
+  signalType: PaperTradeSignalType;
+  sourceDate: string;
+  entryPrice: number;
+  stopLoss: number;
+  target: number;
+  timeHorizon: PaperTradeHorizon;
+  maxHoldDays: number;
+}
+
+export interface PaperTradeRow {
+  id: number;
+  symbol: string;
+  signalType: PaperTradeSignalType;
+  sourceDate: string;
+  entryPrice: number;
+  stopLoss: number;
+  target: number;
+  timeHorizon: PaperTradeHorizon;
+  maxHoldDays: number;
+  status: PaperTradeStatus;
+  outcomeDate: string | null;
+  exitPrice: number | null;
+  pnlPct: number | null;
+  notes: string | null;
+  createdAt: string;
+}
+
+/** Insert if no row exists for (symbol, signal_type, source_date). Returns true when inserted. */
+export function insertPaperTradeIfAbsent(
+  row: PaperTradeInsertRow,
+  db: DatabaseType = getDb(),
+): boolean {
+  const result = db
+    .prepare(`
+    INSERT OR IGNORE INTO paper_trades (
+      symbol, signal_type, source_date, entry_price, stop_loss, target,
+      time_horizon, max_hold_days, status
+    ) VALUES (
+      @symbol, @signalType, @sourceDate, @entryPrice, @stopLoss, @target,
+      @timeHorizon, @maxHoldDays, 'OPEN'
+    )
+  `)
+    .run({
+      symbol: row.symbol.toUpperCase(),
+      signalType: row.signalType,
+      sourceDate: row.sourceDate,
+      entryPrice: row.entryPrice,
+      stopLoss: row.stopLoss,
+      target: row.target,
+      timeHorizon: row.timeHorizon,
+      maxHoldDays: row.maxHoldDays,
+    });
+  return result.changes > 0;
+}
+
+export function getOpenPaperTrades(db: DatabaseType = getDb()): PaperTradeRow[] {
+  const rows = db
+    .prepare(
+      `
+    SELECT id, symbol, signal_type AS signalType, source_date AS sourceDate,
+           entry_price AS entryPrice, stop_loss AS stopLoss, target,
+           time_horizon AS timeHorizon, max_hold_days AS maxHoldDays,
+           status, outcome_date AS outcomeDate, exit_price AS exitPrice,
+           pnl_pct AS pnlPct, notes, created_at AS createdAt
+    FROM paper_trades
+    WHERE status = 'OPEN'
+    ORDER BY source_date ASC, id ASC
+  `,
+    )
+    .all() as Array<{
+    id: number;
+    symbol: string;
+    signalType: PaperTradeSignalType;
+    sourceDate: string;
+    entryPrice: number;
+    stopLoss: number;
+    target: number;
+    timeHorizon: PaperTradeHorizon;
+    maxHoldDays: number;
+    status: PaperTradeStatus;
+    outcomeDate: string | null;
+    exitPrice: number | null;
+    pnlPct: number | null;
+    notes: string | null;
+    createdAt: string;
+  }>;
+
+  return rows;
+}
+
+export function closePaperTrade(
+  id: number,
+  status: Exclude<PaperTradeStatus, 'OPEN'>,
+  outcomeDate: string,
+  exitPrice: number,
+  pnlPct: number,
+  db: DatabaseType = getDb(),
+  notes?: string | null,
+): void {
+  db.prepare(`
+    UPDATE paper_trades
+    SET status = @status,
+        outcome_date = @outcomeDate,
+        exit_price = @exitPrice,
+        pnl_pct = @pnlPct,
+        notes = COALESCE(@notes, notes)
+    WHERE id = @id AND status = 'OPEN'
+  `).run({
+    id,
+    status,
+    outcomeDate,
+    exitPrice,
+    pnlPct,
+    notes: notes ?? null,
+  });
+}
+
+export interface PaperTradeStats {
+  windowDays: number;
+  asOf: string;
+  closedCount: number;
+  openCount: number;
+  winCount: number;
+  lossCount: number;
+  timeCount: number;
+  winRate: number | null;
+  avgWinnerPct: number | null;
+  avgLoserPct: number | null;
+  expectancyPct: number | null;
+  minSampleMet: boolean;
+}
+
+const MIN_SAMPLE_CLOSED = 5;
+
+/** Stats for closed trades with outcome_date in [asOf - windowDays, asOf]; openCount is all OPEN rows. */
+export function getPaperTradeStats(
+  opts: { days: number; asOf: string },
+  db: DatabaseType = getDb(),
+): PaperTradeStats {
+  const { days, asOf } = opts;
+  const windowStart = db.prepare('SELECT date(?, ?) AS d').get(asOf, `-${days} days`) as {
+    d: string;
+  };
+
+  const closedRows = db
+    .prepare(
+      `
+    SELECT status, pnl_pct AS pnlPct
+    FROM paper_trades
+    WHERE status != 'OPEN'
+      AND outcome_date IS NOT NULL
+      AND outcome_date >= ?
+      AND outcome_date <= ?
+  `,
+    )
+    .all(windowStart.d, asOf) as Array<{ status: PaperTradeStatus; pnlPct: number | null }>;
+
+  const openCount = (
+    db.prepare(`SELECT COUNT(*) AS c FROM paper_trades WHERE status = 'OPEN'`).get() as {
+      c: number;
+    }
+  ).c;
+
+  let winCount = 0;
+  let lossCount = 0;
+  let timeCount = 0;
+  const winnerPnls: number[] = [];
+  const loserPnls: number[] = [];
+  let sumPnl = 0;
+
+  for (const r of closedRows) {
+    const pnl = r.pnlPct ?? 0;
+    sumPnl += pnl;
+    if (r.status === 'CLOSED_WIN') {
+      winCount++;
+      winnerPnls.push(pnl);
+    } else if (r.status === 'CLOSED_LOSS') {
+      lossCount++;
+      loserPnls.push(pnl);
+    } else if (r.status === 'CLOSED_TIME') {
+      timeCount++;
+      if (pnl >= 0) {
+        winnerPnls.push(pnl);
+      } else {
+        loserPnls.push(pnl);
+      }
+    }
+  }
+
+  const closedCount = closedRows.length;
+  const minSampleMet = closedCount >= MIN_SAMPLE_CLOSED;
+
+  let winRate: number | null = null;
+  if (minSampleMet && closedCount > 0) {
+    const strictWins = closedRows.filter((r) => r.status === 'CLOSED_WIN').length;
+    winRate = strictWins / closedCount;
+  }
+
+  const avgWinnerPct =
+    winnerPnls.length > 0 ? winnerPnls.reduce((a, b) => a + b, 0) / winnerPnls.length : null;
+  const avgLoserPct =
+    loserPnls.length > 0 ? loserPnls.reduce((a, b) => a + b, 0) / loserPnls.length : null;
+  const expectancyPct = closedCount > 0 ? sumPnl / closedCount : null;
+
+  return {
+    windowDays: days,
+    asOf,
+    closedCount,
+    openCount,
+    winCount,
+    lossCount,
+    timeCount,
+    winRate,
+    avgWinnerPct,
+    avgLoserPct,
+    expectancyPct,
+    minSampleMet,
+  };
+}

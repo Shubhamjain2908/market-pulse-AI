@@ -30,6 +30,7 @@
     "enrich": "tsx src/cli.ts enrich",
     "screen": "tsx src/cli.ts screen",
     "brief": "tsx src/cli.ts brief",
+    "evaluate": "tsx src/cli.ts evaluate",
     "run-all": "tsx src/cli.ts run-all",
     "daily": "tsx src/cli.ts daily",
     "kite-login": "tsx src/cli.ts kite-login",

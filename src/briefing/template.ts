@@ -117,6 +117,18 @@ export interface ScreenMatch {
   timeHorizon?: string;
 }
 
+/** Forward-tested LLM signals (paper ledger). Shown when stats exist. */
+export interface SignalPerformance {
+  windowDays: number;
+  closed: number;
+  open: number;
+  winRate: number | null;
+  avgWinnerPct: number | null;
+  avgLoserPct: number | null;
+  expectancyPct: number | null;
+  minSampleMet: boolean;
+}
+
 /** Why the AI Picks section looks empty or different — avoids ambiguous placeholders. */
 export type AiPicksSectionStatus =
   | { kind: 'ok' }
@@ -149,6 +161,8 @@ export interface BriefingData {
   /** Portfolio summary + per-holding analysis (Phase 5). */
   portfolio?: PortfolioSummary;
   aiPicksStatus: AiPicksSectionStatus;
+  /** Paper-trade performance (last N days) — Phase 7. */
+  signalPerformance?: SignalPerformance;
 }
 
 export function renderBriefing(data: BriefingData): string {
@@ -164,6 +178,7 @@ export function renderBriefing(data: BriefingData): string {
   <main class="wrap">
     ${renderHeader(data.date)}
     ${renderMood(data.date, data.mood, data.moodNarrative, data.marketClosure)}
+    ${renderSignalPerformance(data.signalPerformance)}
     ${renderGlobalCues(data.globalCues)}
     ${renderPortfolio(data.portfolio)}
     ${renderWatchlistAlerts(data.watchlistAlerts)}
@@ -241,6 +256,31 @@ function renderMood(
       ${banner}
       <div class="grid grid-4">${cards}</div>
       ${narrativeHtml}
+    </section>`;
+}
+
+function renderSignalPerformance(perf?: SignalPerformance): string {
+  if (!perf) return '';
+
+  const pct = (n: number | null) => (n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`);
+  const rate = (r: number | null) => (r == null ? '—' : `${(r * 100).toFixed(1)}%`);
+
+  const body = perf.minSampleMet
+    ? `<div class="grid grid-2 signal-performance-grid">
+        <div class="stat"><div class="stat-label">Win rate (${perf.windowDays}d)</div><div class="stat-value">${rate(perf.winRate)}</div></div>
+        <div class="stat"><div class="stat-label">Expectancy / trade</div><div class="stat-value">${pct(perf.expectancyPct)}</div></div>
+        <div class="stat"><div class="stat-label">Avg winner</div><div class="stat-value positive">${pct(perf.avgWinnerPct)}</div></div>
+        <div class="stat"><div class="stat-label">Avg loser</div><div class="stat-value negative">${pct(perf.avgLoserPct)}</div></div>
+        <div class="stat"><div class="stat-label">Closed in window</div><div class="stat-value">${perf.closed}</div></div>
+        <div class="stat"><div class="stat-label">Open (total)</div><div class="stat-value">${perf.open}</div></div>
+      </div>
+      <p class="section-lede muted">Based on forward-tested paper trades (EOD). Not investment advice.</p>`
+    : `<p class="section-lede muted">Collecting forward-testing data. At least 5 closed trades in the last ${perf.windowDays} days are required before win rate and expectancy are shown. (Currently <strong>${perf.closed}</strong> closed, <strong>${perf.open}</strong> open.)</p>`;
+
+  return `
+    <section class="card signal-performance">
+      <h2>Signal performance (paper)</h2>
+      ${body}
     </section>`;
 }
 
@@ -777,6 +817,13 @@ function baseStyles(): string {
     .grid-2 { grid-template-columns: 1fr 1fr; }
     .grid-3 { grid-template-columns: repeat(3, 1fr); }
     .grid-4 { grid-template-columns: repeat(4, 1fr); }
+    .signal-performance-grid .stat { padding: 10px 12px; border: 1px solid var(--border);
+      border-radius: 8px; background: #fafbfd; }
+    .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.06em; }
+    .stat-value { font-size: 17px; font-weight: 600; margin-top: 4px; }
+    .stat-value.positive { color: var(--positive); }
+    .stat-value.negative { color: var(--negative); }
     @media (max-width: 600px) {
       .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; }
     }

@@ -11,7 +11,7 @@
  *   mp backtest          Replay screens against historical EOD data
  *   mp sentiment         Score news headlines via LLM
  *   mp thesis            Generate AI theses for top-signal stocks
- *   mp brief             Stage 4 - compose + deliver briefing
+ *   mp evaluate           Mark outcomes for open paper trades vs EOD quotes
  *   mp run-all           Run full pipeline (ingest -> brief)
  *   mp daily             One-shot: full pipeline + portfolio analysis (recommended)
  *   mp sync-sectors      Cache Yahoo sector/industry in `symbols` (for portfolio sector rollup)
@@ -48,6 +48,7 @@ import { defaultIngestSymbolUniverse } from './market/ingest-symbols.js';
 import { getMarketClosure } from './market/nse-calendar.js';
 import { syncSymbolSectorsFromYahoo } from './market/yahoo-sectors.js';
 import { startScheduler } from './scheduler/market-scheduler.js';
+import { runEvaluatePaperTrades } from './scripts/evaluate-trades.js';
 
 const program = new Command();
 
@@ -215,6 +216,17 @@ program
       closeDb();
     },
   );
+
+program
+  .command('evaluate')
+  .description('evaluate open paper trades against EOD quotes (SL / target / time-stop)')
+  .action(async () => {
+    ensureDb();
+    const date = program.opts<{ date?: string }>().date ?? isoDateIst();
+    const result = runEvaluatePaperTrades(date, getDb());
+    logger.info(result, 'paper trade evaluation complete');
+    closeDb();
+  });
 
 program
   .command('run-all')

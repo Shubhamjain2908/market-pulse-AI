@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   type PortfolioAction,
+  PortfolioActionSchema,
   analysePortfolio,
   applyPortfolioAddGuardrails,
 } from '../../src/agents/portfolio-analyser.js';
@@ -16,6 +17,7 @@ import {
   upsertQuotes,
   upsertSignals,
 } from '../../src/db/index.js';
+import { parseAndValidate } from '../../src/llm/json.js';
 import { MockLlmProvider } from '../../src/llm/providers/mock.js';
 import type { RawQuote } from '../../src/types/domain.js';
 
@@ -196,5 +198,24 @@ describe('portfolio analyser', () => {
       },
     );
     expect(out.action).toBe('ADD');
+  });
+});
+
+describe('PortfolioActionSchema (LLM output)', () => {
+  it('truncates triggerReason longer than 280 chars so JSON parse does not fail', () => {
+    const long = `Why now: ${'word '.repeat(60)}end`;
+    expect(long.length).toBeGreaterThan(280);
+    const raw = JSON.stringify({
+      symbol: 'T',
+      action: 'HOLD',
+      conviction: 0.5,
+      thesis: 'Thesis line with enough length for min twenty chars ok.',
+      bullPoints: ['Bull one'],
+      bearPoints: ['Bear one'],
+      triggerReason: long,
+    });
+    const out = parseAndValidate(raw, PortfolioActionSchema);
+    expect(out.triggerReason.length).toBeLessThanOrEqual(280);
+    expect(out.triggerReason.endsWith('…')).toBe(true);
   });
 });
