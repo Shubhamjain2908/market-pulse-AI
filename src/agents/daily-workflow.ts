@@ -7,10 +7,12 @@
  */
 
 import { config } from '../config/env.js';
+import { getDb } from '../db/index.js';
 import { enrichSentiment } from '../enrichers/sentiment/enricher.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 import { getMarketClosure } from '../market/nse-calendar.js';
+import { runEvaluatePaperTrades } from '../scripts/evaluate-trades.js';
 import { runBriefingComposer } from './briefing-composer.js';
 import { runDailyIngestor } from './daily-ingestor.js';
 import { analysePortfolio } from './portfolio-analyser.js';
@@ -159,6 +161,9 @@ export async function runDailyWorkflow(
     thesisRun: opts.skipAi ? undefined : thesisRun,
     delivery: config.BRIEFING_DELIVERY,
   });
+
+  const paperEval = runEvaluatePaperTrades(briefing.date, getDb());
+  log.info(paperEval, 'paper trade evaluation');
 
   maybeWriteDailyRunSummary({
     schemaVersion: 1,

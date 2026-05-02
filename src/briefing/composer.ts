@@ -19,7 +19,7 @@ import {
   getLatestHoldings,
   getPortfolioAnalysisForDate,
 } from '../db/index.js';
-import { getSymbolSectors, getThesesForDate } from '../db/queries.js';
+import { getPaperTradeStats, getSymbolSectors, getThesesForDate } from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
@@ -28,6 +28,7 @@ import { INDIA_VIX_BENCHMARK_SYMBOL, NIFTY_BENCHMARK_SYMBOL } from '../market/be
 import { gatherGlobalCues } from '../market/global-cues.js';
 import { latestQuoteClose, sessionChangeVsPriorClose } from '../market/quote-change.js';
 import type { ScreenDefinition } from '../types/domain.js';
+import { recordPaperTrades } from './paper-trade-writer.js';
 import { classifySector } from './sector-classifier.js';
 import {
   type AiPicksSectionStatus,
@@ -102,6 +103,23 @@ export async function composeBriefing(
   const screenMatches = gatherScreenMatches(date, db);
   const portfolio = gatherPortfolio(date, db);
 
+  const paperLog = recordPaperTrades(date, theses, portfolio, db);
+  if (paperLog.insertedAiPick > 0 || paperLog.insertedPortfolioAdd > 0) {
+    log.info(paperLog, 'paper trades recorded');
+  }
+
+  const statsRaw = getPaperTradeStats({ days: 30, asOf: date }, db);
+  const signalPerformance = {
+    windowDays: statsRaw.windowDays,
+    closed: statsRaw.closedCount,
+    open: statsRaw.openCount,
+    winRate: statsRaw.winRate,
+    avgWinnerPct: statsRaw.avgWinnerPct,
+    avgLoserPct: statsRaw.avgLoserPct,
+    expectancyPct: statsRaw.expectancyPct,
+    minSampleMet: statsRaw.minSampleMet,
+  };
+
   let moodNarrative: string | undefined;
   if (
     allowMoodLlm &&
@@ -139,6 +157,7 @@ export async function composeBriefing(
     moodNarrative,
     marketClosure: opts.marketClosure,
     watchlistAlerts,
+    signalPerformance,
     screenMatches: screenMatches.length > 0 ? screenMatches : undefined,
     portfolio,
     topGainers,

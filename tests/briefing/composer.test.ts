@@ -530,6 +530,12 @@ describe('briefing composer (Phase 3–4)', () => {
     expect(() => validateMoodNarrativeMini('Too short.')).toThrow();
   });
 
+  it('includes signal performance (paper) section', async () => {
+    const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
+    expect(result.html).toMatch(/class="card signal-performance"/);
+    expect(result.html).toContain('Signal performance (paper)');
+  });
+
   it('includes sentiment badges in news section', async () => {
     const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
 
