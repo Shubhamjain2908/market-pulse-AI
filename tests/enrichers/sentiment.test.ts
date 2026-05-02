@@ -143,6 +143,12 @@ describe('sentiment enricher', () => {
     ).toBe(0.4);
     expect(
       nudgeIndianEarningsScore(
+        'ITC, Adani Ports among stocks flashing bullish breakout signals',
+        0.1,
+      ),
+    ).toBe(0.4);
+    expect(
+      nudgeIndianEarningsScore(
         'Adani Ports among 4 stocks that hit 52-week highs after monthly rally',
         0.1,
       ),

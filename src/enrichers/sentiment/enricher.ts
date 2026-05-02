@@ -57,6 +57,7 @@ Earnings beats with explicit profit growth (YoY/QoQ) should score clearly positi
 Few-shot (headline → sentiment):
 - "Mazagon Dock Q4 profit jumps 42% YoY, declares dividend" → +0.65
 - "Equitas Small Finance Bank Q4 PAT surges five-fold" → +0.55
+- "ITC, Adani Ports among stocks flashing bullish breakout signals" → +0.40
 - "ITC among stocks flashing bullish breakout signals" → +0.40
 - "Adani Ports among 4 stocks that hit 52-week highs after monthly rally" → +0.40
 - "Infosys cuts FY26 revenue guidance" → -0.65
