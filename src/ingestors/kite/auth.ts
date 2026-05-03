@@ -14,7 +14,7 @@
  */
 
 import { exec } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
 import { PROJECT_DOTENV_PATH } from '../../config/project-paths.js';
@@ -59,7 +59,12 @@ export async function runKiteLogin(
   log.info({ requestToken: maskToken(requestToken) }, 'exchanging request_token');
   const session = await client.generateSession(requestToken);
   upsertEnvVar(envPath, 'KITE_ACCESS_TOKEN', session.access_token);
-  console.log(`\n  Wrote KITE_ACCESS_TOKEN to:\n    ${envPath}\n`);
+  assertEnvFileHasKey(envPath, 'KITE_ACCESS_TOKEN', session.access_token);
+  const st = statSync(envPath);
+  console.log(`\n  Wrote KITE_ACCESS_TOKEN to:\n    ${envPath}`);
+  console.log(
+    `  (disk verify OK — ${st.size} bytes, mtime ${st.mtime.toISOString()}; reload the file in your editor if it still looks old.)\n`,
+  );
 
   return {
     accessToken: session.access_token,
@@ -123,6 +128,60 @@ export function upsertEnvVar(path: string, key: string, value: string): void {
 
 function lineAssignsKey(line: string, key: string): boolean {
   return new RegExp(`^\\s*(?:export\\s+)?${escapeRegex(key)}\\s*=`).test(line);
+}
+
+/**
+ * Confirms the token was persisted. If this throws, the write path or
+ * permissions are wrong — not an editor refresh issue.
+ */
+function assertEnvFileHasKey(path: string, key: string, expectedValue: string): void {
+  const raw = readFileSync(path, 'utf8');
+  const values = parseAllAssignmentsForKey(raw, key);
+  if (values.length === 0) {
+    throw new Error(`After write, no ${key}= line found in ${path} (disk read-back failed).`);
+  }
+  if (values.length > 1) {
+    throw new Error(
+      `After write, ${values.length} ${key}= lines found in ${path}; remove duplicates manually.`,
+    );
+  }
+  if (values[0] !== expectedValue) {
+    throw new Error(
+      `After write, ${key} on disk does not match session token (got len=${values[0]?.length ?? 0}, expected len=${expectedValue.length}). File: ${path}`,
+    );
+  }
+}
+
+function parseAllAssignmentsForKey(fileText: string, key: string): string[] {
+  let text = fileText;
+  if (text.charCodeAt(0) === 0xfeff) {
+    text = text.slice(1);
+  }
+  text = text.replace(/\r\n/g, '\n');
+  const lineRe = new RegExp(`^\\s*(?:export\\s+)?${escapeRegex(key)}\\s*=\\s*(.*)$`);
+  const out: string[] = [];
+  for (const line of text.split('\n')) {
+    const m = line.match(lineRe);
+    if (!m) continue;
+    out.push(normalizeEnvValue(m[1] ?? ''));
+  }
+  return out;
+}
+
+/** Trim, strip optional surrounding quotes, strip trailing ` # comment`. */
+function normalizeEnvValue(raw: string): string {
+  let v = raw.trim();
+  const hash = v.indexOf('#');
+  if (hash !== -1) {
+    v = v.slice(0, hash).trim();
+  }
+  if (
+    v.length >= 2 &&
+    ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))
+  ) {
+    return v.slice(1, -1);
+  }
+  return v;
 }
 
 function escapeRegex(s: string): string {
