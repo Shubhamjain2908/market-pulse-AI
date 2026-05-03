@@ -112,7 +112,7 @@ function maskToken(t: string): string {
  * spaces around `=`) so duplicate keys cannot keep a stale value as the last
  * assignment. Appends one fresh `KEY=value` line at the end.
  *
- * (A single `content.replace(/^KEY=.*/, ...)` is unsafe: duplicate lines,
+ * (A single `content.replace` on only the first `KEY=` line is unsafe: duplicate lines,
  * `export KEY=`, or `#` inside values break that approach.)
  */
 export function upsertEnvVar(path: string, key: string, value: string): void {
