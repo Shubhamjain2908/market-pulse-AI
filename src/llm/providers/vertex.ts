@@ -9,14 +9,6 @@
  * lifecycle”). Defaults in env point at the current Gemini 2.5 family.
  */
 
-import {
-  BlockedReason,
-  FinishReason,
-  type GenerateContentResponse,
-  HarmBlockThreshold,
-  HarmCategory,
-  VertexAI,
-} from '@google-cloud/vertexai';
 import { config } from '../../config/env.js';
 import { parseAndValidate } from '../json.js';
 import type {
@@ -26,8 +18,20 @@ import type {
   LlmProvider,
   LlmTextResult,
 } from '../types.js';
+import {
+  BlockedReason,
+  FinishReason,
+  type GenerateContentResponse,
+  HarmBlockThreshold,
+  HarmCategory,
+  VertexAI,
+} from '../vertex-ai-sdk.js';
 
-/** Conservative safety thresholds — stock tickers / P&L often trip “financial advice” heuristics at BLOCK_MEDIUM. */
+/**
+ * Research-oriented safety: keep harassment/hate/sexual strict, but allow
+ * “dangerous” bucket to pass at BLOCK_NONE — FII/DII flows and index % moves
+ * often get mis-tagged as generic policy/financial-advice and return empty candidates.
+ */
 const RESEARCH_SAFETY_SETTINGS = [
   {
     category: HarmCategory.HARM_CATEGORY_HARASSMENT,
@@ -43,7 +47,7 @@ const RESEARCH_SAFETY_SETTINGS = [
   },
   {
     category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-    threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
   },
 ];
 
@@ -160,26 +164,36 @@ function extractResponseText(response: GenerateContentResponse): string {
     throw new Error(`Vertex blocked the prompt: ${pf.blockReason}. ${pf.blockReasonMessage ?? ''}`);
   }
 
-  const cand = response.candidates?.[0];
-  if (!cand?.content?.parts?.length) {
-    throw new Error('Vertex returned no text candidates (empty or safety-filtered response).');
+  const candidates = response.candidates ?? [];
+  const emptyReasons: string[] = [];
+
+  for (const cand of candidates) {
+    const reason = cand.finishReason;
+    let chunk = '';
+    if (cand.content?.parts?.length) {
+      for (const part of cand.content.parts) {
+        if ('text' in part && part.text) chunk += part.text;
+      }
+    }
+    const trimmed = chunk.trim();
+    if (trimmed) {
+      if (
+        reason &&
+        reason !== FinishReason.STOP &&
+        reason !== FinishReason.MAX_TOKENS &&
+        reason !== FinishReason.FINISH_REASON_UNSPECIFIED
+      ) {
+        throw new Error(
+          `Vertex stopped with finishReason=${reason}${cand.finishMessage ? `: ${cand.finishMessage}` : ''}`,
+        );
+      }
+      return trimmed;
+    }
+    if (reason && reason !== FinishReason.FINISH_REASON_UNSPECIFIED) {
+      emptyReasons.push(String(reason));
+    }
   }
 
-  const reason = cand.finishReason;
-  if (
-    reason &&
-    reason !== FinishReason.STOP &&
-    reason !== FinishReason.MAX_TOKENS &&
-    reason !== FinishReason.FINISH_REASON_UNSPECIFIED
-  ) {
-    throw new Error(
-      `Vertex stopped with finishReason=${reason}${cand.finishMessage ? `: ${cand.finishMessage}` : ''}`,
-    );
-  }
-
-  let text = '';
-  for (const part of cand.content.parts) {
-    if ('text' in part && part.text) text += part.text;
-  }
-  return text.trim();
+  const hint = emptyReasons.length > 0 ? ` finishReason=${emptyReasons.join(',')}` : '';
+  throw new Error(`Vertex returned no text candidates (empty or filtered).${hint}`);
 }
