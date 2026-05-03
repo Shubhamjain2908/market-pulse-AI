@@ -2,10 +2,25 @@
  * Environment configuration loader. Reads `.env`, validates with zod, and
  * exposes a typed `config` object. Importing this module triggers validation
  * exactly once - downstream code can rely on `config` being well-formed.
+ *
+ * Loads `MP_DOTENV_PATH` if set; otherwise the repo-root `.env` (see
+ * `project-paths.ts`) so `pnpm cli …` matches `kite-login` even when cwd ≠ repo.
+ * Falls back to default dotenv behaviour (cwd `.env`) when that file is missing.
  */
 
-import 'dotenv/config';
+import { existsSync } from 'node:fs';
+import { config as loadDotenv } from 'dotenv';
 import { z } from 'zod';
+import { PROJECT_DOTENV_PATH } from './project-paths.js';
+
+const dotenvPath = process.env.MP_DOTENV_PATH;
+if (dotenvPath) {
+  loadDotenv({ path: dotenvPath });
+} else if (existsSync(PROJECT_DOTENV_PATH)) {
+  loadDotenv({ path: PROJECT_DOTENV_PATH });
+} else {
+  loadDotenv();
+}
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

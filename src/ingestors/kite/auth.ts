@@ -7,16 +7,17 @@
  *      just the token back into the terminal.
  *   3. We exchange the request_token for an access_token (sha256 of
  *      api_key + request_token + api_secret).
- *   4. The fresh access_token is appended to `.env` (replacing any
- *      previous KITE_ACCESS_TOKEN line) so subsequent commands pick it
- *      up without further setup.
+ *   4. The fresh access_token is written to the repo-root `.env` (see
+ *      `MP_DOTENV_PATH` / `project-paths.ts`), removing every prior assignment
+ *      for that key so duplicates or `export KEY=` lines cannot leave a stale
+ *      token as the effective value.
  */
 
 import { exec } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
+import { PROJECT_DOTENV_PATH } from '../../config/project-paths.js';
 import { child } from '../../logger.js';
 import { KiteClient } from './client.js';
 
@@ -30,7 +31,7 @@ export interface KiteLoginResult {
 }
 
 export async function runKiteLogin(
-  envPath = resolve(process.cwd(), '.env'),
+  envPath = process.env.MP_DOTENV_PATH ?? PROJECT_DOTENV_PATH,
 ): Promise<KiteLoginResult> {
   const client = new KiteClient();
   const url = client.loginUrl();
@@ -58,6 +59,7 @@ export async function runKiteLogin(
   log.info({ requestToken: maskToken(requestToken) }, 'exchanging request_token');
   const session = await client.generateSession(requestToken);
   upsertEnvVar(envPath, 'KITE_ACCESS_TOKEN', session.access_token);
+  console.log(`\n  Wrote KITE_ACCESS_TOKEN to:\n    ${envPath}\n`);
 
   return {
     accessToken: session.access_token,
@@ -96,24 +98,31 @@ function maskToken(t: string): string {
 }
 
 /**
- * Idempotent `KEY=value` upsert in a .env-style file. Preserves comments
- * and ordering; replaces an existing matching line in place.
+ * Idempotent `KEY=value` upsert in a `.env`-style file. Removes **all** lines
+ * that assign `key` (optional leading whitespace, optional `export`, optional
+ * spaces around `=`) so duplicate keys cannot keep a stale value as the last
+ * assignment. Appends one fresh `KEY=value` line at the end.
  */
 export function upsertEnvVar(path: string, key: string, value: string): void {
   const line = `${key}=${value}`;
   if (!existsSync(path)) {
-    writeFileSync(path, `${line}\n`);
+    writeFileSync(path, `${line}\n`, 'utf8');
     return;
   }
-  const original = readFileSync(path, 'utf8');
-  const re = new RegExp(`^${escapeRegex(key)}=.*$`, 'm');
-  let next: string;
-  if (re.test(original)) {
-    next = original.replace(re, line);
-  } else {
-    next = original.endsWith('\n') ? `${original}${line}\n` : `${original}\n${line}\n`;
+  let text = readFileSync(path, 'utf8');
+  if (text.charCodeAt(0) === 0xfeff) {
+    text = text.slice(1);
   }
-  writeFileSync(path, next);
+  text = text.replace(/\r\n/g, '\n');
+
+  const kept = text.split('\n').filter((l) => !lineAssignsKey(l, key));
+  const body = kept.join('\n').replace(/\n+$/, '');
+  const next = body.length > 0 ? `${body}\n${line}\n` : `${line}\n`;
+  writeFileSync(path, next, 'utf8');
+}
+
+function lineAssignsKey(line: string, key: string): boolean {
+  return new RegExp(`^\\s*(?:export\\s+)?${escapeRegex(key)}\\s*=`).test(line);
 }
 
 function escapeRegex(s: string): string {
