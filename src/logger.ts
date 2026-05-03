@@ -20,6 +20,8 @@ export const logger: Logger = pino({
             colorize: true,
             translateTime: 'SYS:HH:MM:ss',
             ignore: 'pid,hostname,app',
+            /** CLI UX: avoid logs appearing after unrelated `console.log` output. */
+            sync: true,
           },
         },
       }

@@ -61,9 +61,13 @@ export async function runKiteLogin(
   upsertEnvVar(envPath, 'KITE_ACCESS_TOKEN', session.access_token);
   assertEnvFileHasKey(envPath, 'KITE_ACCESS_TOKEN', session.access_token);
   const st = statSync(envPath);
-  console.log(`\n  Wrote KITE_ACCESS_TOKEN to:\n    ${envPath}`);
-  console.log(
-    `  (disk verify OK — ${st.size} bytes, mtime ${st.mtime.toISOString()}; reload the file in your editor if it still looks old.)\n`,
+  log.info(
+    {
+      envPath,
+      bytes: st.size,
+      mtime: st.mtime.toISOString(),
+    },
+    'KITE_ACCESS_TOKEN written and verified on disk (reload .env in the editor if the tab looks stale — gitignored files often do not auto-refresh)',
   );
 
   return {
@@ -107,6 +111,9 @@ function maskToken(t: string): string {
  * that assign `key` (optional leading whitespace, optional `export`, optional
  * spaces around `=`) so duplicate keys cannot keep a stale value as the last
  * assignment. Appends one fresh `KEY=value` line at the end.
+ *
+ * (A single `content.replace(/^KEY=.*/, ...)` is unsafe: duplicate lines,
+ * `export KEY=`, or `#` inside values break that approach.)
  */
 export function upsertEnvVar(path: string, key: string, value: string): void {
   const line = `${key}=${value}`;
