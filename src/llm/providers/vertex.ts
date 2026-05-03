@@ -7,8 +7,20 @@
  *
  * Model IDs follow Vertex GA naming (see Cloud docs “Model versions and
  * lifecycle”). Defaults in env point at the current Gemini 2.5 family.
+ *
+ * TODO (before mid-2026): Google deprecates this SDK in favour of `@google/genai`
+ * (see startup DeprecationWarning). Plan a dedicated migration PR — do not silence
+ * that warning; it is the reminder to swap client + request shapes.
  */
 
+import {
+  BlockedReason,
+  FinishReason,
+  type GenerateContentResponse,
+  HarmBlockThreshold,
+  HarmCategory,
+  VertexAI,
+} from '@google-cloud/vertexai';
 import { config } from '../../config/env.js';
 import { parseAndValidate } from '../json.js';
 import type {
@@ -18,14 +30,6 @@ import type {
   LlmProvider,
   LlmTextResult,
 } from '../types.js';
-import {
-  BlockedReason,
-  FinishReason,
-  type GenerateContentResponse,
-  HarmBlockThreshold,
-  HarmCategory,
-  VertexAI,
-} from '../vertex-ai-sdk.js';
 
 /**
  * Research-oriented safety: keep harassment/hate/sexual strict, but allow
