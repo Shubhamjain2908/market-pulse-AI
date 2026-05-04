@@ -34,6 +34,7 @@
     "run-all": "tsx src/cli.ts run-all",
     "daily": "tsx src/cli.ts daily",
     "kite-login": "tsx src/cli.ts kite-login",
+    "kite-verify": "tsx src/cli.ts kite-verify",
     "scan": "tsx src/cli.ts scan",
     "schedule": "tsx src/cli.ts schedule",
     "prepare": "echo 'skip husky setup until added'"
