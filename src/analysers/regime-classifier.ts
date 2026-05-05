@@ -5,7 +5,11 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { getDb } from '../db/connection.js';
-import { getTodayRegime, insertRegimeRow } from '../db/regime-queries.js';
+import {
+  type InsertRegimeRowInput,
+  getTodayRegime,
+  insertRegimeRow,
+} from '../db/regime-queries.js';
 import { computeRegimeSignals } from '../enrichers/regime-signals.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { lastOpenOnOrBefore, previousOpenTradingDay } from '../market/trading-days.js';
@@ -116,13 +120,23 @@ export interface RunRegimeClassifierOptions {
   date?: string;
 }
 
+export interface PreparedRegimeDaily {
+  sessionDate: string;
+  signals: RegimeSignals;
+  /** Final persisted regime + metadata (same shape as `runRegimeClassifier` return). */
+  classification: RegimeClassification;
+  /** Full row for `insertRegimeRow` — set `narrative` before insert. */
+  insertRow: InsertRegimeRowInput;
+}
+
 /**
- * Compute signals → deterministic regime → upsert `regime_daily` (`narrative` null).
+ * Compute signals + deterministic regime + row payload **without** writing to SQLite.
+ * Used by `runRegimeClassifier` (narrative null) and `runRegimeAgent` (narrative from LLM or fallback).
  */
-export function runRegimeClassifier(
+export function prepareRegimeDaily(
   opts: RunRegimeClassifierOptions = {},
   db: DatabaseType = getDb(),
-): RegimeClassification {
+): PreparedRegimeDaily {
   const requested = opts.date ?? isoDateIst();
   const sessionDate = lastOpenOnOrBefore(requested) ?? requested;
 
@@ -160,29 +174,26 @@ export function runRegimeClassifier(
   const regimeAge =
     persistedYesterday != null && regime === persistedYesterday ? (prevRow?.regimeAge ?? 0) + 1 : 1;
 
-  insertRegimeRow(
-    {
-      date: sessionDate,
-      regime,
-      scoreTotal: signals.scoreTotal,
-      scoreTrend: signals.scoreTrend,
-      scoreVix: signals.scoreVix,
-      scoreFii: signals.scoreFii,
-      scoreBreadth: signals.scoreBreadth,
-      vixValue: signals.vixCurrent ?? 0,
-      niftyVsSma200: signals.niftyVsSma200Pct ?? 0,
-      fii20dNet: signals.fii20dRollingCr ?? 0,
-      adRatio: signals.adRatio,
-      pctAboveSma200: signals.pctAboveSma200,
-      crisisOverride: crisisToday,
-      narrative: null,
-      prevRegime: persistedYesterday,
-      regimeAge,
-    },
-    db,
-  );
+  const insertRow: InsertRegimeRowInput = {
+    date: sessionDate,
+    regime,
+    scoreTotal: signals.scoreTotal,
+    scoreTrend: signals.scoreTrend,
+    scoreVix: signals.scoreVix,
+    scoreFii: signals.scoreFii,
+    scoreBreadth: signals.scoreBreadth,
+    vixValue: signals.vixCurrent ?? 0,
+    niftyVsSma200: signals.niftyVsSma200Pct ?? 0,
+    fii20dNet: signals.fii20dRollingCr ?? 0,
+    adRatio: signals.adRatio,
+    pctAboveSma200: signals.pctAboveSma200,
+    crisisOverride: crisisToday,
+    narrative: null,
+    prevRegime: persistedYesterday,
+    regimeAge,
+  };
 
-  return {
+  const classification: RegimeClassification = {
     regime,
     rawRegime: computeRawRegime(signals),
     crisisOverride: crisisToday,
@@ -195,4 +206,18 @@ export function runRegimeClassifier(
       breadth: signals.scoreBreadth,
     },
   };
+
+  return { sessionDate, signals, classification, insertRow };
+}
+
+/**
+ * Compute signals → deterministic regime → upsert `regime_daily` (`narrative` null).
+ */
+export function runRegimeClassifier(
+  opts: RunRegimeClassifierOptions = {},
+  db: DatabaseType = getDb(),
+): RegimeClassification {
+  const p = prepareRegimeDaily(opts, db);
+  insertRegimeRow({ ...p.insertRow, narrative: null }, db);
+  return p.classification;
 }
