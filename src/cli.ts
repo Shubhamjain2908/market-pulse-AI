@@ -22,7 +22,9 @@
  *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
  *   mp schedule          Start croner jobs (07:30 / 15:30 weekdays, Sat 08:00)
  *   mp doctor            Print runtime/config diagnostics
- *   mp regime            Deterministic regime → regime_daily (no LLM)
+ *   mp regime            Full regime agent (classify + LLM narrative → regime_daily)
+ *   mp regime:classify   Deterministic regime only (narrative null)
+ *   mp regime:gate-summary  Print allowed strategies for today's regime
  *   mp regime-signals    Print regime inputs + scores for a date (validation)
  * Run `mp --help` or `mp <cmd> --help` for full options.
  */
@@ -35,6 +37,7 @@ import { runDailyWorkflow } from './agents/daily-workflow.js';
 import { runLiveScan } from './agents/live-scanner.js';
 import { analysePortfolio } from './agents/portfolio-analyser.js';
 import { runPortfolioSync } from './agents/portfolio-sync.js';
+import { runRegimeAgent } from './agents/regime-agent.js';
 import { runSignalEnricher } from './agents/signal-enricher.js';
 import { runStockScreener } from './agents/stock-screener.js';
 import { generateTheses } from './agents/thesis-generator.js';
@@ -42,7 +45,14 @@ import { runRegimeClassifier } from './analysers/regime-classifier.js';
 import { deliverToEmail, deliverToFile } from './briefing/index.js';
 import { config } from './config/env.js';
 import { APP_NAME, APP_VERSION } from './constants.js';
-import { closeDb, getDb, migrate } from './db/index.js';
+import {
+  closeDb,
+  countGatesForRegime,
+  getDb,
+  getTodayRegime,
+  listAllowedGatesForRegime,
+  migrate,
+} from './db/index.js';
 import { computeRegimeSignals } from './enrichers/regime-signals.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
@@ -85,21 +95,68 @@ program
   });
 
 program
-  .command('regime')
+  .command('regime:gate-summary')
   .description(
-    'compute deterministic regime + persist to regime_daily (no LLM; use --no-narrative in Phase 2)',
+    'print allowed strategies + size multipliers for the regime on the given date (default today)',
   )
-  .option(
-    '--no-narrative',
-    'skip AI narrative (Phase 2: no-op, classification is always deterministic)',
-  )
+  .action(async () => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+    const row = getTodayRegime(date, getDb());
+    if (!row) {
+      console.log(JSON.stringify({ date, error: 'no_regime_daily_row' }, null, 2));
+      closeDb();
+      process.exitCode = 1;
+      return;
+    }
+    const active = listAllowedGatesForRegime(row.regime, getDb());
+    const total = countGatesForRegime(row.regime, getDb());
+    console.log(
+      JSON.stringify(
+        {
+          date: row.date,
+          regime: row.regime,
+          activeStrategies: active,
+          totalGateRows: total,
+        },
+        null,
+        2,
+      ),
+    );
+    closeDb();
+  });
+
+program
+  .command('regime:classify')
+  .description('deterministic regime only → regime_daily (narrative null; for backfill)')
   .action(async () => {
     ensureDb();
     const date = optionalCliIsoDate(program.opts().date);
     const result = runRegimeClassifier({ date });
     logger.info(
       { regime: result.regime, rawRegime: result.rawRegime, crisis: result.crisisOverride },
-      'regime classified',
+      'regime classified (deterministic)',
+    );
+    console.log(JSON.stringify(result, null, 2));
+    closeDb();
+  });
+
+program
+  .command('regime')
+  .description('full regime agent: classify + LLM narrative (or templated fallback) → regime_daily')
+  .option('--no-narrative', 'skip LLM; persist templated fallback narrative only')
+  .action(async () => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date);
+    const skipLlm = process.argv.includes('--no-narrative');
+    const result = await runRegimeAgent({ date, skipLlm });
+    logger.info(
+      {
+        regime: result.regime,
+        changed: result.changed,
+        usedFallbackNarrative: result.usedFallbackNarrative,
+      },
+      'regime agent complete',
     );
     console.log(JSON.stringify(result, null, 2));
     closeDb();

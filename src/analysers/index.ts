@@ -30,6 +30,7 @@ export {
   computeRawRegime,
   countTrailingNonCrisisOverrideDays,
   mapScoreTotalToRegime,
+  prepareRegimeDaily,
   runRegimeClassifier,
   type RunRegimeClassifierOptions,
 } from './regime-classifier.js';
