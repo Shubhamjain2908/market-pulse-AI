@@ -2,13 +2,19 @@
  * Walk IST calendar days for NSE cash sessions (skip weekends + holidays from `nse-calendar`).
  */
 
-import { isoDateIst, parseIsoDate } from '../ingestors/base/dates.js';
+import { isIsoDate, isoDateIst, parseIsoDate } from '../ingestors/base/dates.js';
 import { getMarketClosure } from './nse-calendar.js';
 
 export function addCalendarDaysIst(isoDate: string, deltaDays: number): string {
   const d = parseIsoDate(isoDate);
   d.setDate(d.getDate() + deltaDays);
-  return isoDateIst(d);
+  const out = isoDateIst(d);
+  if (!isIsoDate(out)) {
+    throw new Error(
+      `addCalendarDaysIst: invalid calendar result ${JSON.stringify(out)} (${isoDate} ${deltaDays >= 0 ? '+' : ''}${deltaDays})`,
+    );
+  }
+  return out;
 }
 
 /**
