@@ -5,7 +5,14 @@ A personal morning-briefing agent for Indian stock markets (NSE/BSE).
 modular pipeline that runs every weekday at 7:30 AM IST and emails you a
 short, actionable briefing before market open.
 
-> **Status:** Phases 0–5 shipped (Delivery included). **Report quality Phase 1**
+> **Status:** Phases 0–5 shipped (Delivery included). **Phase 6 — Market Regime
+> Filter** shipped: deterministic daily regime (BULL_TRENDING /
+> BEAR_TRENDING / CHOPPY / CRISIS) from multi-factor signals, optional LLM
+> one-line narrative (plain text; templated fallback on failure),
+> `regime_daily` + `regime_strategy_gate` tables, per-screen and per-agent
+> gating with size multipliers, regime card + change banner in the HTML briefing,
+> and wiring in `pnpm daily` / `pnpm run-all` before screening and thesis
+> generation. **Report quality Phase 1**
 > shipped: NSE holiday/weekend guard (no pointless ingest when cash market is
 > closed), Market Mood shows Nifty Δ / India VIX / dated FII-DII with `[prev]`
 > labels, explicit AI Picks section states (skipped / holiday / empty / all
@@ -16,13 +23,13 @@ short, actionable briefing before market open.
 > Bounce, Golden Cross, Volume Breakout, Dividend Compounder), and a
 > single-command `pnpm daily` that runs the entire pipeline end-to-end and
 > produces a briefing with a "My Portfolio" section showing each
-> position's recommended action. Phase 4 now adds croner scheduling
+> position's recommended action. Phase 4 adds croner scheduling
 > (07:30 / 15:30 weekdays, Sat 08:00 IST), Gmail SMTP delivery via
-> nodemailer, and stop-loss breach detection alerts. The earlier phases provide: a JSON-driven
+> nodemailer, and stop-loss breach detection alerts. Earlier phases provide: a JSON-driven
 > screen engine, first-class watchlist alerts, a backtest harness, LLM
 > sentiment scoring, AI thesis generation, and an AI-composed HTML
 > briefing. Supports Cursor Agent, Anthropic, OpenAI, and Vertex AI
-> (Gemini) as LLM backends. See [the roadmap](#roadmap).
+> (Gemini) as LLM backends. See [the roadmap](#roadmap) and [Market regime filter](#market-regime-filter-phase-6).
 
 ---
 
@@ -37,9 +44,10 @@ one focused email per morning.
 What it does daily:
 
 - Pulls overnight F&O data, FII/DII activity, and global cues
+- Classifies the **market regime** from signals (trend, VIX, FII, breadth), optionally asks an LLM for a one-sentence regime narrative, and applies **strategy gates** (which screens and agents run, and at what relative size)
 - Screens your watchlist against rules you control (`config/screens.json`)
 - Summarises any earnings or news for your holdings
-- Surfaces 3–5 actionable ideas, each with a thesis, entry zone, stop, and target
+- Surfaces 3–5 actionable ideas, each with a thesis, entry zone, stop, and target (when `ai_picks_generation` is allowed for the current regime)
 
 Full product spec: regenerate `market-pulse-ai-spec.docx` by running
 `node new.cjs` (the source of truth for requirements lives in that script).
@@ -63,11 +71,13 @@ flowchart LR
     Ingest --> DB[("SQLite<br/>quotes, fundamentals,<br/>news, fii_dii")]
     DB --> Enrich["Stage 2 - Enricher<br/>(pure TS math)"]
     Enrich --> SignalsDB[("signals table")]
-    SignalsDB --> Analyse["Stage 3 - Analyser<br/>screens.json + Thesis LLM"]
+    SignalsDB --> Regime["Regime<br/>signals + classify<br/>+ regime_daily"]
+    Regime --> Analyse["Stage 3 - Analyser<br/>gated screens + Thesis LLM"]
     Analyse --> ScreensDB[("screens table")]
-    ScreensDB --> Brief["Stage 4 - Briefing Composer<br/>(LLM HTML)"]
+    ScreensDB --> Brief["Stage 4 - Briefing Composer<br/>(LLM HTML + regime card)"]
     Brief --> Deliver{{"file / email / slack / telegram"}}
-    LlmAbstraction["LlmProvider<br/>(Cursor / Anthropic / Vertex / OpenAI)"] -.-> Analyse
+    LlmAbstraction["LlmProvider<br/>(Cursor / Anthropic / Vertex / OpenAI)"] -.-> Regime
+    LlmAbstraction -.-> Analyse
     LlmAbstraction -.-> Brief
 ```
 
@@ -115,16 +125,19 @@ pnpm kite-login
 # -> opens the Kite login URL, prompts for the request_token,
 #    persists access_token to .env. Re-run daily after ~6 AM IST.
 
-# 6. The single-command morning run
+# 6. (Once) seed strategy gates after migrate — maps screens/agents to regimes
+pnpm regime:seed-gates
+
+# 7. The single-command morning run
 pnpm daily
-# -> ingest → enrich → screen → portfolio sync → sentiment →
-#    AI thesis → portfolio analysis → HTML briefing
-# -> writes briefings/briefing-YYYY-MM-DD.html with a "My Portfolio"
+# -> portfolio sync + stop-loss (optional) → ingest → enrich → regime agent →
+#    gated screen → sentiment → gated AI thesis → portfolio analysis → HTML briefing
+# -> writes briefings/briefing-YYYY-MM-DD.html with regime card + "My Portfolio"
 #    section for every holding (HOLD / ADD / TRIM / EXIT + reason).
 
 # Variations
 pnpm daily --skip-portfolio   # skip the Kite branch entirely
-pnpm daily --skip-ai          # no LLM calls (fast deterministic mode)
+pnpm daily --skip-ai          # no LLM calls (regime uses templated narrative; fast mode)
 ```
 
 ### CLI reference
@@ -146,9 +159,8 @@ pnpm cli thesis            # generate AI theses for top-signal stocks
 pnpm cli brief             # stage 4 - compose + deliver briefing
 
 # One-shot pipelines
-pnpm cli run-all           # full pipeline (ingest → thesis → brief)
-pnpm cli daily             # full pipeline + Kite portfolio sync + LLM
-                           # HOLD/ADD/TRIM/EXIT analysis per holding
+pnpm cli run-all           # ingest → enrich → regime → gated screen → sentiment → thesis → brief
+pnpm cli daily             # full workflow + Kite portfolio sync + per-holding LLM analysis
 
 # Phase 5 — Zerodha Kite + portfolio
 pnpm cli kite-login        # interactive: refresh access_token (daily)
@@ -163,6 +175,15 @@ pnpm cli schedule          # start built-in croner schedule:
 pnpm cli schedule --run-now
 
 pnpm cli doctor            # config diagnostics (no secrets)
+
+# Phase 6 — Market regime filter
+pnpm regime-signals        # print signal inputs + score buckets (validation)
+pnpm regime                # classify + LLM narrative (or templated fallback) → regime_daily
+pnpm regime --no-narrative # skip LLM; templated fallback narrative only (still upserts regime_daily)
+pnpm regime:classify       # deterministic classification → regime_daily (narrative null)
+pnpm regime:gate-summary   # allowed strategies + multipliers for regime on -d date
+pnpm regime:seed-gates      # upsert config/strategy-gates.json → regime_strategy_gate
+pnpm regime:backfill        # historical regime_daily backfill script
 ```
 
 All commands accept `-d 2026-04-30` to target a specific trading date
@@ -201,6 +222,7 @@ Three places, in order of precedence:
 2. **`config/*.json`** — committed configuration:
    - [`watchlist.json`](config/watchlist.json) — symbols to highlight
    - [`screens.json`](config/screens.json) — screen criteria DSL
+   - [`strategy-gates.json`](config/strategy-gates.json) — which screens / meta-strategies (e.g. `ai_picks_generation`) are allowed per regime and optional **size multipliers** (seed into `regime_strategy_gate` via `pnpm regime:seed-gates`)
    - [`portfolio.json`](config/portfolio.json) — manual holdings, used
      when `PORTFOLIO_SOURCE=manual`. Live Kite sync is the default in
      Phase 5 (`PORTFOLIO_SOURCE=kite`); the analyser doesn't care which
@@ -341,16 +363,47 @@ kind `stop_loss_breach` and appear in the briefing's alerts section.
 
 ---
 
+## Market regime filter (Phase 6)
+
+A **meta-layer** on top of the existing pipeline: each open session gets a single **market regime** label with supporting scores and narrative, plus a **strategy gate matrix** so screening and thesis generation adapt when conditions are hostile.
+
+**What gets classified**
+
+- Deterministic **signals** (`src/enrichers/regime-signals.ts`): trend vs SMA200, VIX level and change, FII flows (including rolling sums on the trading calendar), breadth / A–D style inputs, gap risk, etc., rolled into bucket scores and a total in **[-16, +16]**.
+- **Classifier** (`src/analysers/regime-classifier.ts`): CRISIS-style overrides (e.g. extreme VIX / gap), score bands → raw label, **3-day persistence** before flipping the persisted label, optional recovery paths — producing `BULL_TRENDING` | `BEAR_TRENDING` | `CHOPPY` | `CRISIS` plus `prev_regime`, `regime_age`, and breakdown fields.
+
+**Persistence**
+
+- Migration [`src/db/migrations/0006_regime_tables.sql`](src/db/migrations/0006_regime_tables.sql): `regime_daily` (one row per session with scores, narrative, prev/age) and `regime_strategy_gate` (strategy × regime × allowed × `size_multiplier`).
+- Queries and seeding: [`src/db/regime-queries.ts`](src/db/regime-queries.ts), [`scripts/seed-regime-gates.mts`](scripts/seed-regime-gates.mts), driven by [`config/strategy-gates.json`](config/strategy-gates.json).
+
+**LLM narrative**
+
+- [`src/agents/regime-agent.ts`](src/agents/regime-agent.ts) asks the configured `LlmProvider` for **one plain-text sentence** (deterministic regime in the payload is authoritative). If the LLM fails, a **templated fallback** narrative is stored so the row is always usable.
+
+**Downstream behaviour**
+
+- **Screen engine** ([`src/analysers/engine.ts`](src/analysers/engine.ts)): skips screens disallowed for the current regime; applies size multiplier into persisted match metadata (`__regime_meta`).
+- **Stock screener** passes through the active regime; **thesis generator** skips `ai_picks_generation` when the gate says so ([`src/agents/thesis-generator.ts`](src/agents/thesis-generator.ts)).
+- **Risk tooling** (`portfolio_exit_signals`, `trailing_stop_update`) stays on across regimes per config.
+- **Briefing**: [`src/briefing/regime-card.ts`](src/briefing/regime-card.ts) renders a card + optional change banner; [`src/briefing/composer.ts`](src/briefing/composer.ts) loads `regime_daily` for the briefing session date (including weekend/holiday handling via last open session).
+
+**Orchestration**
+
+- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) and `pnpm cli run-all` run **regime agent → gated screen → gated thesis** after ingest/enrich.
+
+---
+
 ## Repo layout
 
 ```
 market-pulse-ai/
   src/
-    agents/         # one module per pipeline stage
+    agents/         # one module per pipeline stage (incl. regime-agent, stock-screener, thesis-generator)
     ingestors/      # data-source connectors (NSE, Yahoo, Screener, Kite, ...)
-    enrichers/      # signal computation: technical (Phase 1), sentiment (Phase 3)
-    analysers/      # screen engine (Phase 2)
-    briefing/       # HTML composer + delivery; AI narrative (Phase 3)
+    enrichers/      # signal computation: technical (Phase 1), sentiment (Phase 3), regime signals (Phase 6)
+    analysers/      # screen engine (Phase 2), regime classifier (Phase 6)
+    briefing/       # HTML composer + delivery; AI narrative (Phase 3); regime card (Phase 6)
     db/             # schema.sql + migrations + prepared queries
     llm/            # LlmProvider interface + adapters
     config/         # env loader (zod-validated)
@@ -361,7 +414,7 @@ market-pulse-ai/
     cli.ts          # CLI entry
     constants.ts    # SEBI disclaimer, rate limits, etc.
     logger.ts       # pino logger
-  config/           # committed JSON configs (watchlist, screens, portfolio)
+  config/           # committed JSON configs (watchlist, screens, portfolio, strategy-gates)
   scripts/          # build helpers + ops scripts
   tests/            # vitest unit/integration tests
   data/             # SQLite DB + caches (git-ignored)
@@ -398,7 +451,7 @@ pnpm build              # tsc -> dist/  (also copies SQL assets)
 ## Report quality roadmap
 
 Improvements driven by briefing review (separate from the historical delivery
-phases 0–5 in the table below).
+phases 0–6 in the table below).
 
 | Step | Theme                         | Status     | Highlights                                                                 |
 | ---- | ----------------------------- | ---------- | -------------------------------------------------------------------------- |
@@ -422,6 +475,7 @@ Holiday dates live in [`src/market/nse-calendar.ts`](src/market/nse-calendar.ts)
 | 3     | AI layer             | ✅ shipped    | Anthropic/OpenAI/Cursor providers; sentiment enricher; thesis generator; LLM briefing narrative |
 | 4     | Delivery             | ✅ shipped    | Croner schedule (07:30 / 15:30 weekdays, Sat 08:00 IST), Gmail SMTP delivery via nodemailer, stop-loss breach detector |
 | 5     | Real-time + Kite     | ✅ shipped    | Kite Connect HTTP client + interactive login; portfolio sync + per-holding LLM HOLD/ADD/TRIM/EXIT analyser; intraday LTP scanner; 4 new screens; single-command `pnpm daily` |
+| 6     | Market regime filter | ✅ shipped    | `regime_daily` + `regime_strategy_gate`; signal enricher + deterministic classifier; regime agent + briefing card; gated screens + gated AI thesis; seed/config via `strategy-gates.json` |
 
 ---
 

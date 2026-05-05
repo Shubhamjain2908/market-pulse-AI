@@ -30,6 +30,7 @@
     "regime": "tsx src/cli.ts regime",
     "regime:classify": "tsx src/cli.ts regime:classify",
     "regime:gate-summary": "tsx src/cli.ts regime:gate-summary",
+    "regime:seed-gates": "tsx scripts/seed-regime-gates.mts",
     "regime:backfill": "tsx scripts/backfill-regime.mts",
     "ingest": "tsx src/cli.ts ingest",
     "enrich": "tsx src/cli.ts enrich",

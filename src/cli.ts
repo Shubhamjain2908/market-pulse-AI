@@ -12,7 +12,7 @@
  *   mp sentiment         Score news headlines via LLM
  *   mp thesis            Generate AI theses for top-signal stocks
  *   mp evaluate           Mark outcomes for open paper trades vs EOD quotes
- *   mp run-all           Run full pipeline (ingest -> brief)
+ *   mp run-all           Full pipeline (ingest → enrich → regime → screen → thesis → brief)
  *   mp daily             One-shot: full pipeline + portfolio analysis (recommended)
  *   mp sync-sectors      Cache Yahoo sector/industry in `symbols` (for portfolio sector rollup)
  *   mp kite-login        Refresh Zerodha Kite Connect access_token (run daily)
@@ -324,7 +324,7 @@ program
 
 program
   .command('run-all')
-  .description('run full pipeline: ingest -> enrich -> screen -> sentiment -> thesis -> brief')
+  .description('run full pipeline: ingest -> enrich -> regime -> gated screen -> sentiment -> thesis -> brief')
   .option('--skip-ai', 'skip all LLM stages (sentiment, thesis, narrative)')
   .action(async (opts: { skipAi?: boolean }) => {
     ensureDb();

@@ -109,7 +109,7 @@ export function buildFallbackNarrative(prepared: PreparedRegimeDaily): string {
 }
 
 /**
- * Signals → deterministic row → optional LLM JSON narrative → upsert `regime_daily`.
+ * Signals → deterministic row → optional LLM plain-text narrative → upsert `regime_daily`.
  * Persisted scores/regime are always from `prepareRegimeDaily`; the LLM supplies narrative only.
  */
 export async function runRegimeAgent(
