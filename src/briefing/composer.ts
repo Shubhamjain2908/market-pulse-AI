@@ -19,7 +19,7 @@ import {
   getDb,
   getLatestHoldings,
   getPortfolioAnalysisForDate,
-  getTodayRegime,
+  getRegimeForCalendarDate,
   listAllowedGatesForRegime,
 } from '../db/index.js';
 import { getPaperTradeStats, getSymbolSectors, getThesesForDate } from '../db/queries.js';
@@ -156,14 +156,14 @@ export async function composeBriefing(
   );
 
   let regimeBlock: string | undefined;
-  const regimeRow = getTodayRegime(date, db);
+  const regimeRow = getRegimeForCalendarDate(date, db);
   if (regimeRow) {
     const gateSummary = {
       active: listAllowedGatesForRegime(regimeRow.regime, db),
       totalRows: countGatesForRegime(regimeRow.regime, db),
     };
     const prevDate = previousOpenTradingDay(regimeRow.date);
-    const prevRow = prevDate ? getTodayRegime(prevDate, db) : null;
+    const prevRow = prevDate ? getRegimeForCalendarDate(prevDate, db) : null;
     const banner = renderRegimeChangeBanner(regimeRow, {
       prevScoreTotal: prevRow?.scoreTotal ?? null,
     });

@@ -17,7 +17,10 @@ import { insertRegimeRow } from '../db/regime-queries.js';
 import { getLlmProvider } from '../llm/index.js';
 import { parseAndValidate } from '../llm/json.js';
 import type { LlmProvider } from '../llm/types.js';
+import { child } from '../logger.js';
 import { type Regime, type RegimeClassification, RegimeSchema } from '../types/regime.js';
+
+const log = child({ component: 'regime-agent' });
 
 /**
  * Verbatim from product spec §6.2 (Market Regime Filter).
@@ -100,7 +103,8 @@ export function buildRegimeAgentUserPayload(
 export function buildFallbackNarrative(prepared: PreparedRegimeDaily): string {
   const r = prepared.insertRow;
   const vix = r.vixValue.toFixed(2);
-  const fii = r.fii20dNet.toFixed(1);
+  const fiiRaw = prepared.signals.fii20dRollingCr;
+  const fii = fiiRaw != null && Number.isFinite(fiiRaw) ? fiiRaw.toFixed(1) : 'n/a';
   return `Regime: ${r.regime}. Score: ${r.scoreTotal.toFixed(1)}. VIX: ${vix}. FII 20d: ₹${fii}Cr.`;
 }
 
@@ -137,8 +141,13 @@ export async function runRegimeAgent(
         narrative = n;
         usedFallbackNarrative = false;
       }
-    } catch {
-      // LLM or parse failure — keep templated narrative; row write still proceeds.
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      log.error(
+        { err: e.message, stack: e.stack },
+        'regime narrative LLM failed — using templated fallback',
+      );
+      console.error('[regime-agent] narrative LLM or JSON parse failed:', e);
     }
   }
 

@@ -3,6 +3,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+import { lastOpenOnOrBefore } from '../market/trading-days.js';
 import type { Regime, RegimeRow, StrategyGateRow } from '../types/regime.js';
 import { RegimeSchema } from '../types/regime.js';
 import { getDb } from './connection.js';
@@ -41,6 +42,18 @@ export function getTodayRegime(date: string, db: DatabaseType = getDb()): Regime
     | Record<string, unknown>
     | undefined;
   return row ? parseRegimeRow(row) : null;
+}
+
+/**
+ * Same session key as `prepareRegimeDaily` / `runRegimeAgent`: last **open** NSE session on or before
+ * the calendar day (so briefing `-d` on a weekend/holiday still loads the latest `regime_daily` row).
+ */
+export function getRegimeForCalendarDate(
+  calendarDate: string,
+  db: DatabaseType = getDb(),
+): RegimeRow | null {
+  const sessionDate = lastOpenOnOrBefore(calendarDate) ?? calendarDate;
+  return getTodayRegime(sessionDate, db);
 }
 
 export function getRegimeHistory(

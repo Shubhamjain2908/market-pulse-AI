@@ -49,7 +49,7 @@ import {
   closeDb,
   countGatesForRegime,
   getDb,
-  getTodayRegime,
+  getRegimeForCalendarDate,
   listAllowedGatesForRegime,
   migrate,
 } from './db/index.js';
@@ -102,7 +102,7 @@ program
   .action(async () => {
     ensureDb();
     const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
-    const row = getTodayRegime(date, getDb());
+    const row = getRegimeForCalendarDate(date, getDb());
     if (!row) {
       console.log(JSON.stringify({ date, error: 'no_regime_daily_row' }, null, 2));
       closeDb();

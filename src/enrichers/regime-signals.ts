@@ -12,6 +12,7 @@ import {
   NIFTY_BENCHMARK_SYMBOL,
 } from '../market/benchmarks.js';
 import { defaultIngestSymbolUniverse } from '../market/ingest-symbols.js';
+import { listTradingDaysBackward } from '../market/trading-days.js';
 import type { Fii5dTrend, RegimeSignals } from '../types/regime.js';
 
 const EXCLUDED_FROM_BREADTH = new Set<string>([
@@ -178,27 +179,42 @@ export function computeRegimeSignals(db: DatabaseType, date: string): RegimeSign
     warnings.push(`INDIA_VIX: no quote row for ${date}`);
   }
 
-  const fiiRows = db
-    .prepare(
-      `
-      SELECT date, fii_net AS fiiNet FROM fii_dii
-      WHERE date <= ? AND segment = 'cash'
-      ORDER BY date DESC LIMIT 25
-    `,
-    )
-    .all(date) as Array<{ date: string; fiiNet: number }>;
+  const fiiNetStmt = db.prepare(
+    `SELECT fii_net AS fiiNet FROM fii_dii WHERE segment = 'cash' AND date = ?`,
+  );
 
+  const tradingDays20 = listTradingDaysBackward(date, 20);
   let fii20dRollingCr: number | null = null;
-  const last20 = fiiRows.slice(0, 20);
-  if (last20.length === 20) {
-    fii20dRollingCr = last20.reduce((s, r) => s + r.fiiNet, 0);
+  if (tradingDays20.length > 0) {
+    let sum20 = 0;
+    let found20 = 0;
+    for (const d of tradingDays20) {
+      const r = fiiNetStmt.get(d) as { fiiNet: number } | undefined;
+      if (r != null && Number.isFinite(r.fiiNet)) {
+        sum20 += r.fiiNet;
+        found20++;
+      }
+    }
+    if (found20 > 0) {
+      fii20dRollingCr = sum20;
+      if (found20 < 20) {
+        warnings.push(
+          `fii_dii cash: summed ${found20} of last 20 trading sessions up to ${date} — partial 20d rolling total`,
+        );
+      }
+    } else {
+      warnings.push(`fii_dii cash: no FII rows for the last 20 trading sessions ending ${date}`);
+    }
   } else {
-    warnings.push(
-      `fii_dii cash: need 20 sessions up to ${date}; have ${last20.length} — FII 20d scored as neutral`,
-    );
+    warnings.push('fii_dii cash: could not resolve trading calendar for 20d rolling sum');
   }
 
-  const last5nets = fiiRows.slice(0, 5).map((r) => r.fiiNet);
+  const tradingDays5 = listTradingDaysBackward(date, 5);
+  const last5nets: number[] = [];
+  for (const d of tradingDays5) {
+    const r = fiiNetStmt.get(d) as { fiiNet: number } | undefined;
+    if (r != null && Number.isFinite(r.fiiNet)) last5nets.push(r.fiiNet);
+  }
   const fii5dTrend = classifyFii5dTrend(last5nets);
 
   const universe = defaultIngestSymbolUniverse(db).filter((s) => !EXCLUDED_FROM_BREADTH.has(s));
