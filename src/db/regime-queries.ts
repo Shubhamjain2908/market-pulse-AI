@@ -158,6 +158,42 @@ export function getSizeMultiplier(
   return row.size_multiplier;
 }
 
+/** Allowed strategies for a regime (from `regime_strategy_gate`). */
+export interface RegimeGateSummaryRow {
+  strategyId: string;
+  sizeMultiplier: number;
+}
+
+/**
+ * Strategies allowed (`allowed = 1`) for this regime, ordered by id.
+ */
+export function listAllowedGatesForRegime(
+  regime: string,
+  db: DatabaseType = getDb(),
+): RegimeGateSummaryRow[] {
+  const rows = db
+    .prepare(
+      `
+      SELECT strategy_id, size_multiplier FROM regime_strategy_gate
+      WHERE regime = ? AND allowed = 1
+      ORDER BY strategy_id
+    `,
+    )
+    .all(regime) as { strategy_id: string; size_multiplier: number }[];
+  return rows.map((r) => ({
+    strategyId: r.strategy_id,
+    sizeMultiplier: r.size_multiplier,
+  }));
+}
+
+/** Total rows in the gate table for this regime (allowed + disallowed). */
+export function countGatesForRegime(regime: string, db: DatabaseType = getDb()): number {
+  const row = db
+    .prepare('SELECT COUNT(*) as c FROM regime_strategy_gate WHERE regime = ?')
+    .get(regime) as { c: number } | undefined;
+  return row?.c ?? 0;
+}
+
 export function seedStrategyGates(rows: StrategyGateRow[], db: DatabaseType = getDb()): number {
   const stmt = db.prepare(`
     INSERT INTO regime_strategy_gate (strategy_id, regime, allowed, size_multiplier, notes)
