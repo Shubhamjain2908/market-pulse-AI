@@ -88,3 +88,19 @@ export const RegimeSignalsSchema = z.object({
   warnings: z.array(z.string()),
 });
 export type RegimeSignals = z.infer<typeof RegimeSignalsSchema>;
+
+/** Deterministic classification outcome (before optional LLM narrative in Phase 3). */
+export interface RegimeClassification {
+  regime: Regime;
+  /** Raw label from score + crisis override (same as `computeRawRegime`). */
+  rawRegime: Regime;
+  crisisOverride: boolean;
+  regimeAge: number;
+  prevRegime: Regime | null;
+  scoreBreakdown: {
+    trend: number;
+    vix: number;
+    fii: number;
+    breadth: number;
+  };
+}
