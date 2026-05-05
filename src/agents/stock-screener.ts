@@ -9,6 +9,7 @@
 import { runAlertScan, runScreenEngine } from '../analysers/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
+import type { Regime } from '../types/regime.js';
 
 const log = child({ component: 'stock-screener' });
 
@@ -16,6 +17,8 @@ export interface ScreenRunOptions {
   date?: string;
   /** Restrict to a single screen by name. */
   screen?: string;
+  /** Current market regime — gates screens via `regime_strategy_gate`. */
+  regime?: Regime;
 }
 
 export interface ScreenRunResult {
@@ -29,7 +32,7 @@ export interface ScreenRunResult {
 export async function runStockScreener(opts: ScreenRunOptions = {}): Promise<ScreenRunResult> {
   const date = opts.date ?? isoDateIst();
 
-  const engineResult = runScreenEngine({ date, onlyScreen: opts.screen });
+  const engineResult = runScreenEngine({ date, onlyScreen: opts.screen, regime: opts.regime });
   const alertResult = runAlertScan({ date });
 
   log.info(
