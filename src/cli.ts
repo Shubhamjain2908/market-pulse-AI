@@ -45,7 +45,7 @@ import { APP_NAME, APP_VERSION } from './constants.js';
 import { closeDb, getDb, migrate } from './db/index.js';
 import { computeRegimeSignals } from './enrichers/regime-signals.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
-import { isoDateIst } from './ingestors/base/dates.js';
+import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
 import { KiteApiError, KiteClient } from './ingestors/kite/client.js';
 import { logger } from './logger.js';
@@ -78,7 +78,7 @@ program
   .description('print regime signal inputs + weighted scores for validation (Phase 1)')
   .action(async () => {
     ensureDb();
-    const date = program.opts<{ date?: string }>().date ?? isoDateIst();
+    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
     const signals = computeRegimeSignals(getDb(), date);
     console.log(JSON.stringify(signals, null, 2));
     closeDb();
@@ -95,9 +95,12 @@ program
   )
   .action(async () => {
     ensureDb();
-    const date = program.opts<{ date?: string }>().date;
+    const date = optionalCliIsoDate(program.opts().date);
     const result = runRegimeClassifier({ date });
-    logger.info({ regime: result.regime, rawRegime: result.rawRegime, crisis: result.crisisOverride }, 'regime classified');
+    logger.info(
+      { regime: result.regime, rawRegime: result.rawRegime, crisis: result.crisisOverride },
+      'regime classified',
+    );
     console.log(JSON.stringify(result, null, 2));
     closeDb();
   });
@@ -112,7 +115,7 @@ program
       ?.split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    const date = program.opts<{ date?: string }>().date;
+    const date = optionalCliIsoDate(program.opts().date);
     const result = await runDailyIngestor({ date, symbols });
     logger.info(result, 'ingest complete');
     closeDb();
@@ -151,7 +154,7 @@ program
       ?.split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    const date = program.opts<{ date?: string }>().date;
+    const date = optionalCliIsoDate(program.opts().date);
     const result = await runSignalEnricher({ date, symbols });
     logger.info(result, 'enrich complete');
     closeDb();
@@ -163,7 +166,7 @@ program
   .option('-n, --screen <name>', 'restrict to a single screen by name')
   .action(async (opts: { screen?: string }) => {
     ensureDb();
-    const date = program.opts<{ date?: string }>().date;
+    const date = optionalCliIsoDate(program.opts().date);
     const result = await runStockScreener({ date, screen: opts.screen });
     logger.info(result, 'screen complete');
     closeDb();
@@ -220,7 +223,7 @@ program
   .option('-n, --max <number>', 'max theses to generate', '5')
   .action(async (opts: { max?: string }) => {
     ensureDb();
-    const date = program.opts<{ date?: string }>().date;
+    const date = optionalCliIsoDate(program.opts().date);
     const result = await generateTheses({ date, maxTheses: Number(opts.max) || 5 });
     logger.info(
       { generated: result.generated, failed: result.failed },
@@ -240,7 +243,7 @@ program
   .action(
     async (opts: { delivery?: 'file' | 'email' | 'slack' | 'telegram'; skipAi?: boolean }) => {
       ensureDb();
-      const date = program.opts<{ date?: string }>().date;
+      const date = optionalCliIsoDate(program.opts().date);
       const result = await runBriefingComposer({
         date,
         delivery: opts.delivery,
@@ -256,7 +259,7 @@ program
   .description('evaluate open paper trades against EOD quotes (SL / target / time-stop)')
   .action(async () => {
     ensureDb();
-    const date = program.opts<{ date?: string }>().date ?? isoDateIst();
+    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
     const result = runEvaluatePaperTrades(date, getDb());
     logger.info(result, 'paper trade evaluation complete');
     closeDb();
@@ -268,7 +271,7 @@ program
   .option('--skip-ai', 'skip all LLM stages (sentiment, thesis, narrative)')
   .action(async (opts: { skipAi?: boolean }) => {
     ensureDb();
-    const date = program.opts<{ date?: string }>().date ?? isoDateIst();
+    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
     const closure = getMarketClosure(date);
     if (closure) {
       const result = await runBriefingComposer({
@@ -336,7 +339,7 @@ program
   .option('--skip-portfolio', 'skip portfolio sync + analysis (rest of pipeline runs)')
   .action(async (opts: { skipAi?: boolean; skipPortfolio?: boolean }) => {
     ensureDb();
-    const date = program.opts<{ date?: string }>().date;
+    const date = optionalCliIsoDate(program.opts().date);
     const result = await runDailyWorkflow({
       date,
       skipAi: opts.skipAi,
@@ -417,7 +420,7 @@ program
   .description('sync holdings from Kite (or config/portfolio.json) into the DB')
   .action(async () => {
     ensureDb();
-    const date = program.opts<{ date?: string }>().date;
+    const date = optionalCliIsoDate(program.opts().date);
     const result = await runPortfolioSync({ date });
     logger.info(result, 'portfolio sync done');
     closeDb();
@@ -434,7 +437,7 @@ program
   )
   .action(async (opts: { symbols?: string; minPosition?: string; concurrency?: string }) => {
     ensureDb();
-    const date = program.opts<{ date?: string }>().date;
+    const date = optionalCliIsoDate(program.opts().date);
     const result = await analysePortfolio({
       date,
       symbols: opts.symbols
