@@ -9,7 +9,7 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { config } from '../config/env.js';
 import { loadWatchlist } from '../config/loaders.js';
-import { getDb, getLatestHoldings } from '../db/index.js';
+import { getDb, getLatestHoldings, isStrategyAllowed } from '../db/index.js';
 import {
   type StoredThesis,
   type UpsertThesisRow,
@@ -21,6 +21,7 @@ import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { type Thesis, ThesisSchema } from '../types/domain.js';
+import type { Regime } from '../types/regime.js';
 
 const log = child({ component: 'thesis-generator' });
 
@@ -63,6 +64,8 @@ export interface ThesisGeneratorOptions {
   date?: string;
   watchlist?: string[];
   maxTheses?: number;
+  /** When set, skips thesis generation if `ai_picks_generation` is disallowed for this regime. */
+  regime?: Regime;
 }
 
 export interface ThesisGeneratorResult {
@@ -75,6 +78,7 @@ export interface ThesisGeneratorResult {
   eligibleUniverseSize: number;
   /** Raw watchlist symbol count for messaging when AI Picks is empty. */
   watchlistSize: number;
+  /** AI-generated thesis rows from this run (may be empty when gated or no candidates). */
   theses: StoredThesis[];
 }
 
@@ -90,6 +94,19 @@ export async function generateTheses(
   /** AI Picks: watchlist names not already in the portfolio. */
   const universe = watchlist.filter((s) => !holdingSet.has(s));
   const maxTheses = opts.maxTheses ?? config.THESIS_MAX_PER_RUN;
+
+  if (opts.regime != null && !isStrategyAllowed('ai_picks_generation', opts.regime, db)) {
+    log.info({ regime: opts.regime }, '[GATED] ai_picks_generation — skipping thesis generation');
+    return {
+      date,
+      generated: 0,
+      failed: 0,
+      candidateCount: 0,
+      eligibleUniverseSize: universe.length,
+      watchlistSize: watchlist.length,
+      theses: [],
+    };
+  }
 
   const candidates = rankCandidates(date, universe, db);
   const toGenerate = candidates.slice(0, maxTheses);
