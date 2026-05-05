@@ -22,6 +22,7 @@
  *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
  *   mp schedule          Start croner jobs (07:30 / 15:30 weekdays, Sat 08:00)
  *   mp doctor            Print runtime/config diagnostics
+ *   mp regime-signals    Print regime inputs + scores for a date (validation)
  *
  * Run `mp --help` or `mp <cmd> --help` for full options.
  */
@@ -41,6 +42,7 @@ import { deliverToEmail, deliverToFile } from './briefing/index.js';
 import { config } from './config/env.js';
 import { APP_NAME, APP_VERSION } from './constants.js';
 import { closeDb, getDb, migrate } from './db/index.js';
+import { computeRegimeSignals } from './enrichers/regime-signals.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
@@ -67,6 +69,17 @@ program
   .action(async () => {
     const result = migrate();
     logger.info({ ...result }, 'migrations done');
+    closeDb();
+  });
+
+program
+  .command('regime-signals')
+  .description('print regime signal inputs + weighted scores for validation (Phase 1)')
+  .action(async () => {
+    ensureDb();
+    const date = program.opts<{ date?: string }>().date ?? isoDateIst();
+    const signals = computeRegimeSignals(getDb(), date);
+    console.log(JSON.stringify(signals, null, 2));
     closeDb();
   });
 

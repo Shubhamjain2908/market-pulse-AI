@@ -26,6 +26,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "migrate": "tsx src/cli.ts migrate",
+    "regime:signals": "tsx src/cli.ts regime-signals",
+    "regime:seed-gates": "tsx scripts/seed-regime-gates.mts",
     "ingest": "tsx src/cli.ts ingest",
     "enrich": "tsx src/cli.ts enrich",
     "screen": "tsx src/cli.ts screen",
