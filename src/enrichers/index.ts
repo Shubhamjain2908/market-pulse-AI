@@ -14,3 +14,4 @@ export {
   type EnricherStats,
   type TechnicalEnricherOptions,
 } from './technical/enricher.js';
+export { computeRegimeSignals } from './regime-signals.js';
