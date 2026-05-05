@@ -41,6 +41,9 @@ export function computeRawRegime(signals: RegimeSignals): Regime {
 
 /**
  * Count consecutive **open** sessions ending at `endSessionDate` where crisis override was false each day.
+ * Persistence only needs to distinguish &lt; 5 vs ≥ 5 (spec §3.3), so we **return as soon as `n >= 5`**.
+ * If VIX/gap are always null, `computeCrisisOverride` is never true — without an early return the walk
+ * would continue until calendar arithmetic yields invalid dates (e.g. `"999-12-31"`).
  */
 export function countTrailingNonCrisisOverrideDays(
   db: DatabaseType,
@@ -48,10 +51,15 @@ export function countTrailingNonCrisisOverrideDays(
 ): number {
   let n = 0;
   let d: string | null = lastOpenOnOrBefore(endSessionDate);
-  while (d) {
+  let guard = 0;
+  const MAX_ITER = 260;
+
+  while (d != null && guard < MAX_ITER) {
+    guard++;
     const sig = computeRegimeSignals(db, d);
     if (computeCrisisOverride(sig)) break;
     n++;
+    if (n >= 5) return n;
     d = previousOpenTradingDay(d);
   }
   return n;
