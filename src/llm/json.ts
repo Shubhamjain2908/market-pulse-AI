@@ -13,19 +13,26 @@ import { ZodError, type ZodType } from 'zod';
 export function extractJson(text: string): string {
   const trimmed = text.trim();
 
-  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenceMatch?.[1]) return fenceMatch[1].trim();
+  const closedFence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (closedFence?.[1]) return closedFence[1].trim();
 
-  const firstBrace = trimmed.search(/[[{]/);
-  if (firstBrace === -1) return trimmed;
-
-  const opener = trimmed[firstBrace];
-  const closer = opener === '{' ? '}' : ']';
-  const lastClose = trimmed.lastIndexOf(closer);
-  if (lastClose > firstBrace) {
-    return trimmed.slice(firstBrace, lastClose + 1);
+  /** Models often emit ```json + newline then JSON but omit the closing ``` (truncated / ignores prompt). */
+  let s = trimmed;
+  if (s.startsWith('```')) {
+    s = s.replace(/^```(?:json)?\s*\r?\n?/i, '');
+    s = s.replace(/\s*```\s*$/i, '').trim();
   }
-  return trimmed;
+
+  const firstBrace = s.search(/[[{]/);
+  if (firstBrace === -1) return s;
+
+  const opener = s[firstBrace];
+  const closer = opener === '{' ? '}' : ']';
+  const lastClose = s.lastIndexOf(closer);
+  if (lastClose > firstBrace) {
+    return s.slice(firstBrace, lastClose + 1);
+  }
+  return s.slice(firstBrace);
 }
 
 export class LlmJsonValidationError extends Error {

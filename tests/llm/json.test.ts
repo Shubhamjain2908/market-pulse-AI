@@ -14,6 +14,20 @@ describe('llm/json', () => {
       expect(extractJson(input)).toBe('{"x":42}');
     });
 
+    it('strips opening ```json fence when closing fence is missing (Vertex/Gemini)', () => {
+      const inner =
+        '{"regime":"CHOPPY","narrative":"Test.","crisis_override":false,"confidence":0.85}';
+      const input = `\`\`\`json\n${inner}`;
+      expect(extractJson(input)).toBe(inner);
+    });
+
+    it('does not leave leading backticks when JSON is truncated after opening fence', () => {
+      const input = '```json\n{\n  "reg';
+      const out = extractJson(input);
+      expect(out).toBe('{\n  "reg');
+      expect(out.startsWith('`')).toBe(false);
+    });
+
     it('strips leading prose before first { or [', () => {
       const input = 'Sure, here you go: {"only":true}';
       expect(extractJson(input)).toBe('{"only":true}');

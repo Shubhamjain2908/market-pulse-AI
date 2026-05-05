@@ -6,7 +6,6 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
-import { z } from 'zod';
 import {
   type PreparedRegimeDaily,
   type RunRegimeClassifierOptions,
@@ -15,50 +14,51 @@ import {
 import { getDb } from '../db/connection.js';
 import { insertRegimeRow } from '../db/regime-queries.js';
 import { getLlmProvider } from '../llm/index.js';
-import { parseAndValidate } from '../llm/json.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
-import { type Regime, type RegimeClassification, RegimeSchema } from '../types/regime.js';
+import { type Regime, type RegimeClassification } from '../types/regime.js';
 
 const log = child({ component: 'regime-agent' });
 
 /**
- * Verbatim from product spec §6.2 (Market Regime Filter).
+ * Narrative-only LLM task aligned with spec §6.2. Persisted regime/scores come from
+ * `prepareRegimeDaily`; Gemini JSON mode often truncates mid-string — plain text avoids that.
  */
-export const REGIME_SYSTEM_PROMPT = `You are a market regime classifier for Indian equity markets (NSE/BSE).
+export const REGIME_NARRATIVE_SYSTEM_PROMPT = `You are a market regime analyst for Indian equity markets (NSE/BSE).
 
-You receive pre-computed signal values and must:
+You receive JSON with pre-computed signals and deterministic_regime — that label is authoritative.
 
-1. Output ONE of four regime labels: BULL_TRENDING, BEAR_TRENDING, CHOPPY, CRISIS
-2. Write a single sentence (max 25 words) explaining the classification.
-   Use plain English. Name specific values. E.g.:
-   'FII sold ₹8,200 Cr over 20 days with Nifty below SMA200 and VIX at 22 — bear regime.'
+Write exactly ONE sentence (maximum 25 words) suitable for a morning briefing.
+Use plain English; cite concrete numbers from the payload (e.g. VIX, FII 20d ₹ Cr, Nifty vs SMA200).
 
-Rules:
-- If VIX > 28 OR nifty_gap_pct < -3: regime MUST be CRISIS regardless of other signals.
-- Base classification on total_score using these bands:
-  >= +8  → BULL_TRENDING
-  +2 to +7 → BULL_TRENDING (mild)
-  -2 to +1 → CHOPPY
-  -7 to -3 → BEAR_TRENDING
-  <= -8  → BEAR_TRENDING (strong)
-- Apply persistence: if score changed regime but history shows < 3 days of new regime,
-  revert to previous regime and note it in narrative.
+Output rules:
+- Plain text only — no JSON, no markdown, no code fences, no bullet list.
+- Do not contradict deterministic_regime.
 
-Return ONLY valid JSON matching this schema — no markdown, no fences:
-{
-  "regime": string,
-  "narrative": string,
-  "crisis_override": boolean,
-  "confidence": number
-}`;
+Context (for wording only; do not re-classify):
+- If VIX > 28 OR nifty_gap_pct < -3 the deterministic label would be CRISIS.
+- Score bands: >= +8 bull; +2..+7 mild bull; -2..+1 choppy; -7..-3 bear; <= -8 strong bear.
+- Persistence may keep an older label until 3 days — mention if regime_age suggests that.`;
 
-export const RegimeLlmResponseSchema = z.object({
-  regime: RegimeSchema,
-  narrative: z.string(),
-  crisis_override: z.boolean(),
-  confidence: z.number().min(0).max(1),
-});
+/** @deprecated Use REGIME_NARRATIVE_SYSTEM_PROMPT — narrative is plain text, not JSON. */
+export const REGIME_SYSTEM_PROMPT = REGIME_NARRATIVE_SYSTEM_PROMPT;
+
+/** Trim fences/quotes models sometimes add around a single sentence. */
+export function sanitizeRegimeNarrativeText(raw: string): string {
+  let s = raw.trim();
+  const fenced = s.match(/^```(?:\w*)?\s*\r?\n([\s\S]*?)\r?\n```\s*$/);
+  if (fenced?.[1]) s = fenced[1].trim();
+  else if (s.startsWith('```')) {
+    s = s.replace(/^```(?:\w*)?\s*\r?\n?/i, '').replace(/\s*```\s*$/i, '').trim();
+  }
+  if (
+    s.length >= 2 &&
+    ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  return s;
+}
 
 export interface RunRegimeAgentOptions extends RunRegimeClassifierOptions {
   /** When true, skip the LLM call and use the templated fallback narrative only. */
@@ -129,14 +129,14 @@ export async function runRegimeAgent(
   if (!opts.skipLlm) {
     try {
       const provider = llm ?? getLlmProvider();
+      /** Plain sentence — avoids Gemini JSON MIME truncation (mid-string / MAX_TOKENS invalid JSON). */
       const res = await provider.generateText({
-        system: REGIME_SYSTEM_PROMPT,
+        system: REGIME_NARRATIVE_SYSTEM_PROMPT,
         user: JSON.stringify(buildRegimeAgentUserPayload(prepared)),
         temperature: 0.2,
-        maxOutputTokens: 256,
+        maxOutputTokens: 512,
       });
-      const parsed = parseAndValidate(res.text, RegimeLlmResponseSchema);
-      const n = parsed.narrative?.trim();
+      const n = sanitizeRegimeNarrativeText(res.text);
       if (n) {
         narrative = n;
         usedFallbackNarrative = false;
@@ -147,7 +147,7 @@ export async function runRegimeAgent(
         { err: e.message, stack: e.stack },
         'regime narrative LLM failed — using templated fallback',
       );
-      console.error('[regime-agent] narrative LLM or JSON parse failed:', e);
+      console.error('[regime-agent] narrative LLM failed:', e);
     }
   }
 

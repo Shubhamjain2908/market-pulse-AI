@@ -135,7 +135,7 @@ export class VertexProvider implements LlmProvider {
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       });
 
-      const raw = extractResponseText(result.response);
+      const raw = extractResponseText(result.response, { rejectMaxTokens: true });
       lastRaw = raw;
       const usage = result.response.usageMetadata;
 
@@ -162,7 +162,10 @@ export class VertexProvider implements LlmProvider {
   }
 }
 
-function extractResponseText(response: GenerateContentResponse): string {
+function extractResponseText(
+  response: GenerateContentResponse,
+  opts?: { rejectMaxTokens?: boolean },
+): string {
   const pf = response.promptFeedback;
   if (pf?.blockReason && pf.blockReason !== BlockedReason.BLOCKED_REASON_UNSPECIFIED) {
     throw new Error(`Vertex blocked the prompt: ${pf.blockReason}. ${pf.blockReasonMessage ?? ''}`);
@@ -189,6 +192,11 @@ function extractResponseText(response: GenerateContentResponse): string {
       ) {
         throw new Error(
           `Vertex stopped with finishReason=${reason}${cand.finishMessage ? `: ${cand.finishMessage}` : ''}`,
+        );
+      }
+      if (opts?.rejectMaxTokens && reason === FinishReason.MAX_TOKENS) {
+        throw new Error(
+          'Vertex hit MAX_TOKENS — output truncated. Increase maxOutputTokens or shorten the task.',
         );
       }
       return trimmed;
