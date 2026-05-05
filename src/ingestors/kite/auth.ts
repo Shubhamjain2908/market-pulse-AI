@@ -7,16 +7,17 @@
  *      just the token back into the terminal.
  *   3. We exchange the request_token for an access_token (sha256 of
  *      api_key + request_token + api_secret).
- *   4. The fresh access_token is appended to `.env` (replacing any
- *      previous KITE_ACCESS_TOKEN line) so subsequent commands pick it
- *      up without further setup.
+ *   4. The fresh access_token is written to the repo-root `.env` (see
+ *      `MP_DOTENV_PATH` / `project-paths.ts`), removing every prior assignment
+ *      for that key so duplicates or `export KEY=` lines cannot leave a stale
+ *      token as the effective value.
  */
 
 import { exec } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
+import { PROJECT_DOTENV_PATH } from '../../config/project-paths.js';
 import { child } from '../../logger.js';
 import { KiteClient } from './client.js';
 
@@ -30,7 +31,7 @@ export interface KiteLoginResult {
 }
 
 export async function runKiteLogin(
-  envPath = resolve(process.cwd(), '.env'),
+  envPath = process.env.MP_DOTENV_PATH ?? PROJECT_DOTENV_PATH,
 ): Promise<KiteLoginResult> {
   const client = new KiteClient();
   const url = client.loginUrl();
@@ -58,6 +59,16 @@ export async function runKiteLogin(
   log.info({ requestToken: maskToken(requestToken) }, 'exchanging request_token');
   const session = await client.generateSession(requestToken);
   upsertEnvVar(envPath, 'KITE_ACCESS_TOKEN', session.access_token);
+  assertEnvFileHasKey(envPath, 'KITE_ACCESS_TOKEN', session.access_token);
+  const st = statSync(envPath);
+  log.info(
+    {
+      envPath,
+      bytes: st.size,
+      mtime: st.mtime.toISOString(),
+    },
+    'KITE_ACCESS_TOKEN written and verified on disk (reload .env in the editor if the tab looks stale — gitignored files often do not auto-refresh)',
+  );
 
   return {
     accessToken: session.access_token,
@@ -96,24 +107,88 @@ function maskToken(t: string): string {
 }
 
 /**
- * Idempotent `KEY=value` upsert in a .env-style file. Preserves comments
- * and ordering; replaces an existing matching line in place.
+ * Idempotent `KEY=value` upsert in a `.env`-style file. Removes **all** lines
+ * that assign `key` (optional leading whitespace, optional `export`, optional
+ * spaces around `=`) so duplicate keys cannot keep a stale value as the last
+ * assignment. Appends one fresh `KEY=value` line at the end.
+ *
+ * (A single `content.replace` on only the first `KEY=` line is unsafe: duplicate lines,
+ * `export KEY=`, or `#` inside values break that approach.)
  */
 export function upsertEnvVar(path: string, key: string, value: string): void {
   const line = `${key}=${value}`;
   if (!existsSync(path)) {
-    writeFileSync(path, `${line}\n`);
+    writeFileSync(path, `${line}\n`, 'utf8');
     return;
   }
-  const original = readFileSync(path, 'utf8');
-  const re = new RegExp(`^${escapeRegex(key)}=.*$`, 'm');
-  let next: string;
-  if (re.test(original)) {
-    next = original.replace(re, line);
-  } else {
-    next = original.endsWith('\n') ? `${original}${line}\n` : `${original}\n${line}\n`;
+  let text = readFileSync(path, 'utf8');
+  if (text.charCodeAt(0) === 0xfeff) {
+    text = text.slice(1);
   }
-  writeFileSync(path, next);
+  text = text.replace(/\r\n/g, '\n');
+
+  const kept = text.split('\n').filter((l) => !lineAssignsKey(l, key));
+  const body = kept.join('\n').replace(/\n+$/, '');
+  const next = body.length > 0 ? `${body}\n${line}\n` : `${line}\n`;
+  writeFileSync(path, next, 'utf8');
+}
+
+function lineAssignsKey(line: string, key: string): boolean {
+  return new RegExp(`^\\s*(?:export\\s+)?${escapeRegex(key)}\\s*=`).test(line);
+}
+
+/**
+ * Confirms the token was persisted. If this throws, the write path or
+ * permissions are wrong — not an editor refresh issue.
+ */
+function assertEnvFileHasKey(path: string, key: string, expectedValue: string): void {
+  const raw = readFileSync(path, 'utf8');
+  const values = parseAllAssignmentsForKey(raw, key);
+  if (values.length === 0) {
+    throw new Error(`After write, no ${key}= line found in ${path} (disk read-back failed).`);
+  }
+  if (values.length > 1) {
+    throw new Error(
+      `After write, ${values.length} ${key}= lines found in ${path}; remove duplicates manually.`,
+    );
+  }
+  if (values[0] !== expectedValue) {
+    throw new Error(
+      `After write, ${key} on disk does not match session token (got len=${values[0]?.length ?? 0}, expected len=${expectedValue.length}). File: ${path}`,
+    );
+  }
+}
+
+function parseAllAssignmentsForKey(fileText: string, key: string): string[] {
+  let text = fileText;
+  if (text.charCodeAt(0) === 0xfeff) {
+    text = text.slice(1);
+  }
+  text = text.replace(/\r\n/g, '\n');
+  const lineRe = new RegExp(`^\\s*(?:export\\s+)?${escapeRegex(key)}\\s*=\\s*(.*)$`);
+  const out: string[] = [];
+  for (const line of text.split('\n')) {
+    const m = line.match(lineRe);
+    if (!m) continue;
+    out.push(normalizeEnvValue(m[1] ?? ''));
+  }
+  return out;
+}
+
+/** Trim, strip optional surrounding quotes, strip trailing ` # comment`. */
+function normalizeEnvValue(raw: string): string {
+  let v = raw.trim();
+  const hash = v.indexOf('#');
+  if (hash !== -1) {
+    v = v.slice(0, hash).trim();
+  }
+  if (
+    v.length >= 2 &&
+    ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))
+  ) {
+    return v.slice(1, -1);
+  }
+  return v;
 }
 
 function escapeRegex(s: string): string {

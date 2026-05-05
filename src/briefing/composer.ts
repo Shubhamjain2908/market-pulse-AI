@@ -268,6 +268,30 @@ export function validateMoodNarrativeMini(text: string): void {
   if (sentences.length !== 1) throw new Error('mini mood narrative must be one sentence');
 }
 
+/** Non-LLM fallback when Vertex returns empty candidates twice (mood + mini). */
+function buildDeterministicMoodNarrative(mood: BriefingData['mood']): string {
+  const flowBits: string[] = [];
+  if (mood.fiiNet != null) {
+    const d = mood.fiiNet >= 0 ? 'net buying' : 'net selling';
+    flowBits.push(`FII cash ${d} of about ₹${Math.abs(mood.fiiNet).toFixed(0)} Cr`);
+  }
+  if (mood.diiNet != null) {
+    const d = mood.diiNet >= 0 ? 'supportive' : 'soft';
+    flowBits.push(`DII flows look ${d} near ₹${Math.abs(mood.diiNet).toFixed(0)} Cr`);
+  }
+  if (mood.vix != null) flowBits.push(`India VIX printed ${mood.vix.toFixed(2)}`);
+  if (mood.niftyChangePct != null) {
+    flowBits.push(
+      `Nifty moved ${mood.niftyChangePct >= 0 ? '+' : ''}${mood.niftyChangePct.toFixed(2)}%`,
+    );
+  }
+  const core =
+    flowBits.length > 0
+      ? `Session tone reflects ${flowBits.join(', ')}, reading cross-currents between foreign portfolio flows and local liquidity.`
+      : 'Session tone is data-light until fresh FII/DII and benchmark prints populate; treat positioning as cautious and event-driven.';
+  return `${core} Watch: how the tape balances global cues against domestic flows in upcoming sessions.`;
+}
+
 async function generateMoodNarrativeMini(
   mood: BriefingData['mood'],
   llm: LlmProvider,
@@ -336,7 +360,11 @@ async function generateMoodNarrative(
       return text;
     }
   } catch {
-    return generateMoodNarrativeMini(mood, llm);
+    try {
+      return await generateMoodNarrativeMini(mood, llm);
+    } catch {
+      return buildDeterministicMoodNarrative(mood);
+    }
   }
 }
 

@@ -10,6 +10,7 @@
 
 import { RATE_LIMITS } from '../../constants.js';
 import { child } from '../../logger.js';
+import { skipScreenerFundamentalsFetch } from '../../market/screener-symbol-skip.js';
 import type { Fundamentals } from '../../types/domain.js';
 import { type HttpClient, createHttpClient } from '../base/http-client.js';
 import type { IngestResult, Ingestor, IngestorCapability, IngestorContext } from '../types.js';
@@ -40,6 +41,10 @@ export class ScreenerIngestor implements Ingestor {
 
     for (const symbol of symbols) {
       if (ctx.signal?.aborted) break;
+      if (skipScreenerFundamentalsFetch(symbol)) {
+        log.debug({ symbol }, 'screener skip: not listed on screener.in (SGB / index / macro)');
+        continue;
+      }
       try {
         const html = await this.fetchPage(symbol, ctx.signal);
         const parsed = parseScreenerHtml(html, { symbol, source: this.name, asOf: ctx.date });

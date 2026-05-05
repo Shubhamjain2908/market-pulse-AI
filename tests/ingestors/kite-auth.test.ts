@@ -30,15 +30,27 @@ describe('upsertEnvVar', () => {
     );
   });
 
-  it('replaces in place when the key is already present', () => {
+  it('replaces every assignment line and appends the key at the end', () => {
     writeFileSync(
       path,
       'KITE_API_KEY=keykeykey\nKITE_ACCESS_TOKEN=oldoldold\n# trailing comment\n',
     );
     upsertEnvVar(path, 'KITE_ACCESS_TOKEN', 'newnewnew');
     expect(readFileSync(path, 'utf8')).toBe(
-      'KITE_API_KEY=keykeykey\nKITE_ACCESS_TOKEN=newnewnew\n# trailing comment\n',
+      'KITE_API_KEY=keykeykey\n# trailing comment\nKITE_ACCESS_TOKEN=newnewnew\n',
     );
+  });
+
+  it('removes duplicate key lines so only one value remains', () => {
+    writeFileSync(path, 'KITE_ACCESS_TOKEN=first\nFOO=bar\nKITE_ACCESS_TOKEN=second\n');
+    upsertEnvVar(path, 'KITE_ACCESS_TOKEN', 'third');
+    expect(readFileSync(path, 'utf8')).toBe('FOO=bar\nKITE_ACCESS_TOKEN=third\n');
+  });
+
+  it('matches export-prefixed and spaced assignments', () => {
+    writeFileSync(path, 'export  KITE_ACCESS_TOKEN  =oldtoken\nNEXT=1\n');
+    upsertEnvVar(path, 'KITE_ACCESS_TOKEN', 'fresh');
+    expect(readFileSync(path, 'utf8')).toBe('NEXT=1\nKITE_ACCESS_TOKEN=fresh\n');
   });
 
   it('handles a file without trailing newline', () => {

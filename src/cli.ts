@@ -16,6 +16,7 @@
  *   mp daily             One-shot: full pipeline + portfolio analysis (recommended)
  *   mp sync-sectors      Cache Yahoo sector/industry in `symbols` (for portfolio sector rollup)
  *   mp kite-login        Refresh Zerodha Kite Connect access_token (run daily)
+ *   mp kite-verify       GET portfolio/holdings — verify API key + access_token (same as sync)
  *   mp portfolio-sync    Pull holdings from Kite (or manual) into the DB
  *   mp portfolio-analyse Run LLM-driven HOLD/ADD/TRIM/EXIT analysis per holding
  *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
@@ -43,6 +44,7 @@ import { closeDb, getDb, migrate } from './db/index.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
+import { KiteApiError, KiteClient } from './ingestors/kite/client.js';
 import { logger } from './logger.js';
 import { defaultIngestSymbolUniverse } from './market/ingest-symbols.js';
 import { getMarketClosure } from './market/nse-calendar.js';
@@ -337,6 +339,48 @@ program
   });
 
 program
+  .command('kite-verify')
+  .description(
+    'call GET portfolio/holdings using .env (same auth as portfolio-sync); prints errors from Kite',
+  )
+  .action(async () => {
+    const client = new KiteClient();
+    if (!client.hasSession()) {
+      logger.error(
+        'KITE_API_KEY and KITE_ACCESS_TOKEN must be set. Run `pnpm cli kite-login` first.',
+      );
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      const holdings = await client.getHoldings();
+      logger.info(
+        {
+          apiBase: config.KITE_API_BASE,
+          holdingsCount: holdings.length,
+          sampleSymbols: holdings.slice(0, 5).map((h) => h.tradingsymbol),
+        },
+        'Kite verify OK — portfolio/holdings succeeded',
+      );
+    } catch (err) {
+      if (err instanceof KiteApiError) {
+        logger.error(
+          {
+            message: err.message,
+            errorType: err.errorType,
+            httpStatus: err.statusCode,
+            treatedAsExpiredToken: err.isTokenExpired(),
+          },
+          'Kite verify failed (same request portfolio-sync uses)',
+        );
+      } else {
+        logger.error({ err }, 'Kite verify failed');
+      }
+      process.exitCode = 1;
+    }
+  });
+
+program
   .command('portfolio-sync')
   .description('sync holdings from Kite (or config/portfolio.json) into the DB')
   .action(async () => {
@@ -463,7 +507,10 @@ program
       secrets: {
         anthropic: redact(config.ANTHROPIC_API_KEY),
         openai: redact(config.OPENAI_API_KEY),
-        kite: redact(config.KITE_API_KEY),
+        kite: {
+          apiKey: redact(config.KITE_API_KEY),
+          accessToken: redact(config.KITE_ACCESS_TOKEN),
+        },
         googleApplicationCredentials: redact(config.GOOGLE_APPLICATION_CREDENTIALS),
         smtp: redact(config.SMTP_USER),
         slack: redact(config.SLACK_WEBHOOK_URL),
