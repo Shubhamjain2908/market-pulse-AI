@@ -43,3 +43,6 @@ market-pulse-ai-spec.docx
 
 # briefing artifacts
 briefings/
+
+spec/
+.cursor/plans/
