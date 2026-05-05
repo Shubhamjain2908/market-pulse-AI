@@ -4,6 +4,7 @@
  */
 
 import { MARKET_TIMEZONE } from '../constants.js';
+import { isIsoDate } from '../ingestors/base/dates.js';
 
 /** Official / widely published NSE trading holidays (YYYY-MM-DD → label). */
 export const NSE_HOLIDAY_NAMES: Readonly<Record<string, string>> = {
@@ -52,6 +53,9 @@ export interface MarketClosure {
 
 /** IST weekday: 0 = Sunday … 6 = Saturday. */
 export function istWeekdaySun0(isoDate: string): number {
+  if (!isIsoDate(isoDate)) {
+    throw new Error(`istWeekdaySun0: expected YYYY-MM-DD, got ${JSON.stringify(isoDate)}`);
+  }
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: MARKET_TIMEZONE,
     weekday: 'short',
