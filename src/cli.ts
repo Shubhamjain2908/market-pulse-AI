@@ -22,8 +22,8 @@
  *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
  *   mp schedule          Start croner jobs (07:30 / 15:30 weekdays, Sat 08:00)
  *   mp doctor            Print runtime/config diagnostics
+ *   mp regime            Deterministic regime → regime_daily (no LLM)
  *   mp regime-signals    Print regime inputs + scores for a date (validation)
- *
  * Run `mp --help` or `mp <cmd> --help` for full options.
  */
 
@@ -38,6 +38,7 @@ import { runPortfolioSync } from './agents/portfolio-sync.js';
 import { runSignalEnricher } from './agents/signal-enricher.js';
 import { runStockScreener } from './agents/stock-screener.js';
 import { generateTheses } from './agents/thesis-generator.js';
+import { runRegimeClassifier } from './analysers/regime-classifier.js';
 import { deliverToEmail, deliverToFile } from './briefing/index.js';
 import { config } from './config/env.js';
 import { APP_NAME, APP_VERSION } from './constants.js';
@@ -80,6 +81,24 @@ program
     const date = program.opts<{ date?: string }>().date ?? isoDateIst();
     const signals = computeRegimeSignals(getDb(), date);
     console.log(JSON.stringify(signals, null, 2));
+    closeDb();
+  });
+
+program
+  .command('regime')
+  .description(
+    'compute deterministic regime + persist to regime_daily (no LLM; use --no-narrative in Phase 2)',
+  )
+  .option(
+    '--no-narrative',
+    'skip AI narrative (Phase 2: no-op, classification is always deterministic)',
+  )
+  .action(async () => {
+    ensureDb();
+    const date = program.opts<{ date?: string }>().date;
+    const result = runRegimeClassifier({ date });
+    logger.info({ regime: result.regime, rawRegime: result.rawRegime, crisis: result.crisisOverride }, 'regime classified');
+    console.log(JSON.stringify(result, null, 2));
     closeDb();
   });
 
