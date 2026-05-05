@@ -5,6 +5,7 @@
  */
 
 import { z } from 'zod';
+import { RegimeSchema } from './regime.js';
 
 // ---------------------------------------------------------------------------
 // Quotes
@@ -132,12 +133,29 @@ export const ScreenDefinitionSchema = z.object({
 });
 export type ScreenDefinition = z.infer<typeof ScreenDefinitionSchema>;
 
+/** Persisted inside `screens.matched_criteria` JSON under `__regime_meta` when regime gating is active. */
+export const RegimeScreenMetaSchema = z.object({
+  regime: RegimeSchema,
+  sizeMultiplier: z.number(),
+  strategyId: z.string(),
+});
+export type RegimeScreenMeta = z.infer<typeof RegimeScreenMetaSchema>;
+
+export const ScreenMatchedCriteriaStoredSchema = z.union([
+  z.array(ScreenCriterionSchema),
+  z.object({
+    criteria: z.array(ScreenCriterionSchema),
+    __regime_meta: RegimeScreenMetaSchema,
+  }),
+]);
+export type ScreenMatchedCriteriaStored = z.infer<typeof ScreenMatchedCriteriaStoredSchema>;
+
 export const ScreenResultSchema = z.object({
   symbol: z.string(),
   date: z.string(),
   screenName: z.string(),
   score: z.number(),
-  matchedCriteria: z.array(ScreenCriterionSchema),
+  matchedCriteria: ScreenMatchedCriteriaStoredSchema,
 });
 export type ScreenResult = z.infer<typeof ScreenResultSchema>;
 

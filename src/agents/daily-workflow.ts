@@ -17,6 +17,7 @@ import { runBriefingComposer } from './briefing-composer.js';
 import { runDailyIngestor } from './daily-ingestor.js';
 import { analysePortfolio } from './portfolio-analyser.js';
 import { runPortfolioSync } from './portfolio-sync.js';
+import { runRegimeAgent } from './regime-agent.js';
 import { maybeWriteDailyRunSummary } from './run-summary.js';
 import { runSignalEnricher } from './signal-enricher.js';
 import { runStockScreener } from './stock-screener.js';
@@ -97,6 +98,8 @@ export async function runDailyWorkflow(
 
   if (!opts.skipPortfolio) {
     try {
+      // Phase 4.5: portfolio sync + stop-loss are outside regime gates (`portfolio_exit_signals` /
+      // `trailing_stop_update` are always-on at 100% in strategy-gates.json).
       await runPortfolioSync({ date });
       const stopLoss = detectStopLossBreaches({ date });
       log.info(
@@ -113,7 +116,8 @@ export async function runDailyWorkflow(
 
   await runDailyIngestor({ date });
   await runSignalEnricher({ date });
-  await runStockScreener({ date });
+  const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
+  await runStockScreener({ date, regime: regimeAgent.regime });
 
   let thesisRun:
     | {
@@ -129,7 +133,11 @@ export async function runDailyWorkflow(
     const sentimentResult = await enrichSentiment();
     log.info(sentimentResult, 'sentiment scoring done');
 
-    const thesisResult = await generateTheses({ date, maxTheses: config.THESIS_MAX_PER_RUN });
+    const thesisResult = await generateTheses({
+      date,
+      maxTheses: config.THESIS_MAX_PER_RUN,
+      regime: regimeAgent.regime,
+    });
     thesisRun = {
       generated: thesisResult.generated,
       failed: thesisResult.failed,

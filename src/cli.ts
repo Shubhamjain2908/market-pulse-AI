@@ -348,7 +348,8 @@ program
 
     await runDailyIngestor({ date });
     await runSignalEnricher({ date });
-    await runStockScreener({ date });
+    const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
+    await runStockScreener({ date, regime: regimeAgent.regime });
 
     let thesisRun:
       | {
@@ -364,7 +365,7 @@ program
       const sentimentResult = await enrichSentiment();
       logger.info(sentimentResult, 'sentiment scoring done');
 
-      const thesisResult = await generateTheses({ date });
+      const thesisResult = await generateTheses({ date, regime: regimeAgent.regime });
       thesisRun = {
         generated: thesisResult.generated,
         failed: thesisResult.failed,
