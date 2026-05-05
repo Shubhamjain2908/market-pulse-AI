@@ -9,6 +9,8 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import { PortfolioSchema, ScreenDefinitionSchema } from '../types/domain.js';
 import type { Portfolio, ScreenDefinition } from '../types/domain.js';
+import { StrategyGatesFileSchema } from '../types/regime.js';
+import type { StrategyGatesFile } from '../types/regime.js';
 
 const cache = new Map<string, unknown>();
 
@@ -56,6 +58,11 @@ export function loadPortfolio(opts: LoaderOptions = {}): Portfolio {
     totalCapital: file.totalCapital,
     holdings: file.holdings.filter((h) => h.qty > 0),
   };
+}
+
+export function loadStrategyGates(opts: LoaderOptions = {}): StrategyGatesFile {
+  const path = opts.path ?? resolve(process.cwd(), 'config/strategy-gates.json');
+  return readJsonConfig(path, StrategyGatesFileSchema, opts.fresh);
 }
 
 function readJsonConfig<T>(path: string, schema: z.ZodType<T>, fresh = false): T {

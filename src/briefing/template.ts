@@ -163,6 +163,8 @@ export interface BriefingData {
   aiPicksStatus: AiPicksSectionStatus;
   /** Paper-trade performance (last N days) — Phase 7. */
   signalPerformance?: SignalPerformance;
+  /** Pre-rendered regime card + optional change banner (inserted above global cues). */
+  regimeBlock?: string;
 }
 
 export function renderBriefing(data: BriefingData): string {
@@ -179,6 +181,7 @@ export function renderBriefing(data: BriefingData): string {
     ${renderHeader(data.date)}
     ${renderMood(data.date, data.mood, data.moodNarrative, data.marketClosure)}
     ${renderSignalPerformance(data.signalPerformance)}
+    ${data.regimeBlock ?? ''}
     ${renderGlobalCues(data.globalCues)}
     ${renderPortfolio(data.portfolio)}
     ${renderWatchlistAlerts(data.watchlistAlerts)}
@@ -839,6 +842,77 @@ function baseStyles(): string {
     .global-cue-note { font-size: 11px; margin-top: 4px; line-height: 1.35; }
     .global-cue.positive .mood-value { color: var(--positive); }
     .global-cue.negative .mood-value { color: var(--negative); }
+    /* Regime card (spec §7.1) */
+    .regime-change-banner {
+      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: #fff4e6;
+      border: 1px solid #f0b429;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.45;
+      color: var(--text);
+    }
+    .regime-card {
+      margin-bottom: 14px;
+      padding: 16px 18px;
+      border-radius: 10px;
+      border: 2px solid var(--regime-border, var(--border));
+      background: var(--regime-bg, var(--card));
+    }
+    .regime-card-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .regime-badge {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+    .regime-meta { font-size: 13px; color: var(--muted); }
+    .regime-scorebar-wrap { margin-bottom: 12px; }
+    .regime-scorebar-track {
+      height: 8px;
+      border-radius: 4px;
+      background: linear-gradient(90deg, var(--negative) 0%, #e5e7eb 50%, var(--positive) 100%);
+      position: relative;
+      overflow: hidden;
+    }
+    .regime-scorebar-fill {
+      height: 100%;
+      background: rgba(255,255,255,0.35);
+      border-right: 2px solid #1a1f2c;
+      box-sizing: border-box;
+    }
+    .regime-scorebar-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .regime-tiles {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    @media (max-width: 600px) { .regime-tiles { grid-template-columns: repeat(2, 1fr); } }
+    .regime-tile {
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.55);
+      font-size: 12px;
+    }
+    .regime-tile-label { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; }
+    .regime-tile-value { font-weight: 700; margin-top: 2px; }
+    .regime-narrative { margin: 0 0 8px; font-size: 14px; line-height: 1.55; }
+    .regime-gate-summary { margin: 0; font-size: 12px; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
     th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase;

@@ -15,9 +15,12 @@ import { config } from '../config/env.js';
 import { loadScreens, loadSectorMap, loadWatchlist } from '../config/loaders.js';
 import {
   type PortfolioHoldingRow,
+  countGatesForRegime,
   getDb,
   getLatestHoldings,
   getPortfolioAnalysisForDate,
+  getRegimeForCalendarDate,
+  listAllowedGatesForRegime,
 } from '../db/index.js';
 import { getPaperTradeStats, getSymbolSectors, getThesesForDate } from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
@@ -27,8 +30,10 @@ import { child } from '../logger.js';
 import { INDIA_VIX_BENCHMARK_SYMBOL, NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
 import { gatherGlobalCues } from '../market/global-cues.js';
 import { latestQuoteClose, sessionChangeVsPriorClose } from '../market/quote-change.js';
+import { previousOpenTradingDay } from '../market/trading-days.js';
 import type { ScreenDefinition } from '../types/domain.js';
 import { recordPaperTrades } from './paper-trade-writer.js';
+import { renderRegimeCard, renderRegimeChangeBanner } from './regime-card.js';
 import { classifySector } from './sector-classifier.js';
 import {
   type AiPicksSectionStatus,
@@ -150,6 +155,22 @@ export async function composeBriefing(
     opts.thesisRun,
   );
 
+  let regimeBlock: string | undefined;
+  const regimeRow = getRegimeForCalendarDate(date, db);
+  if (regimeRow) {
+    const gateSummary = {
+      active: listAllowedGatesForRegime(regimeRow.regime, db),
+      totalRows: countGatesForRegime(regimeRow.regime, db),
+    };
+    const prevDate = previousOpenTradingDay(regimeRow.date);
+    const prevRow = prevDate ? getRegimeForCalendarDate(prevDate, db) : null;
+    const banner = renderRegimeChangeBanner(regimeRow, {
+      prevScoreTotal: prevRow?.scoreTotal ?? null,
+    });
+    const card = renderRegimeCard(regimeRow, gateSummary);
+    regimeBlock = `${banner}${card}`;
+  }
+
   const data: BriefingData = {
     date,
     mood,
@@ -165,6 +186,7 @@ export async function composeBriefing(
     news,
     theses: theses.length > 0 ? theses : undefined,
     aiPicksStatus,
+    regimeBlock,
   };
 
   log.info(

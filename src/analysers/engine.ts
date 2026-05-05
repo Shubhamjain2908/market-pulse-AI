@@ -10,11 +10,12 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { loadScreens, loadWatchlist } from '../config/loaders.js';
-import { getDb } from '../db/index.js';
+import { getDb, getSizeMultiplier, isStrategyAllowed } from '../db/index.js';
 import { upsertScreenResults } from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
-import type { ScreenDefinition } from '../types/domain.js';
+import type { ScreenDefinition, ScreenResult } from '../types/domain.js';
+import type { Regime } from '../types/regime.js';
 import { type ScreenEvaluation, evaluateScreen, toScreenResult } from './evaluator.js';
 import { DbSignalProvider, type SignalProvider } from './signal-provider.js';
 
@@ -32,6 +33,11 @@ export interface ScreenEngineOptions {
   provider?: SignalProvider;
   /** Persist results to the `screens` table. Default true. */
   persist?: boolean;
+  /**
+   * When set, skips screens disallowed for this regime (`regime_strategy_gate`)
+   * and adds `__regime_meta` to persisted `matched_criteria` JSON for audit.
+   */
+  regime?: Regime;
 }
 
 export interface ScreenEngineResult {
@@ -47,6 +53,28 @@ export interface ScreenEngineResult {
 
 /** Score >= this is considered a "near match" worth surfacing for diagnostics. */
 const PARTIAL_MATCH_THRESHOLD = 0.6;
+
+function applyRegimeMetaToResult(
+  row: ScreenResult,
+  regime: Regime,
+  db: DatabaseType,
+): ScreenResult {
+  const criteria = Array.isArray(row.matchedCriteria)
+    ? row.matchedCriteria
+    : row.matchedCriteria.criteria;
+  const mult = getSizeMultiplier(row.screenName, regime, db);
+  return {
+    ...row,
+    matchedCriteria: {
+      criteria,
+      __regime_meta: {
+        regime,
+        sizeMultiplier: mult,
+        strategyId: row.screenName,
+      },
+    },
+  };
+}
 
 export function runScreenEngine(
   opts: ScreenEngineOptions = {},
@@ -70,6 +98,16 @@ export function runScreenEngine(
   const partialByScreen: Record<string, number> = {};
 
   for (const screen of screens) {
+    if (opts.regime != null && !isStrategyAllowed(screen.name, opts.regime, db)) {
+      log.info(
+        { screen: screen.name, regime: opts.regime },
+        '[GATED] screen skipped by regime_strategy_gate',
+      );
+      matchesByScreen[screen.name] = 0;
+      partialByScreen[screen.name] = 0;
+      continue;
+    }
+
     let passed = 0;
     let partial = 0;
     for (const symbol of symbols) {
@@ -83,8 +121,14 @@ export function runScreenEngine(
   }
 
   if (persist) {
-    const passing = evaluations.filter((e) => e.passed);
-    const written = upsertScreenResults(passing.map(toScreenResult), db);
+    const passing = evaluations
+      .filter((e) => e.passed)
+      .map((e) => {
+        const base = toScreenResult(e);
+        if (opts.regime == null) return base;
+        return applyRegimeMetaToResult(base, opts.regime, db);
+      });
+    const written = upsertScreenResults(passing, db);
     log.info(
       {
         date,
