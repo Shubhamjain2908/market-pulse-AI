@@ -78,7 +78,28 @@ export class MockLlmProvider implements LlmProvider {
     this.calls.push({ method: 'generateText', system: opts.system, user: opts.user });
 
     let text = MOCK_NARRATIVE;
-    if (opts.system.includes('one sentence only')) {
+    if (opts.system.startsWith('You are a market regime classifier for Indian equity markets')) {
+      let deterministicRegime = 'CHOPPY';
+      let vix = 0;
+      let fii = 0;
+      try {
+        const u = JSON.parse(opts.user) as {
+          deterministic_regime?: string;
+          signals?: { vix_current?: number | null; fii_20d_rolling_cr?: number | null };
+        };
+        if (u.deterministic_regime) deterministicRegime = u.deterministic_regime;
+        vix = u.signals?.vix_current ?? 0;
+        fii = u.signals?.fii_20d_rolling_cr ?? 0;
+      } catch {
+        /* ignore malformed user JSON in tests */
+      }
+      text = JSON.stringify({
+        regime: deterministicRegime,
+        narrative: `Mock regime line: ${deterministicRegime} with VIX ${vix} and FII 20d ₹${fii}Cr.`,
+        crisis_override: false,
+        confidence: 0.82,
+      });
+    } else if (opts.system.includes('one sentence only')) {
       text =
         'Aggressive FII selling of roughly ₹8,048 Cr overwhelms DII support near ₹3,487 Cr, pushing Nifty down 0.74% with India VIX elevated at 18.46.';
     } else if (opts.system.includes('sentiment')) {
