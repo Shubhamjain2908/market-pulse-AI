@@ -24,3 +24,12 @@ export {
   type SignalProvider,
   StaticSignalProvider,
 } from './signal-provider.js';
+export {
+  applyPersistence,
+  computeCrisisOverride,
+  computeRawRegime,
+  countTrailingNonCrisisOverrideDays,
+  mapScoreTotalToRegime,
+  runRegimeClassifier,
+  type RunRegimeClassifierOptions,
+} from './regime-classifier.js';
