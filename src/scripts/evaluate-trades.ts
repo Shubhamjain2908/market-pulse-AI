@@ -1,11 +1,21 @@
 /**
- * Daily evaluation of open paper trades: SL / target / time-stop vs EOD quotes.
- * Conservative rule: if both SL and target are touched on the same day, count as LOSS.
+ * Daily evaluation of open paper trades: adaptive trailing stops, conservative same-day SL+TP,
+ * target, and max-hold time-stop vs EOD quotes.
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { type PaperTradeRow, closePaperTrade, getOpenPaperTrades } from '../db/queries.js';
+import {
+  getAtr14,
+  insertStopLog,
+  patchPaperTradeTrailing,
+  resetStopRaisedTodayForOpenTrades,
+} from '../db/trailing-stop-queries.js';
 import { NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
+import type { ExitReason } from '../types/trailing-stop.js';
+import { GAP_DOWN_THROUGH_STOP_NOTE } from '../types/trailing-stop.js';
+import { applyDay1InitialStop, computeNewStop } from './trailing-stop-engine.js';
+
 export interface EvaluateTradesResult {
   asOf: string;
   evaluated: number;
@@ -19,6 +29,7 @@ export interface EvaluateTradesResult {
 
 interface OhlcBar {
   date: string;
+  open: number;
   high: number;
   low: number;
   close: number;
@@ -55,7 +66,7 @@ function getSymbolBars(
   return db
     .prepare(
       `
-    SELECT date, high, low, close FROM quotes
+    SELECT date, open, high, low, close FROM quotes
     WHERE symbol = ? AND exchange = 'NSE' AND date > ? AND date <= ?
     ORDER BY date ASC
   `,
@@ -67,6 +78,16 @@ function pnlPctLong(entry: number, exit: number): number {
   return ((exit - entry) / entry) * 100;
 }
 
+function normalizeTrailingMult(row: PaperTradeRow): number {
+  const m = row.trailingMultiplier;
+  if (m == null) return 2;
+  return m === 1.5 ? 1.5 : 2;
+}
+
+function unrealisedPctFromHigh(entryPrice: number, highestClose: number): number {
+  return ((highestClose - entryPrice) / entryPrice) * 100;
+}
+
 export function evaluateOnePaperTrade(
   trade: PaperTradeRow,
   db: DatabaseType,
@@ -76,46 +97,202 @@ export function evaluateOnePaperTrade(
   if (bars.length === 0) return 'no_data';
 
   const dayIndex = buildTradingDayIndex(db, trade.sourceDate, asOf);
+  const initialLlmStop = trade.stopLoss;
 
-  for (const bar of bars) {
-    const hitSl = bar.low <= trade.stopLoss;
+  let stopLoss = initialLlmStop;
+  let highestClose = trade.highestCloseSinceEntry == null ? null : trade.highestCloseSinceEntry;
+  let atr14AtEntryStored: number | null = trade.atr14AtEntry ?? null;
+  let trailingMult = normalizeTrailingMult(trade);
+  /** Last candidate from trailing math (for STOPPED_OUT audit row when available). */
+  let lastTrailCandidate = stopLoss;
+  let lastTrailUnrealisedPct = unrealisedPctFromHigh(
+    trade.entryPrice,
+    highestClose ?? trade.entryPrice,
+  );
+
+  let initialSetupComplete = trade.atr14AtEntry != null || trade.highestCloseSinceEntry != null;
+
+  for (let i = 0; i < bars.length; i++) {
+    const bar = bars[i];
+    if (!bar) continue;
+
+    const stopAtBarStart = stopLoss;
+
+    const maxCloseSinceEntry =
+      highestClose === null ? bar.close : Math.max(highestClose, bar.close);
+    highestClose = maxCloseSinceEntry;
+    lastTrailUnrealisedPct = unrealisedPctFromHigh(trade.entryPrice, maxCloseSinceEntry);
+
+    let skipTrailThisBar = false;
+
+    if (!initialSetupComplete) {
+      const atrOnSource = getAtr14(trade.symbol, trade.sourceDate, db);
+      stopLoss = applyDay1InitialStop(trade.entryPrice, initialLlmStop, atrOnSource ?? null);
+      atr14AtEntryStored = atrOnSource ?? null;
+      initialSetupComplete = true;
+      skipTrailThisBar = true;
+      lastTrailCandidate = stopLoss;
+    }
+
+    if (initialSetupComplete && !skipTrailThisBar) {
+      const atrToday = getAtr14(trade.symbol, bar.date, db);
+      if (atrToday !== undefined) {
+        const prevStop = stopLoss;
+        const res = computeNewStop({
+          entryPrice: trade.entryPrice,
+          highestCloseSinceEntry: maxCloseSinceEntry,
+          currentStopLoss: stopLoss,
+          atr14Today: atrToday,
+          currentMultiplier: trailingMult,
+        });
+        lastTrailCandidate = res.candidateStop;
+        lastTrailUnrealisedPct = res.unrealisedPct;
+        stopLoss = res.newStop;
+        trailingMult = res.multiplier;
+
+        insertStopLog(
+          {
+            tradeId: trade.id,
+            symbol: trade.symbol,
+            logDate: bar.date,
+            prevStop,
+            newStop: stopLoss,
+            stopDelta: stopLoss - prevStop,
+            candidateStop: res.candidateStop,
+            highestClose: maxCloseSinceEntry,
+            atr14Today: atrToday,
+            multiplierUsed: res.multiplier,
+            unrealisedPct: res.unrealisedPct,
+            action: res.action,
+          },
+          db,
+        );
+      }
+    }
+
+    const hitSl = bar.low <= stopLoss;
     const hitTg = bar.high >= trade.target;
     const elapsed = dayIndex.get(bar.date) ?? 0;
 
+    const raisedForBriefingLatch =
+      stopLoss > stopAtBarStart && bar.date === asOf && !skipTrailThisBar;
+
+    const persistOpenRow = (): void => {
+      patchPaperTradeTrailing(
+        trade.id,
+        {
+          stopLoss,
+          highestCloseSinceEntry: maxCloseSinceEntry,
+          atr14AtEntry: atr14AtEntryStored,
+          trailingMultiplier: trailingMult,
+          stopRaisedToday: raisedForBriefingLatch ? 1 : 0,
+        },
+        db,
+      );
+    };
+
+    const logStoppedOut = (logDate: string, notes: string | null, exitReason: ExitReason): void => {
+      const gap = bar.open < stopLoss ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
+      insertStopLog(
+        {
+          tradeId: trade.id,
+          symbol: trade.symbol,
+          logDate,
+          prevStop: stopAtBarStart,
+          newStop: stopLoss,
+          stopDelta: stopLoss - stopAtBarStart,
+          candidateStop: lastTrailCandidate,
+          highestClose: maxCloseSinceEntry,
+          atr14Today: getAtr14(trade.symbol, logDate, db) ?? null,
+          multiplierUsed: trailingMult,
+          unrealisedPct: lastTrailUnrealisedPct,
+          action: 'STOPPED_OUT',
+          notes: gap,
+        },
+        db,
+      );
+      const pnl = pnlPctLong(trade.entryPrice, stopLoss);
+      const status = pnl >= 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
+      closePaperTrade(trade.id, status, logDate, stopLoss, pnl, db, notes ?? null, exitReason);
+    };
+
     if (hitSl && hitTg) {
-      const pnl = pnlPctLong(trade.entryPrice, trade.stopLoss);
+      const gap = bar.open < stopLoss ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
+      insertStopLog(
+        {
+          tradeId: trade.id,
+          symbol: trade.symbol,
+          logDate: bar.date,
+          prevStop: stopAtBarStart,
+          newStop: stopLoss,
+          stopDelta: stopLoss - stopAtBarStart,
+          candidateStop: lastTrailCandidate,
+          highestClose: maxCloseSinceEntry,
+          atr14Today: getAtr14(trade.symbol, bar.date, db) ?? null,
+          multiplierUsed: trailingMult,
+          unrealisedPct: lastTrailUnrealisedPct,
+          action: 'STOPPED_OUT',
+          notes: gap,
+        },
+        db,
+      );
+      const pnl = pnlPctLong(trade.entryPrice, stopLoss);
       closePaperTrade(
         trade.id,
         'CLOSED_LOSS',
         bar.date,
-        trade.stopLoss,
+        stopLoss,
         pnl,
         db,
         'same-day SL+TP: counted as loss (conservative)',
+        'TRAILING_STOP',
       );
       return 'CLOSED_LOSS';
     }
+
     if (hitSl) {
-      const pnl = pnlPctLong(trade.entryPrice, trade.stopLoss);
-      closePaperTrade(trade.id, 'CLOSED_LOSS', bar.date, trade.stopLoss, pnl, db);
-      return 'CLOSED_LOSS';
+      const exitReasonStop: ExitReason = skipTrailThisBar ? 'INITIAL_STOP' : 'TRAILING_STOP';
+      logStoppedOut(bar.date, null, exitReasonStop);
+      return pnlPctLong(trade.entryPrice, stopLoss) >= 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
     }
+
     if (hitTg) {
-      const pnl = pnlPctLong(trade.entryPrice, trade.target);
-      closePaperTrade(trade.id, 'CLOSED_WIN', bar.date, trade.target, pnl, db);
+      closePaperTrade(
+        trade.id,
+        'CLOSED_WIN',
+        bar.date,
+        trade.target,
+        pnlPctLong(trade.entryPrice, trade.target),
+        db,
+        null,
+        'TARGET_HIT',
+      );
       return 'CLOSED_WIN';
     }
+
     if (elapsed >= trade.maxHoldDays) {
-      const pnl = pnlPctLong(trade.entryPrice, bar.close);
-      closePaperTrade(trade.id, 'CLOSED_TIME', bar.date, bar.close, pnl, db);
+      closePaperTrade(
+        trade.id,
+        'CLOSED_TIME',
+        bar.date,
+        bar.close,
+        pnlPctLong(trade.entryPrice, bar.close),
+        db,
+        null,
+        'TIME_EXIT',
+      );
       return 'CLOSED_TIME';
     }
+
+    persistOpenRow();
   }
 
   return 'still_open';
 }
 
 export function runEvaluatePaperTrades(asOf: string, db: DatabaseType): EvaluateTradesResult {
+  resetStopRaisedTodayForOpenTrades(db);
+
   const open = getOpenPaperTrades(db);
   let closedWin = 0;
   let closedLoss = 0;
