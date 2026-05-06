@@ -129,7 +129,9 @@ export async function runTrailingStopPostMortem(logId: number, db?: DatabaseType
     });
     const text = result.text.trim();
     validateNarrative(text);
-    setTrailingStopLogNarrative(logId, text, conn);
+    // After `await`, CLI may have called `closeDb()` while async LLM ran — `conn` can be stale.
+    // Explicit test DB passes through; default path re-opens via `getDb()` after close.
+    setTrailingStopLogNarrative(logId, text, db ?? getDb());
     log.info({ logId, symbol: row.symbol }, 'trailing stop post-mortem written');
   } catch (err) {
     log.warn(
@@ -139,7 +141,7 @@ export async function runTrailingStopPostMortem(logId: number, db?: DatabaseType
   }
 }
 
-/** Non-blocking; when no DB is passed, the async body uses `getDb()` (reconnects if the main handle was closed). */
+/** Non-blocking; reads use the connection active when scheduled; narrative write re-resolves DB after LLM await. */
 export function scheduleTrailingStopPostMortem(logId: number): void {
   void runTrailingStopPostMortem(logId).catch((err) => {
     log.warn({ err: String(err), logId }, 'trailing stop post-mortem rejected');
