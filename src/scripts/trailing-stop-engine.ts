@@ -23,6 +23,7 @@ export function candidateStopFloor(entryPrice: number): number {
 
 /**
  * Daily trailing step after highest close is updated.
+ * `wasTightened` flags mult crossing 2→1.5 in DB (`trailing_multiplier`); `action` is RAISED/HELD/TIGHTENED.
  *
  * 1. unrealisedPct from highest close vs entry
  * 2. multiplier 1.5 if gain ≥ 15% or already tightened in DB; else 2.0
