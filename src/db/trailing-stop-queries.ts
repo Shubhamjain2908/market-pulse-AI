@@ -100,7 +100,7 @@ export function getMaxCloseBetween(
 
 export interface PaperTradeTrailingPatch {
   stopLoss?: number;
-  highestCloseSinceEntry?: number;
+  highestCloseSinceEntry?: number | null;
   atr14AtEntry?: number | null;
   trailingMultiplier?: number;
   /** 0/1 latch for briefing alerts */
