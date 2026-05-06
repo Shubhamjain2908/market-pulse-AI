@@ -135,6 +135,27 @@ describe('portfolio analyser', () => {
     expect(filtered.rows[0]?.symbol).toBe('INFY');
   });
 
+  it('downgrades ADD to HOLD when volume_ratio_20d is below 0.5', async () => {
+    upsertSignals(
+      [
+        { symbol: 'INFY', date, name: 'rsi_14', value: 55, source: 'technical' },
+        {
+          symbol: 'INFY',
+          date,
+          name: 'volume_ratio_20d',
+          value: 0.36,
+          source: 'technical',
+        },
+      ],
+      db,
+    );
+    const llm = new MockLlmProvider();
+    const result = await analysePortfolio({ date, symbols: ['INFY'] }, db, llm);
+    const infy = result.rows.find((r) => r.symbol === 'INFY');
+    expect(infy?.action).toBe('HOLD');
+    expect(infy?.triggerReason).toContain('volume_ratio');
+  });
+
   it('downgrades ADD to HOLD when RSI is overbought (post-LLM guardrail)', async () => {
     upsertSignals([{ symbol: 'INFY', date, name: 'rsi_14', value: 72, source: 'technical' }], db);
     const llm = new MockLlmProvider();

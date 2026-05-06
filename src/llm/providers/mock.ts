@@ -150,11 +150,14 @@ export class MockLlmProvider implements LlmProvider {
       const symbolMatch = opts.user.match(/# Position:\s+(\w+)/);
       const rsiMatch = opts.user.match(/rsi_14:\s*([\d.]+)/);
       const pctHiMatch = opts.user.match(/pct_from_52w_high:\s*([-.\d]+)/);
+      const volMatch = opts.user.match(/volume_ratio_20d:\s*([\d.]+)/);
       const rsi = rsiMatch ? Number(rsiMatch[1]) : null;
       const pctHi = pctHiMatch ? Number(pctHiMatch[1]) : null;
+      const volRatio = volMatch ? Number(volMatch[1]) : null;
       /** Default HOLD; use ADD when stretched so tests can assert ADD→HOLD guardrails. */
       let action: 'HOLD' | 'ADD' | 'TRIM' | 'EXIT' = 'HOLD';
-      if (rsi != null && rsi > 70) action = 'ADD';
+      if (volRatio != null && volRatio < 0.5) action = 'ADD';
+      else if (rsi != null && rsi > 70) action = 'ADD';
       else if (pctHi != null && pctHi >= -3) action = 'ADD';
 
       raw = JSON.stringify({
