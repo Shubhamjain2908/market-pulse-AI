@@ -314,17 +314,20 @@ program
 program
   .command('evaluate')
   .description('evaluate open paper trades against EOD quotes (SL / target / time-stop)')
-  .action(async () => {
+  .option('--skip-ai', 'skip LLM post-mortem narratives for STOPPED_OUT rows')
+  .action(async (opts: { skipAi?: boolean }) => {
     ensureDb();
     const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
-    const result = runEvaluatePaperTrades(date, getDb());
+    const result = runEvaluatePaperTrades(date, getDb(), { skipAi: Boolean(opts.skipAi) });
     logger.info(result, 'paper trade evaluation complete');
     closeDb();
   });
 
 program
   .command('run-all')
-  .description('run full pipeline: ingest -> enrich -> regime -> gated screen -> sentiment -> thesis -> brief')
+  .description(
+    'run full pipeline: ingest -> enrich -> regime -> gated screen -> sentiment -> thesis -> brief',
+  )
   .option('--skip-ai', 'skip all LLM stages (sentiment, thesis, narrative)')
   .action(async (opts: { skipAi?: boolean }) => {
     ensureDb();
