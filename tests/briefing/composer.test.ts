@@ -10,7 +10,10 @@ import {
 import {
   closeDb,
   getDb,
+  getOpenPaperTrades,
   insertNews,
+  insertPaperTradeIfAbsent,
+  insertStopLog,
   migrate,
   upsertFiiDii,
   upsertHoldings,
@@ -252,7 +255,46 @@ describe('briefing composer (Phase 3–4)', () => {
     expect(llm.calls.some((c) => c.method === 'generateText')).toBe(true);
   });
 
-  it('omits mood narrative when LLM returns a one-word reply (invalid narrative)', async () => {
+  it('includes trailing stop card when EOD log rows exist for the briefing date', async () => {
+    insertPaperTradeIfAbsent(
+      {
+        symbol: 'TRAILTEST',
+        signalType: 'AI_PICK',
+        sourceDate: '2026-04-01',
+        entryPrice: 100,
+        stopLoss: 90,
+        target: 120,
+        timeHorizon: 'medium',
+        maxHoldDays: 90,
+      },
+      db,
+    );
+    const trail = getOpenPaperTrades(db).find((t) => t.symbol === 'TRAILTEST');
+    if (!trail) throw new Error('missing TRAILTEST trade');
+    insertStopLog(
+      {
+        tradeId: trail.id,
+        symbol: 'TRAILTEST',
+        logDate: today,
+        prevStop: 90,
+        newStop: 94,
+        stopDelta: 4,
+        candidateStop: 93,
+        highestClose: 100,
+        atr14Today: 3,
+        multiplierUsed: 2,
+        unrealisedPct: 5,
+        action: 'RAISED',
+      },
+      db,
+    );
+    const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
+    expect(result.html).toContain('Paper trades · trailing stops');
+    expect(result.html).toContain('TRAILTEST');
+    expect(result.html).toContain('Raised');
+  });
+
+  it('falls back to deterministic mood narrative when LLM returns invalid replies repeatedly', async () => {
     let badCalls = 0;
     const badLlm: LlmProvider = {
       name: 'bad',
@@ -266,8 +308,9 @@ describe('briefing composer (Phase 3–4)', () => {
       },
     };
     const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, badLlm);
-    expect(result.data.moodNarrative).toBeUndefined();
-    expect(result.html).not.toMatch(/<div class="mood-narrative">/);
+    expect(result.data.moodNarrative).toBeTruthy();
+    expect(result.data.moodNarrative).toContain('Watch:');
+    expect(result.html).toMatch(/<div class="mood-narrative">/);
     expect(badCalls).toBeGreaterThanOrEqual(3);
   });
 

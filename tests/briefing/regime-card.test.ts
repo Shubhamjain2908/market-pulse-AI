@@ -56,7 +56,7 @@ describe('regime-card HTML', () => {
       expect(html).toContain(`--regime-border:${borderByRegime[regime]}`);
       expect(html).toContain(badgeText[regime]);
       expect(html).toContain('Narrative for');
-      expect(html).toContain('momentum_breakout');
+      expect(html).toContain('strategies active');
       expect(html).toContain('Trend');
       expect(html).toContain('VIX');
     });

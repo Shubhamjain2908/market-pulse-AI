@@ -75,17 +75,11 @@ describe('regime gating (Phase 4)', () => {
     seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
 
     const date = '2026-06-02';
-    const insert = db.prepare(`
-      INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, 'fundamental')
-    `);
-    for (const [name, value] of [
-      ['roe', 16],
-      ['profit_growth_yoy', 12],
-      ['debt_to_equity', 0.5],
-      ['pe', 20],
-    ] as const) {
-      insert.run('AAA', date, name, value);
-    }
+    /** DbSignalProvider reads fundamental columns from `fundamentals`, not `signals`. */
+    db.prepare(
+      `INSERT INTO fundamentals (symbol, as_of, roe, profit_growth_yoy, debt_to_equity, pe, source)
+       VALUES ('AAA', ?, 16, 12, 0.5, 20, 'test')`,
+    ).run(date);
 
     const screens: ScreenDefinition[] = [
       {
