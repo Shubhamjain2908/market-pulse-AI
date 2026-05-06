@@ -13,6 +13,7 @@ import type {
   Signal,
   Thesis,
 } from '../types/domain.js';
+import type { ExitReason } from '../types/trailing-stop.js';
 import { getDb } from './connection.js';
 
 // ---------------------------------------------------------------------------
@@ -430,6 +431,11 @@ export interface PaperTradeRow {
   pnlPct: number | null;
   notes: string | null;
   createdAt: string;
+  highestCloseSinceEntry: number | null;
+  atr14AtEntry: number | null;
+  trailingMultiplier: number | null;
+  stopRaisedToday: number | null;
+  exitReason: ExitReason | null;
 }
 
 /** Insert if no row exists for (symbol, signal_type, source_date). Returns true when inserted. */
@@ -468,7 +474,12 @@ export function getOpenPaperTrades(db: DatabaseType = getDb()): PaperTradeRow[] 
            entry_price AS entryPrice, stop_loss AS stopLoss, target,
            time_horizon AS timeHorizon, max_hold_days AS maxHoldDays,
            status, outcome_date AS outcomeDate, exit_price AS exitPrice,
-           pnl_pct AS pnlPct, notes, created_at AS createdAt
+           pnl_pct AS pnlPct, notes, created_at AS createdAt,
+           highest_close_since_entry AS highestCloseSinceEntry,
+           atr14_at_entry AS atr14AtEntry,
+           trailing_multiplier AS trailingMultiplier,
+           stop_raised_today AS stopRaisedToday,
+           exit_reason AS exitReason
     FROM paper_trades
     WHERE status = 'OPEN'
     ORDER BY source_date ASC, id ASC
@@ -490,6 +501,11 @@ export function getOpenPaperTrades(db: DatabaseType = getDb()): PaperTradeRow[] 
     pnlPct: number | null;
     notes: string | null;
     createdAt: string;
+    highestCloseSinceEntry: number | null;
+    atr14AtEntry: number | null;
+    trailingMultiplier: number | null;
+    stopRaisedToday: number | null;
+    exitReason: ExitReason | null;
   }>;
 
   return rows;
@@ -503,6 +519,8 @@ export function closePaperTrade(
   pnlPct: number,
   db: DatabaseType = getDb(),
   notes?: string | null,
+  /** Omit to leave DB `exit_reason` unchanged (legacy callers). Pass to tag trailing/target/time exits (Phase 3). */
+  exitReason?: ExitReason | null,
 ): void {
   db.prepare(`
     UPDATE paper_trades
@@ -510,7 +528,9 @@ export function closePaperTrade(
         outcome_date = @outcomeDate,
         exit_price = @exitPrice,
         pnl_pct = @pnlPct,
-        notes = COALESCE(@notes, notes)
+        notes = COALESCE(@notes, notes),
+        stop_raised_today = 0,
+        exit_reason = CASE WHEN @applyExitReason = 1 THEN @exitReason ELSE exit_reason END
     WHERE id = @id AND status = 'OPEN'
   `).run({
     id,
@@ -519,6 +539,8 @@ export function closePaperTrade(
     exitPrice,
     pnlPct,
     notes: notes ?? null,
+    applyExitReason: exitReason !== undefined ? 1 : 0,
+    exitReason: exitReason ?? null,
   });
 }
 

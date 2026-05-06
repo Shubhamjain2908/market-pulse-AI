@@ -38,7 +38,9 @@ describe('db/migrate', () => {
     expect(tables).toContain('signals');
     expect(tables).toContain('screens');
     expect(tables).toContain('briefings');
+    expect(tables).toContain('trailing_stop_log');
     expect(tables).toContain('_migrations');
+    expect(result.applied).toContain('0007_adaptive_trailing_stop');
     db.close();
   });
 
