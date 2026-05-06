@@ -41,6 +41,7 @@ describe('db/migrate', () => {
     expect(tables).toContain('trailing_stop_log');
     expect(tables).toContain('_migrations');
     expect(result.applied).toContain('0007_adaptive_trailing_stop');
+    expect(result.applied).toContain('0008_trailing_stop_log_notes');
     db.close();
   });
 

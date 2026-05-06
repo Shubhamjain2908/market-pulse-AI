@@ -15,6 +15,13 @@ export type ExitReason = (typeof EXIT_REASONS)[number];
 export const STOP_LOG_ACTIONS = ['RAISED', 'HELD', 'TIGHTENED', 'STOPPED_OUT'] as const;
 export type StopLogAction = (typeof STOP_LOG_ACTIONS)[number];
 
+/**
+ * Written to `trailing_stop_log.notes` on STOPPED_OUT when the session opened below the
+ * active stop but we still book the fill at `stop_loss` (paper convention). Queryable for
+ * signal-quality backtests.
+ */
+export const GAP_DOWN_THROUGH_STOP_NOTE = 'gap_down_open:true';
+
 /** Plain result from trailing-stop arithmetic (pure engine implements this in Phase 2). */
 export interface TrailingStopResult {
   newStop: number;
@@ -41,6 +48,8 @@ export interface TrailingStopLogRow {
   unrealisedPct: number;
   action: StopLogAction;
   narrative: string | null;
+  /** Machine-oriented tags (e.g. {@link GAP_DOWN_THROUGH_STOP_NOTE}); separate from LLM narrative. */
+  notes: string | null;
   createdAt: string;
 }
 
@@ -57,6 +66,8 @@ export interface TrailingStopLogInsert {
   multiplierUsed: number;
   unrealisedPct: number;
   action: StopLogAction;
+  /** Optional; e.g. {@link GAP_DOWN_THROUGH_STOP_NOTE} when applicable. */
+  notes?: string | null;
 }
 
 /** Rows from trailing_stop_log (briefing renders RAISED / TIGHTENED / STOPPED_OUT). */

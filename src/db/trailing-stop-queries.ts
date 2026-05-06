@@ -30,6 +30,7 @@ function parseLogRow(row: Record<string, unknown>): TrailingStopLogRow {
     unrealisedPct: Number(row.unrealised_pct),
     action: row.action as TrailingStopLogRow['action'],
     narrative: row.narrative == null ? null : String(row.narrative),
+    notes: row.notes == null || row.notes === '' ? null : String(row.notes),
     createdAt: String(row.created_at),
   };
 }
@@ -150,11 +151,11 @@ export function insertStopLog(row: TrailingStopLogInsert, db: DatabaseType = get
     INSERT OR IGNORE INTO trailing_stop_log (
       trade_id, symbol, log_date,
       prev_stop, new_stop, stop_delta, candidate_stop, highest_close,
-      atr14_today, multiplier_used, unrealised_pct, action
+      atr14_today, multiplier_used, unrealised_pct, action, notes
     ) VALUES (
       @tradeId, @symbol, @logDate,
       @prevStop, @newStop, @stopDelta, @candidateStop, @highestClose,
-      @atr14Today, @multiplierUsed, @unrealisedPct, @action
+      @atr14Today, @multiplierUsed, @unrealisedPct, @action, @notes
     )
   `,
     )
@@ -171,6 +172,7 @@ export function insertStopLog(row: TrailingStopLogInsert, db: DatabaseType = get
       multiplierUsed: row.multiplierUsed,
       unrealisedPct: row.unrealisedPct,
       action: row.action,
+      notes: row.notes ?? null,
     });
   return result.changes > 0;
 }
