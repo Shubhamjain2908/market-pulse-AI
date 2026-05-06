@@ -8,6 +8,7 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import type {
   NearStopOpenRow,
   TrailingStopLogInsert,
+  TrailingStopLogBriefingRow,
   TrailingStopLogRow,
 } from '../types/trailing-stop.js';
 import { getDb } from './connection.js';
@@ -198,6 +199,43 @@ export function getStopLogForDate(date: string, db: DatabaseType = getDb()): Tra
     )
     .all(date) as Record<string, unknown>[];
   return rows.map(parseLogRow);
+}
+
+function parseBriefingLogRow(row: Record<string, unknown>): TrailingStopLogBriefingRow {
+  const base = parseLogRow(row);
+  return {
+    ...base,
+    tradeEntryPrice:
+      row.trade_entry_price == null ? null : Number(row.trade_entry_price),
+    tradeExitPrice:
+      row.trade_exit_price == null ? null : Number(row.trade_exit_price),
+    tradePnlPct: row.trade_pnl_pct == null ? null : Number(row.trade_pnl_pct),
+  };
+}
+
+/**
+ * Events for `logDate` joined with `paper_trades` so STOPPED_OUT rows can show trade P&L
+ * (distinct from `stop_delta`, which is movement vs session open).
+ */
+export function getStopLogForBriefingDate(
+  date: string,
+  db: DatabaseType = getDb(),
+): TrailingStopLogBriefingRow[] {
+  const rows = db
+    .prepare(
+      `
+      SELECT tsl.*,
+             pt.entry_price AS trade_entry_price,
+             pt.exit_price AS trade_exit_price,
+             pt.pnl_pct AS trade_pnl_pct
+      FROM trailing_stop_log tsl
+      LEFT JOIN paper_trades pt ON pt.id = tsl.trade_id
+      WHERE tsl.log_date = ?
+      ORDER BY tsl.trade_id ASC, tsl.id ASC
+    `,
+    )
+    .all(date) as Record<string, unknown>[];
+  return rows.map(parseBriefingLogRow);
 }
 
 /** OPEN trades where cushion to stop is at most today’s ATR14 (live briefing helper). */

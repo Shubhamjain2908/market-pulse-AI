@@ -79,6 +79,15 @@ export type TrailingLogAlertRow = Omit<TrailingStopLogRow, 'tradeId'> & {
   tradeId: number;
 };
 
+/** Optional join from `paper_trades` for briefing STOPPED_OUT copy (trade P&L vs stop-audit delta). */
+export interface TrailingStopLogBriefingExtras {
+  tradeEntryPrice?: number | null;
+  tradeExitPrice?: number | null;
+  tradePnlPct?: number | null;
+}
+
+export type TrailingStopLogBriefingRow = TrailingStopLogRow & TrailingStopLogBriefingExtras;
+
 /** NEAR_STOP is computed fresh (not persisted in trailing_stop_log). */
 export interface NearStopOpenRow {
   kind: 'NEAR_STOP';
