@@ -12,7 +12,12 @@ short, actionable briefing before market open.
 > `regime_daily` + `regime_strategy_gate` tables, per-screen and per-agent
 > gating with size multipliers, regime card + change banner in the HTML briefing,
 > and wiring in `pnpm daily` / `pnpm run-all` before screening and thesis
-> generation. **Report quality Phase 1**
+> generation. **Adaptive trailing stops (paper trades)** shipped end-to-end:
+> ATR14-based upward-only trailing on `paper_trades`, EOD bar-by-bar evaluator
+> (`runEvaluatePaperTrades`), `trailing_stop_log` audit trail + additive
+> `exit_reason`, HTML **Paper trades · trailing stops** block (above the regime
+> card), optional LLM post-mortem on `STOPPED_OUT`, and integration tests
+> (merge gates + §9.2/§9.3). **Report quality Phase 1**
 > shipped: NSE holiday/weekend guard (no pointless ingest when cash market is
 > closed), Market Mood shows Nifty Δ / India VIX / dated FII-DII with `[prev]`
 > labels, explicit AI Picks section states (skipped / holiday / empty / all
@@ -29,7 +34,7 @@ short, actionable briefing before market open.
 > screen engine, first-class watchlist alerts, a backtest harness, LLM
 > sentiment scoring, AI thesis generation, and an AI-composed HTML
 > briefing. Supports Cursor Agent, Anthropic, OpenAI, and Vertex AI
-> (Gemini) as LLM backends. See [the roadmap](#roadmap) and [Market regime filter](#market-regime-filter-phase-6).
+> (Gemini) as LLM backends. See [the roadmap](#roadmap), [Market regime filter](#market-regime-filter-phase-6), and [Adaptive trailing stops](#adaptive-trailing-stops-paper-trades).
 
 ---
 
@@ -48,6 +53,7 @@ What it does daily:
 - Screens your watchlist against rules you control (`config/screens.json`)
 - Summarises any earnings or news for your holdings
 - Surfaces 3–5 actionable ideas, each with a thesis, entry zone, stop, and target (when `ai_picks_generation` is allowed for the current regime)
+- Forward-tests AI picks in **`paper_trades`**: after each `pnpm daily` run, `runEvaluatePaperTrades` walks **bar-by-bar** OHLC vs adaptive trailing rules; outcomes feed the **Signal performance** card; stop activity appears under **Paper trades · trailing stops** in the HTML briefing (previous session’s `trailing_stop_log` + live **near stop** rows)
 
 Full product spec: regenerate `market-pulse-ai-spec.docx` by running
 `node new.cjs` (the source of truth for requirements lives in that script).
@@ -157,6 +163,7 @@ pnpm cli backtest -s 2025-10-01 -e 2026-04-30 -n momentum_breakout
 pnpm cli sentiment         # score news headlines via LLM
 pnpm cli thesis            # generate AI theses for top-signal stocks
 pnpm cli brief             # stage 4 - compose + deliver briefing
+pnpm cli evaluate          # paper-trade trailing evaluation (bar-by-bar; --skip-ai skips STOPPED_OUT post-mortems)
 
 # One-shot pipelines
 pnpm cli run-all           # ingest → enrich → regime → gated screen → sentiment → thesis → brief
@@ -394,6 +401,36 @@ A **meta-layer** on top of the existing pipeline: each open session gets a singl
 
 ---
 
+## Adaptive trailing stops (paper trades)
+
+End-to-end feature for **paper** positions created from AI picks / portfolio adds: **ATR14**-driven upward-only trailing, conservative same-day SL+TP handling, and additive **`exit_reason`** without changing the `CLOSED_WIN` / `CLOSED_LOSS` / `CLOSED_TIME` enum.
+
+**Schema**
+
+- [`src/db/migrations/0007_adaptive_trailing_stop.sql`](src/db/migrations/0007_adaptive_trailing_stop.sql) — `paper_trades` trailing columns, `trailing_stop_log`, **`exit_reason`**
+- [`src/db/migrations/0008_trailing_stop_log_notes.sql`](src/db/migrations/0008_trailing_stop_log_notes.sql) — `trailing_stop_log.notes` (e.g. gap-down-through-stop tag)
+
+**Evaluation**
+
+- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) — bar-by-bar walk from `source_date` to `asOf`; idempotent log inserts; **`pnpm cli evaluate`** / **`pnpm evaluate`** with **`--skip-ai`** to skip fire-and-forget LLM post-mortems on `STOPPED_OUT`
+- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` after the briefing is composed (same ordering as before)
+
+**Briefing**
+
+- [`src/briefing/trailing-stop-card.ts`](src/briefing/trailing-stop-card.ts) — **Paper trades · trailing stops** section (EOD log rows for RAISED / TIGHTENED / STOPPED_OUT; live NEAR_STOP; **`Analysis pending...`** when post-mortem narrative is missing)
+- [`src/briefing/composer.ts`](src/briefing/composer.ts) + [`src/briefing/template.ts`](src/briefing/template.ts) — inject block **above** the regime card
+
+**Post-mortem**
+
+- [`src/agents/trailing-stop-postmortem.ts`](src/agents/trailing-stop-postmortem.ts) — async LLM narrative → `trailing_stop_log.narrative` only; failures leave narrative null (briefing shows placeholder)
+
+**Tests**
+
+- [`tests/scripts/evaluate-trades.test.ts`](tests/scripts/evaluate-trades.test.ts) — merge gates (multi-day catch-up, stats), §9.2 integration cases
+- [`tests/briefing/trailing-stop-card.test.ts`](tests/briefing/trailing-stop-card.test.ts) — §9.3 briefing cases
+
+---
+
 ## Repo layout
 
 ```
@@ -476,6 +513,7 @@ Holiday dates live in [`src/market/nse-calendar.ts`](src/market/nse-calendar.ts)
 | 4     | Delivery             | ✅ shipped    | Croner schedule (07:30 / 15:30 weekdays, Sat 08:00 IST), Gmail SMTP delivery via nodemailer, stop-loss breach detector |
 | 5     | Real-time + Kite     | ✅ shipped    | Kite Connect HTTP client + interactive login; portfolio sync + per-holding LLM HOLD/ADD/TRIM/EXIT analyser; intraday LTP scanner; 4 new screens; single-command `pnpm daily` |
 | 6     | Market regime filter | ✅ shipped    | `regime_daily` + `regime_strategy_gate`; signal enricher + deterministic classifier; regime agent + briefing card; gated screens + gated AI thesis; seed/config via `strategy-gates.json` |
+| —     | Adaptive trailing stops (paper trades) | ✅ shipped | Migrations `0007`/`0008`; `runEvaluatePaperTrades` + `trailing_stop_log`; briefing **Paper trades · trailing stops** (above regime); optional LLM post-mortem on `STOPPED_OUT`; tests in `tests/scripts/evaluate-trades.test.ts` + `tests/briefing/trailing-stop-card.test.ts` |
 
 ---
 
