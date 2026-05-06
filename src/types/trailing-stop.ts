@@ -22,6 +22,9 @@ export type StopLogAction = (typeof STOP_LOG_ACTIONS)[number];
  */
 export const GAP_DOWN_THROUGH_STOP_NOTE = 'gap_down_open:true';
 
+/** Briefing copy when STOPPED_OUT has no narrative yet (LLM pending, failed, or --skip-ai). Spec §Prompt 4. */
+export const TRAILING_STOP_ANALYSIS_PENDING = 'Analysis pending...';
+
 /** Plain result from trailing-stop arithmetic (pure engine implements this in Phase 2). */
 export interface TrailingStopResult {
   newStop: number;

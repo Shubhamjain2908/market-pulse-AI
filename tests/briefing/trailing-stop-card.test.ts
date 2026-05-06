@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { renderTrailingStopSection } from '../../src/briefing/trailing-stop-card.js';
-import { GAP_DOWN_THROUGH_STOP_NOTE } from '../../src/types/trailing-stop.js';
+import {
+  GAP_DOWN_THROUGH_STOP_NOTE,
+  TRAILING_STOP_ANALYSIS_PENDING,
+} from '../../src/types/trailing-stop.js';
 import type { NearStopOpenRow, TrailingStopLogRow } from '../../src/types/trailing-stop.js';
 
 function logRow(
@@ -109,6 +112,21 @@ describe('trailing-stop-card HTML', () => {
       '2026-05-03',
     );
     expect(html).toContain('gap-down open through stop');
+  });
+
+  it('shows Analysis pending when STOPPED_OUT has no narrative yet', () => {
+    const html = renderTrailingStopSection(
+      [
+        logRow({
+          action: 'STOPPED_OUT',
+          symbol: 'NONAR',
+          narrative: null,
+        }),
+      ],
+      [],
+      '2026-05-05',
+    );
+    expect(html).toContain(TRAILING_STOP_ANALYSIS_PENDING);
   });
 
   it('renders NEAR_STOP subsection', () => {

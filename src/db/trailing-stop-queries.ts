@@ -143,8 +143,8 @@ export function patchPaperTradeTrailing(
   ).run(params);
 }
 
-/** Idempotent on (trade_id, log_date, action). */
-export function insertStopLog(row: TrailingStopLogInsert, db: DatabaseType = getDb()): boolean {
+/** Idempotent on (trade_id, log_date, action). Returns new row id when inserted, else null. */
+export function insertStopLog(row: TrailingStopLogInsert, db: DatabaseType = getDb()): number | null {
   const result = db
     .prepare(
       `
@@ -174,7 +174,16 @@ export function insertStopLog(row: TrailingStopLogInsert, db: DatabaseType = get
       action: row.action,
       notes: row.notes ?? null,
     });
-  return result.changes > 0;
+  if (result.changes === 0) return null;
+  return Number(result.lastInsertRowid);
+}
+
+/** Single log row by primary key (post-mortem agent). */
+export function getStopLogById(id: number, db: DatabaseType = getDb()): TrailingStopLogRow | undefined {
+  const row = db.prepare(`SELECT * FROM trailing_stop_log WHERE id = ?`).get(id) as
+    | Record<string, unknown>
+    | undefined;
+  return row ? parseLogRow(row) : undefined;
 }
 
 /** All trailing events for `logDate` (EOD batch date key). */

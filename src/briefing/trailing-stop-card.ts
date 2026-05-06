@@ -6,8 +6,12 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 
 import { getNearStopOpenTrades, getStopLogForDate } from '../db/trailing-stop-queries.js';
-import { GAP_DOWN_THROUGH_STOP_NOTE } from '../types/trailing-stop.js';
-import type { NearStopOpenRow, TrailingStopLogRow } from '../types/trailing-stop.js';
+import {
+  GAP_DOWN_THROUGH_STOP_NOTE,
+  type NearStopOpenRow,
+  TRAILING_STOP_ANALYSIS_PENDING,
+  type TrailingStopLogRow,
+} from '../types/trailing-stop.js';
 
 function esc(s: string | number | undefined | null): string {
   if (s == null) return '';
@@ -67,7 +71,13 @@ function detailForLog(row: TrailingStopLogRow): string {
   if (row.notes === GAP_DOWN_THROUGH_STOP_NOTE) {
     parts.push('gap-down open through stop');
   }
-  if (row.narrative?.trim()) {
+  if (row.action === 'STOPPED_OUT') {
+    if (row.narrative?.trim()) {
+      parts.push(row.narrative.trim());
+    } else {
+      parts.push(TRAILING_STOP_ANALYSIS_PENDING);
+    }
+  } else if (row.narrative?.trim()) {
     parts.push(row.narrative.trim());
   }
   return parts.join(' · ');

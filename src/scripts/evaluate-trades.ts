@@ -4,6 +4,8 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+
+import { scheduleTrailingStopPostMortem } from '../agents/trailing-stop-postmortem.js';
 import { type PaperTradeRow, closePaperTrade, getOpenPaperTrades } from '../db/queries.js';
 import {
   getAtr14,
@@ -15,6 +17,11 @@ import { NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
 import type { ExitReason } from '../types/trailing-stop.js';
 import { GAP_DOWN_THROUGH_STOP_NOTE } from '../types/trailing-stop.js';
 import { applyDay1InitialStop, computeNewStop } from './trailing-stop-engine.js';
+
+export interface EvaluatePaperTradesOptions {
+  /** When true, skip fire-and-forget LLM post-mortem on STOPPED_OUT (writes no narrative). */
+  skipAi?: boolean;
+}
 
 export interface EvaluateTradesResult {
   asOf: string;
@@ -92,6 +99,7 @@ export function evaluateOnePaperTrade(
   trade: PaperTradeRow,
   db: DatabaseType,
   asOf: string,
+  opts?: EvaluatePaperTradesOptions,
 ): 'CLOSED_WIN' | 'CLOSED_LOSS' | 'CLOSED_TIME' | 'no_data' | 'still_open' {
   const bars = getSymbolBars(db, trade.symbol, trade.sourceDate, asOf);
   if (bars.length === 0) return 'no_data';
@@ -193,7 +201,7 @@ export function evaluateOnePaperTrade(
 
     const logStoppedOut = (logDate: string, notes: string | null, exitReason: ExitReason): void => {
       const gap = bar.open < stopLoss ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
-      insertStopLog(
+      const logId = insertStopLog(
         {
           tradeId: trade.id,
           symbol: trade.symbol,
@@ -214,11 +222,12 @@ export function evaluateOnePaperTrade(
       const pnl = pnlPctLong(trade.entryPrice, stopLoss);
       const status = pnl >= 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
       closePaperTrade(trade.id, status, logDate, stopLoss, pnl, db, notes ?? null, exitReason);
+      if (logId !== null && !opts?.skipAi) scheduleTrailingStopPostMortem(logId);
     };
 
     if (hitSl && hitTg) {
       const gap = bar.open < stopLoss ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
-      insertStopLog(
+      const logId = insertStopLog(
         {
           tradeId: trade.id,
           symbol: trade.symbol,
@@ -247,6 +256,7 @@ export function evaluateOnePaperTrade(
         'same-day SL+TP: counted as loss (conservative)',
         'TRAILING_STOP',
       );
+      if (logId !== null && !opts?.skipAi) scheduleTrailingStopPostMortem(logId);
       return 'CLOSED_LOSS';
     }
 
@@ -290,7 +300,11 @@ export function evaluateOnePaperTrade(
   return 'still_open';
 }
 
-export function runEvaluatePaperTrades(asOf: string, db: DatabaseType): EvaluateTradesResult {
+export function runEvaluatePaperTrades(
+  asOf: string,
+  db: DatabaseType,
+  opts?: EvaluatePaperTradesOptions,
+): EvaluateTradesResult {
   resetStopRaisedTodayForOpenTrades(db);
 
   const open = getOpenPaperTrades(db);
@@ -300,7 +314,7 @@ export function runEvaluatePaperTrades(asOf: string, db: DatabaseType): Evaluate
   let skippedNoData = 0;
 
   for (const t of open) {
-    const result = evaluateOnePaperTrade(t, db, asOf);
+    const result = evaluateOnePaperTrade(t, db, asOf, opts);
     if (result === 'no_data') {
       skippedNoData++;
     } else if (result === 'CLOSED_WIN') closedWin++;

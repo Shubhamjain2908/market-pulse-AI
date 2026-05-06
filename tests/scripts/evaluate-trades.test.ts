@@ -92,7 +92,7 @@ describe('evaluate paper trades', () => {
     expect(open).toHaveLength(1);
     const t = open[0];
     if (t === undefined) throw new Error('missing trade');
-    expect(evaluateOnePaperTrade(t, db, '2026-02-02')).toBe('CLOSED_WIN');
+    expect(evaluateOnePaperTrade(t, db, '2026-02-02', { skipAi: true })).toBe('CLOSED_WIN');
     const row = db.prepare('SELECT status, pnl_pct FROM paper_trades WHERE id = ?').get(t.id) as {
       status: string;
       pnl_pct: number;
@@ -121,7 +121,7 @@ describe('evaluate paper trades', () => {
     expect(open).toHaveLength(1);
     const t = open[0];
     if (t === undefined) throw new Error('missing trade');
-    expect(evaluateOnePaperTrade(t, db, '2026-02-02')).toBe('CLOSED_LOSS');
+    expect(evaluateOnePaperTrade(t, db, '2026-02-02', { skipAi: true })).toBe('CLOSED_LOSS');
   });
 
   it('same-day SL+TP counts as LOSS', () => {
@@ -144,7 +144,7 @@ describe('evaluate paper trades', () => {
     expect(open).toHaveLength(1);
     const t = open[0];
     if (t === undefined) throw new Error('missing trade');
-    expect(evaluateOnePaperTrade(t, db, '2026-02-02')).toBe('CLOSED_LOSS');
+    expect(evaluateOnePaperTrade(t, db, '2026-02-02', { skipAi: true })).toBe('CLOSED_LOSS');
   });
 
   it('time-stops after max_hold_days on Nifty calendar', () => {
@@ -170,7 +170,7 @@ describe('evaluate paper trades', () => {
     expect(open).toHaveLength(1);
     const t = open[0];
     if (t === undefined) throw new Error('missing trade');
-    expect(evaluateOnePaperTrade(t, db, '2026-03-04')).toBe('CLOSED_TIME');
+    expect(evaluateOnePaperTrade(t, db, '2026-03-04', { skipAi: true })).toBe('CLOSED_TIME');
     const row = db.prepare('SELECT status FROM paper_trades WHERE id = ?').get(t.id) as {
       status: string;
     };
@@ -216,7 +216,7 @@ describe('evaluate paper trades', () => {
     const t = getOpenPaperTrades(db)[0];
     if (t === undefined) throw new Error('missing trade');
 
-    expect(evaluateOnePaperTrade(t, db, d5)).toBe('CLOSED_WIN');
+    expect(evaluateOnePaperTrade(t, db, d5, { skipAi: true })).toBe('CLOSED_WIN');
 
     const row = db
       .prepare('SELECT status, outcome_date, exit_reason FROM paper_trades WHERE id = ?')
@@ -271,7 +271,7 @@ describe('evaluate paper trades', () => {
     const t = getOpenPaperTrades(db)[0];
     if (t === undefined) throw new Error('missing trade');
 
-    expect(evaluateOnePaperTrade(t, db, day3)).toBe('CLOSED_WIN');
+    expect(evaluateOnePaperTrade(t, db, day3, { skipAi: true })).toBe('CLOSED_WIN');
 
     const closed = db
       .prepare('SELECT status, pnl_pct, exit_reason FROM paper_trades WHERE id = ?')
@@ -302,7 +302,7 @@ describe('evaluate paper trades', () => {
       },
       db,
     );
-    const r = runEvaluatePaperTrades('2026-02-02', db);
+    const r = runEvaluatePaperTrades('2026-02-02', db, { skipAi: true });
     expect(r.closed).toBe(1);
     expect(r.closedWin).toBe(1);
     expect(r.stillOpen).toBe(0);
