@@ -14,6 +14,7 @@ import {
   runEvaluatePaperTrades,
 } from '../../src/scripts/evaluate-trades.js';
 import type { RawQuote } from '../../src/types/domain.js';
+import { GAP_DOWN_THROUGH_STOP_NOTE } from '../../src/types/trailing-stop.js';
 
 function q(symbol: string, date: string, o: number, h: number, l: number, c: number): RawQuote {
   return {
@@ -93,12 +94,16 @@ describe('evaluate paper trades', () => {
     const t = open[0];
     if (t === undefined) throw new Error('missing trade');
     expect(evaluateOnePaperTrade(t, db, '2026-02-02', { skipAi: true })).toBe('CLOSED_WIN');
-    const row = db.prepare('SELECT status, pnl_pct FROM paper_trades WHERE id = ?').get(t.id) as {
+    const row = db
+      .prepare('SELECT status, pnl_pct, exit_reason FROM paper_trades WHERE id = ?')
+      .get(t.id) as {
       status: string;
       pnl_pct: number;
+      exit_reason: string | null;
     };
     expect(row.status).toBe('CLOSED_WIN');
     expect(row.pnl_pct).toBeCloseTo(20, 4);
+    expect(row.exit_reason).toBe('TARGET_HIT');
   });
 
   it('closes LOSS when low hits stop', () => {
@@ -145,6 +150,11 @@ describe('evaluate paper trades', () => {
     const t = open[0];
     if (t === undefined) throw new Error('missing trade');
     expect(evaluateOnePaperTrade(t, db, '2026-02-02', { skipAi: true })).toBe('CLOSED_LOSS');
+    const row = db
+      .prepare('SELECT exit_reason, notes FROM paper_trades WHERE id = ?')
+      .get(t.id) as { exit_reason: string | null; notes: string | null };
+    expect(row.exit_reason).toBe('TRAILING_STOP');
+    expect(row.notes).toContain('same-day SL+TP');
   });
 
   it('time-stops after max_hold_days on Nifty calendar', () => {
@@ -284,6 +294,68 @@ describe('evaluate paper trades', () => {
     expect(stats.closedCount).toBe(1);
     expect(stats.winCount).toBe(1);
     expect(stats.lossCount).toBe(0);
+  });
+
+  describe('§9.2 evaluator integration (spec)', () => {
+    it('9.2.1 — R3 gap-down open tags STOPPED_OUT log notes', () => {
+      const src = '2026-09-01';
+      const d1 = '2026-09-02';
+      const d2 = '2026-09-03';
+      seedNifty(d1, d2);
+      upsertQuotes([q('GAP92', d1, 100, 112, 100, 108), q('GAP92', d2, 98, 105, 101, 104)], db);
+      seedAtr14('GAP92', [src, d1, d2], 3);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'GAP92',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 90,
+          target: 220,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const t = getOpenPaperTrades(db)[0];
+      if (t === undefined) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, d2, { skipAi: true })).toBe('CLOSED_WIN');
+
+      const logNotes = db
+        .prepare(
+          `SELECT notes FROM trailing_stop_log WHERE trade_id = ? AND action = 'STOPPED_OUT'`,
+        )
+        .get(t.id) as { notes: string | null } | undefined;
+      expect(logNotes?.notes).toBe(GAP_DOWN_THROUGH_STOP_NOTE);
+    });
+
+    it('9.2.2 — first session bar stop-out uses INITIAL_STOP (Day-1 block)', () => {
+      const src = '2026-08-01';
+      const d1 = '2026-08-02';
+      seedNifty(d1);
+      upsertQuotes([q('INIT1', d1, 95, 100, 88, 92)], db);
+      seedAtr14('INIT1', [src], 5);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'INIT1',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 90,
+          target: 200,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const t = getOpenPaperTrades(db)[0];
+      if (t === undefined) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, d1, { skipAi: true })).toBe('CLOSED_LOSS');
+      const row = db.prepare('SELECT exit_reason FROM paper_trades WHERE id = ?').get(t.id) as {
+        exit_reason: string | null;
+      };
+      expect(row.exit_reason).toBe('INITIAL_STOP');
+    });
   });
 
   it('runEvaluatePaperTrades returns counts', () => {

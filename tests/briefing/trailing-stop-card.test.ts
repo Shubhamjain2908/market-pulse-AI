@@ -147,4 +147,74 @@ describe('trailing-stop-card HTML', () => {
     expect(html).toContain('#7');
     expect(html).toContain('₹101.00 vs stop ₹100.00');
   });
+
+  describe('§9.3 briefing card (spec)', () => {
+    it('9.3.1 — STOPPED_OUT narrative shows post-mortem text, not pending placeholder', () => {
+      const html = renderTrailingStopSection(
+        [
+          logRow({
+            action: 'STOPPED_OUT',
+            symbol: 'POST1',
+            narrative:
+              'Volatility expanded into the exit; the trail had tightened before the session flushed through the level.',
+          }),
+        ],
+        [],
+        '2026-06-10',
+      );
+      expect(html).toContain('Volatility expanded');
+      expect(html).not.toContain(TRAILING_STOP_ANALYSIS_PENDING);
+    });
+
+    it('9.3.2 — EOD log and Near stop blocks both appear when each has rows', () => {
+      const near: NearStopOpenRow[] = [
+        {
+          kind: 'NEAR_STOP',
+          tradeId: 2,
+          symbol: 'NEAR2',
+          stopLoss: 200,
+          todayClose: 201,
+          atr14Today: 1.5,
+          cushion: 1,
+        },
+      ];
+      const html = renderTrailingStopSection(
+        [
+          logRow({
+            id: 3,
+            action: 'RAISED',
+            symbol: 'LOG2',
+            tradeId: 9,
+            prevStop: 90,
+            newStop: 95,
+            stopDelta: 5,
+          }),
+        ],
+        near,
+        '2026-06-11',
+      );
+      expect(html).toContain('EOD log');
+      expect(html).toContain('Near stop (open positions)');
+      expect(html).toContain('LOG2');
+      expect(html).toContain('NEAR2');
+    });
+
+    it('9.3.3 — TIGHTENED renders as its own event badge', () => {
+      const html = renderTrailingStopSection(
+        [
+          logRow({
+            action: 'TIGHTENED',
+            symbol: 'TIGHT1',
+            prevStop: 100,
+            newStop: 102,
+            stopDelta: 2,
+          }),
+        ],
+        [],
+        '2026-06-12',
+      );
+      expect(html).toContain('Tightened');
+      expect(html).toContain('TIGHT1');
+    });
+  });
 });
