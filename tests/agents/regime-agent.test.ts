@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { runRegimeAgent } from '../../src/agents/regime-agent.js';
+import { isCompleteRegimeNarrative, runRegimeAgent } from '../../src/agents/regime-agent.js';
 import { migrate } from '../../src/db/migrate.js';
 import { getTodayRegime } from '../../src/db/regime-queries.js';
 import { resetLlmProvider, setLlmProvider } from '../../src/llm/factory.js';
@@ -36,5 +36,16 @@ describe('runRegimeAgent', () => {
     expect(row?.narrative).toMatch(/^Regime: /);
     expect(out.usedFallbackNarrative).toBe(true);
     db.close();
+  });
+
+  it('isCompleteRegimeNarrative rejects truncated sentences', () => {
+    expect(isCompleteRegimeNarrative('The market remains choppy, with strong breadth (A/D ratio 3.7')).toBe(
+      false,
+    );
+    expect(
+      isCompleteRegimeNarrative(
+        'The market remains choppy, with strong breadth (A/D ratio 3.7) and steady flows.',
+      ),
+    ).toBe(true);
   });
 });

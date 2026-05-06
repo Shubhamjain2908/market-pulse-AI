@@ -67,7 +67,9 @@ Rules:
 5. suggestedStop / suggestedTarget are optional INR numbers.
 6. Do NOT recommend ADD when RSI_14 > 70 or price is within ~3% of the 52-week high
    (pct_from_52w_high >= -3). In those cases prefer HOLD and cite overbought / extended setup.
-7. AVERAGING DOWN: If you recommend ADD on a position with negative unrealised P&L, you MUST:
+7. Do NOT recommend ADD when volume_ratio_20d < 0.5 — thin participation vs the 20-day average
+   suggests weak conviction on up-moves; prefer HOLD and cite participation risk.
+8. AVERAGING DOWN: If you recommend ADD on a position with negative unrealised P&L, you MUST:
    (a) state the % gain from \`Last price\` to \`Avg buy price\` (breakeven gain) in \`triggerReason\`;
    (b) ensure \`suggestedStop\` is far enough below current price that breakeven gain <= ~1.5x
    the stop's downside %. If R:R is worse than 1.5x or breakeven > 12%, default to HOLD and explain why.
@@ -105,12 +107,17 @@ export function applyPortfolioAddGuardrails(
 
   const rsi = signals.rsi_14;
   const pctHi = signals.pct_from_52w_high;
+  const volRatio = signals.volume_ratio_20d;
   const overbought = rsi != null && rsi > 70;
   const near52wHigh = pctHi != null && pctHi >= -3;
-  if (overbought || near52wHigh) {
+  const weakVolume =
+    volRatio != null && Number.isFinite(volRatio) && volRatio < 0.5;
+  if (overbought || near52wHigh || weakVolume) {
     const bits: string[] = [];
     if (overbought) bits.push(`RSI ${rsi?.toFixed(0)} > 70`);
     if (near52wHigh) bits.push(`≤3% from 52W high (${pctHi?.toFixed(1)}% off high)`);
+    if (weakVolume)
+      bits.push(`volume_ratio_20d ${volRatio?.toFixed(2)} < 0.5 (weak participation)`);
     const suffix = `[Guardrail: ${bits.join('; ')} — HOLD vs ADD into extension.]`;
     let triggerReason = `${action.triggerReason} ${suffix}`;
     if (triggerReason.length > 280) triggerReason = `${triggerReason.slice(0, 276)}…`;

@@ -22,6 +22,9 @@ export type StopLogAction = (typeof STOP_LOG_ACTIONS)[number];
  */
 export const GAP_DOWN_THROUGH_STOP_NOTE = 'gap_down_open:true';
 
+/** Briefing copy when STOPPED_OUT has no narrative yet (LLM pending, failed, or --skip-ai). Spec §Prompt 4. */
+export const TRAILING_STOP_ANALYSIS_PENDING = 'Analysis pending...';
+
 /** Plain result from trailing-stop arithmetic (pure engine implements this in Phase 2). */
 export interface TrailingStopResult {
   newStop: number;
@@ -29,6 +32,7 @@ export interface TrailingStopResult {
   multiplier: 1.5 | 2;
   unrealisedPct: number;
   wasRaised: boolean;
+  /** True when DB had mult 2.0 but this bar applies 1.5 rule (gain ≥15%); may coexist with HELD. */
   wasTightened: boolean;
   action: 'RAISED' | 'HELD' | 'TIGHTENED';
 }
@@ -74,6 +78,15 @@ export interface TrailingStopLogInsert {
 export type TrailingLogAlertRow = Omit<TrailingStopLogRow, 'tradeId'> & {
   tradeId: number;
 };
+
+/** Optional join from `paper_trades` for briefing STOPPED_OUT copy (trade P&L vs stop-audit delta). */
+export interface TrailingStopLogBriefingExtras {
+  tradeEntryPrice?: number | null;
+  tradeExitPrice?: number | null;
+  tradePnlPct?: number | null;
+}
+
+export type TrailingStopLogBriefingRow = TrailingStopLogRow & TrailingStopLogBriefingExtras;
 
 /** NEAR_STOP is computed fresh (not persisted in trailing_stop_log). */
 export interface NearStopOpenRow {

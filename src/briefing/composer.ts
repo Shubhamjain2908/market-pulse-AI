@@ -48,6 +48,7 @@ import {
   type WatchlistAlert,
   renderBriefing,
 } from './template.js';
+import { renderTrailingStopBriefingBlock } from './trailing-stop-card.js';
 
 const log = child({ component: 'briefing-composer' });
 
@@ -155,6 +156,8 @@ export async function composeBriefing(
     opts.thesisRun,
   );
 
+  const trailingStopBlock = renderTrailingStopBriefingBlock(date, db) || undefined;
+
   let regimeBlock: string | undefined;
   const regimeRow = getRegimeForCalendarDate(date, db);
   if (regimeRow) {
@@ -186,6 +189,7 @@ export async function composeBriefing(
     news,
     theses: theses.length > 0 ? theses : undefined,
     aiPicksStatus,
+    trailingStopBlock,
     regimeBlock,
   };
 

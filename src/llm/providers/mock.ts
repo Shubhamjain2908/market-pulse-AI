@@ -109,8 +109,13 @@ export class MockLlmProvider implements LlmProvider {
     let text = MOCK_NARRATIVE;
     if (opts.system.startsWith('You are a market regime analyst')) {
       text = mockRegimePayloadFromUser(opts.user).narrative;
-    } else if (opts.system.startsWith('You are a market regime classifier for Indian equity markets')) {
+    } else if (
+      opts.system.startsWith('You are a market regime classifier for Indian equity markets')
+    ) {
       text = JSON.stringify(mockRegimePayloadFromUser(opts.user));
+    } else if (opts.system.includes('paper-traded NSE cash-market long')) {
+      text =
+        'The exit aligns with the adaptive trailing rule: ATR scaled the stop as price extended, and the session breached the active level. Treat this as defined risk working rather than a thesis surprise.';
     } else if (opts.system.includes('one sentence only')) {
       text =
         'Aggressive FII selling of roughly ₹8,048 Cr overwhelms DII support near ₹3,487 Cr, pushing Nifty down 0.74% with India VIX elevated at 18.46.';
@@ -137,17 +142,22 @@ export class MockLlmProvider implements LlmProvider {
           ? pairs.map((p) => ({ id: p.id, sentiment: mockSentimentFromHeadline(p.headline) }))
           : MOCK_SENTIMENT;
       raw = JSON.stringify(batch);
-    } else if (opts.system.startsWith('You are a market regime classifier for Indian equity markets')) {
+    } else if (
+      opts.system.startsWith('You are a market regime classifier for Indian equity markets')
+    ) {
       raw = JSON.stringify(mockRegimePayloadFromUser(opts.user));
     } else if (opts.system.includes('portfolio review')) {
       const symbolMatch = opts.user.match(/# Position:\s+(\w+)/);
       const rsiMatch = opts.user.match(/rsi_14:\s*([\d.]+)/);
       const pctHiMatch = opts.user.match(/pct_from_52w_high:\s*([-.\d]+)/);
+      const volMatch = opts.user.match(/volume_ratio_20d:\s*([\d.]+)/);
       const rsi = rsiMatch ? Number(rsiMatch[1]) : null;
       const pctHi = pctHiMatch ? Number(pctHiMatch[1]) : null;
+      const volRatio = volMatch ? Number(volMatch[1]) : null;
       /** Default HOLD; use ADD when stretched so tests can assert ADD→HOLD guardrails. */
       let action: 'HOLD' | 'ADD' | 'TRIM' | 'EXIT' = 'HOLD';
-      if (rsi != null && rsi > 70) action = 'ADD';
+      if (volRatio != null && volRatio < 0.5) action = 'ADD';
+      else if (rsi != null && rsi > 70) action = 'ADD';
       else if (pctHi != null && pctHi >= -3) action = 'ADD';
 
       raw = JSON.stringify({

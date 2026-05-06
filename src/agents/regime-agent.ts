@@ -60,6 +60,16 @@ export function sanitizeRegimeNarrativeText(raw: string): string {
   return s;
 }
 
+/** Rejects truncated / malformed LLM output (mid-parenthesis, missing terminator) — use templated fallback instead. */
+export function isCompleteRegimeNarrative(s: string): boolean {
+  const t = s.trim();
+  if (t.length < 28) return false;
+  if (!/[.!?]$/.test(t)) return false;
+  const open = [...t.matchAll(/\(/g)].length;
+  const close = [...t.matchAll(/\)/g)].length;
+  return open === close;
+}
+
 export interface RunRegimeAgentOptions extends RunRegimeClassifierOptions {
   /** When true, skip the LLM call and use the templated fallback narrative only. */
   skipLlm?: boolean;
@@ -134,12 +144,14 @@ export async function runRegimeAgent(
         system: REGIME_NARRATIVE_SYSTEM_PROMPT,
         user: JSON.stringify(buildRegimeAgentUserPayload(prepared)),
         temperature: 0.2,
-        maxOutputTokens: 512,
+        maxOutputTokens: 160,
       });
       const n = sanitizeRegimeNarrativeText(res.text);
-      if (n) {
+      if (n && isCompleteRegimeNarrative(n)) {
         narrative = n;
         usedFallbackNarrative = false;
+      } else if (n && !isCompleteRegimeNarrative(n)) {
+        log.warn({ preview: n.slice(0, 120) }, 'regime narrative incomplete — using templated fallback');
       }
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));

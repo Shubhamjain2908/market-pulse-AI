@@ -170,7 +170,7 @@ export async function runDailyWorkflow(
     delivery: config.BRIEFING_DELIVERY,
   });
 
-  const paperEval = runEvaluatePaperTrades(briefing.date, getDb());
+  const paperEval = runEvaluatePaperTrades(briefing.date, getDb(), { skipAi: opts.skipAi });
   log.info(paperEval, 'paper trade evaluation');
 
   maybeWriteDailyRunSummary({

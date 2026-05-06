@@ -163,6 +163,8 @@ export interface BriefingData {
   aiPicksStatus: AiPicksSectionStatus;
   /** Paper-trade performance (last N days) — Phase 7. */
   signalPerformance?: SignalPerformance;
+  /** Pre-rendered trailing-stop activity (inserted above regime / global cues). */
+  trailingStopBlock?: string;
   /** Pre-rendered regime card + optional change banner (inserted above global cues). */
   regimeBlock?: string;
 }
@@ -181,6 +183,7 @@ export function renderBriefing(data: BriefingData): string {
     ${renderHeader(data.date)}
     ${renderMood(data.date, data.mood, data.moodNarrative, data.marketClosure)}
     ${renderSignalPerformance(data.signalPerformance)}
+    ${data.trailingStopBlock ?? ''}
     ${data.regimeBlock ?? ''}
     ${renderGlobalCues(data.globalCues)}
     ${renderPortfolio(data.portfolio)}
@@ -843,6 +846,25 @@ function baseStyles(): string {
     .global-cue.positive .mood-value { color: var(--positive); }
     .global-cue.negative .mood-value { color: var(--negative); }
     /* Regime card (spec §7.1) */
+    .trailing-stop-card {
+      border-left: 4px solid var(--accent);
+      background: linear-gradient(180deg, #f8fafc 0%, #ffffff 55%);
+    }
+    .trailing-stop-sub { margin: 14px 0 8px; font-size: 13px; color: var(--accent); }
+    .trailing-stop-table { font-size: 13px; margin-top: 6px; }
+    .trailing-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+    }
+    .trailing-badge--stop { background: #fde7e7; color: var(--negative); }
+    .trailing-badge--tight { background: #fff8e6; color: #b7791f; }
+    .trailing-badge--raise { background: #e6f4ea; color: var(--positive); }
+    .trailing-badge--near { background: #eef4f8; color: var(--accent); }
     .regime-change-banner {
       margin-bottom: 12px;
       padding: 12px 14px;
