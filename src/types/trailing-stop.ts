@@ -29,6 +29,7 @@ export interface TrailingStopResult {
   multiplier: 1.5 | 2;
   unrealisedPct: number;
   wasRaised: boolean;
+  /** True when DB had mult 2.0 but this bar applies 1.5 rule (gain ≥15%); may coexist with HELD. */
   wasTightened: boolean;
   action: 'RAISED' | 'HELD' | 'TIGHTENED';
 }
