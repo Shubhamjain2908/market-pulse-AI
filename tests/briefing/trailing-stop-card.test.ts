@@ -4,11 +4,15 @@ import {
   GAP_DOWN_THROUGH_STOP_NOTE,
   TRAILING_STOP_ANALYSIS_PENDING,
 } from '../../src/types/trailing-stop.js';
-import type { NearStopOpenRow, TrailingStopLogRow } from '../../src/types/trailing-stop.js';
+import type {
+  NearStopOpenRow,
+  TrailingStopLogBriefingRow,
+  TrailingStopLogRow,
+} from '../../src/types/trailing-stop.js';
 
 function logRow(
-  partial: Partial<TrailingStopLogRow> & Pick<TrailingStopLogRow, 'action'>,
-): TrailingStopLogRow {
+  partial: Partial<TrailingStopLogBriefingRow> & Pick<TrailingStopLogRow, 'action'>,
+): TrailingStopLogBriefingRow {
   return {
     id: partial.id ?? 1,
     tradeId: partial.tradeId ?? 10,
@@ -127,6 +131,69 @@ describe('trailing-stop-card HTML', () => {
       '2026-05-05',
     );
     expect(html).toContain(TRAILING_STOP_ANALYSIS_PENDING);
+  });
+
+  it('omits sub-threshold RAISED noise from EOD log', () => {
+    const html = renderTrailingStopSection(
+      [
+        logRow({
+          action: 'RAISED',
+          symbol: 'VBL',
+          tradeId: 59,
+          prevStop: 478,
+          newStop: 478.03,
+          stopDelta: 0.03,
+        }),
+      ],
+      [],
+      '2026-05-06',
+    );
+    expect(html).toBe('');
+  });
+
+  it('still renders material RAISED after filtering', () => {
+    const html = renderTrailingStopSection(
+      [
+        logRow({
+          action: 'RAISED',
+          symbol: 'IRCTC',
+          tradeId: 84,
+          prevStop: 800,
+          newStop: 804.82,
+          stopDelta: 4.82,
+        }),
+      ],
+      [],
+      '2026-05-06',
+    );
+    expect(html).toContain('IRCTC');
+    expect(html).toContain('Raised');
+    expect(html).toContain('+4.82');
+  });
+
+  it('STOPPED_OUT shows trade P&amp;L separately from stop delta vs session open', () => {
+    const html = renderTrailingStopSection(
+      [
+        logRow({
+          action: 'STOPPED_OUT',
+          symbol: 'NTPC',
+          tradeId: 28,
+          prevStop: 393,
+          newStop: 393,
+          stopDelta: 0,
+          tradeEntryPrice: 393,
+          tradeExitPrice: 393,
+          tradePnlPct: 0,
+          narrative: null,
+        }),
+      ],
+      [],
+      '2026-05-06',
+    );
+    expect(html).toContain('trade P&amp;L +0.00%');
+    expect(html).toContain('entry ₹393.00 → exit ₹393.00');
+    expect(html).toContain('vs session open');
+    expect(html).toContain('fill at stop without intraday raise');
   });
 
   it('renders NEAR_STOP subsection', () => {

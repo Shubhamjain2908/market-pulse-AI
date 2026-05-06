@@ -5,11 +5,12 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 
-import { getNearStopOpenTrades, getStopLogForDate } from '../db/trailing-stop-queries.js';
+import { getNearStopOpenTrades, getStopLogForBriefingDate } from '../db/trailing-stop-queries.js';
 import {
   GAP_DOWN_THROUGH_STOP_NOTE,
   type NearStopOpenRow,
   TRAILING_STOP_ANALYSIS_PENDING,
+  type TrailingStopLogBriefingRow,
   type TrailingStopLogRow,
 } from '../types/trailing-stop.js';
 
@@ -31,13 +32,35 @@ function signedDelta(d: number): string {
   return `${sign}${Math.abs(d).toFixed(2)}`;
 }
 
+/** Signed percent for trade P&L lines (not rupee deltas). */
+function signedPct(p: number): string {
+  const sign = p >= 0 ? '+' : '−';
+  return `${sign}${Math.abs(p).toFixed(2)}%`;
+}
+
+/** Briefing-only: ignore tiny RAISED/TIGHTENED noise (DB still logs everything). */
+const MIN_STOP_DELTA_ABS_INR = 1;
+const MIN_STOP_DELTA_FRAC_OF_STOP = 0.005;
+
+export function minMaterialStopDeltaRupee(referenceStop: number): number {
+  const ref = referenceStop > 0 ? referenceStop : 1;
+  return Math.max(MIN_STOP_DELTA_ABS_INR, ref * MIN_STOP_DELTA_FRAC_OF_STOP);
+}
+
+export function shouldIncludeTrailingLogInBriefing(row: TrailingStopLogRow): boolean {
+  if (row.action === 'STOPPED_OUT') return true;
+  if (row.action !== 'RAISED' && row.action !== 'TIGHTENED') return false;
+  const threshold = minMaterialStopDeltaRupee(row.prevStop > 0 ? row.prevStop : row.newStop);
+  return Math.abs(row.stopDelta) >= threshold;
+}
+
 const ACTION_ORDER: Record<string, number> = {
   STOPPED_OUT: 0,
   TIGHTENED: 1,
   RAISED: 2,
 };
 
-function sortLogs(rows: TrailingStopLogRow[]): TrailingStopLogRow[] {
+function sortLogs(rows: TrailingStopLogBriefingRow[]): TrailingStopLogBriefingRow[] {
   return [...rows].sort((a, b) => {
     const pa = ACTION_ORDER[a.action] ?? 9;
     const pb = ACTION_ORDER[b.action] ?? 9;
@@ -58,11 +81,33 @@ function actionBadgeClass(action: TrailingStopLogRow['action']): string {
   }
 }
 
-function detailForLog(row: TrailingStopLogRow): string {
+function detailForLog(row: TrailingStopLogBriefingRow): string {
   const parts: string[] = [];
+
+  if (row.action === 'STOPPED_OUT') {
+    const tradeBits: string[] = [];
+    if (row.tradePnlPct != null && Number.isFinite(row.tradePnlPct)) {
+      tradeBits.push(`trade P&L ${signedPct(row.tradePnlPct)}`);
+    }
+    if (
+      row.tradeEntryPrice != null &&
+      Number.isFinite(row.tradeEntryPrice) &&
+      row.tradeExitPrice != null &&
+      Number.isFinite(row.tradeExitPrice)
+    ) {
+      tradeBits.push(
+        `entry ${fmtRupee(row.tradeEntryPrice)} → exit ${fmtRupee(row.tradeExitPrice)}`,
+      );
+    }
+    if (tradeBits.length > 0) {
+      parts.push(tradeBits.join(' · '));
+    }
+  }
+
   parts.push(
-    `${fmtRupee(row.prevStop)} → ${fmtRupee(row.newStop)} (${signedDelta(row.stopDelta)})`,
+    `stop ${fmtRupee(row.prevStop)} → ${fmtRupee(row.newStop)} (${signedDelta(row.stopDelta)} vs session open)`,
   );
+
   if (row.action !== 'STOPPED_OUT') {
     parts.push(
       `candidate ${fmtRupee(row.candidateStop)} · ${row.multiplierUsed}× ATR · unrealised ${row.unrealisedPct.toFixed(1)}%`,
@@ -72,6 +117,9 @@ function detailForLog(row: TrailingStopLogRow): string {
     parts.push('gap-down open through stop');
   }
   if (row.action === 'STOPPED_OUT') {
+    if (Math.abs(row.stopDelta) < 1e-9) {
+      parts.push('fill at stop without intraday raise');
+    }
     if (row.narrative?.trim()) {
       parts.push(row.narrative.trim());
     } else {
@@ -83,7 +131,7 @@ function detailForLog(row: TrailingStopLogRow): string {
   return parts.join(' · ');
 }
 
-function renderLogRows(rows: TrailingStopLogRow[]): string {
+function renderLogRows(rows: TrailingStopLogBriefingRow[]): string {
   const sorted = sortLogs(rows);
   const body = sorted
     .map((row) => {
@@ -132,12 +180,14 @@ function renderNearRows(rows: NearStopOpenRow[]): string {
  * Renders the full trailing-stop section from pre-fetched rows (easier to unit test).
  */
 export function renderTrailingStopSection(
-  logs: TrailingStopLogRow[],
+  logs: TrailingStopLogBriefingRow[],
   nearStop: NearStopOpenRow[],
   sessionDate: string,
 ): string {
   const briefingLogs = logs.filter(
-    (r) => r.action === 'RAISED' || r.action === 'TIGHTENED' || r.action === 'STOPPED_OUT',
+    (r) =>
+      (r.action === 'RAISED' || r.action === 'TIGHTENED' || r.action === 'STOPPED_OUT') &&
+      shouldIncludeTrailingLogInBriefing(r),
   );
   if (briefingLogs.length === 0 && nearStop.length === 0) return '';
 
@@ -159,15 +209,15 @@ export function renderTrailingStopSection(
   return `
   <section class="card trailing-stop-card" aria-label="Paper trade trailing stops">
     <h2>Paper trades · trailing stops</h2>
-    <p class="section-lede muted">Adaptive trailing from EOD evaluation. HELD rows are omitted here.</p>
+    <p class="section-lede muted">Adaptive trailing from EOD evaluation. HELD rows are omitted here; tiny stop lifts below ₹1 or 0.5% of the prior stop are omitted as noise.</p>
     ${logBlock}
     ${nearBlock}
   </section>`;
 }
 
-/** Loads today&apos;s log plus live near-stop OPEN rows and returns HTML, or an empty string. */
+/** Loads today's log plus live near-stop OPEN rows and returns HTML, or an empty string. */
 export function renderTrailingStopBriefingBlock(sessionDate: string, db: DatabaseType): string {
-  const logs = getStopLogForDate(sessionDate, db);
+  const logs = getStopLogForBriefingDate(sessionDate, db);
   const near = getNearStopOpenTrades(sessionDate, db);
   return renderTrailingStopSection(logs, near, sessionDate);
 }
