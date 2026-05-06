@@ -100,7 +100,7 @@ describe('trailing-stop-queries', () => {
         },
         db,
       ),
-    ).toBe(false);
+    ).toBeNull();
     const rows = db.prepare('SELECT COUNT(*) AS c FROM trailing_stop_log').get() as { c: number };
     expect(rows.c).toBe(1);
   });
