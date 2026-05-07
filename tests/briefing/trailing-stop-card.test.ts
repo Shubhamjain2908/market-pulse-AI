@@ -30,6 +30,9 @@ function logRow(
     narrative: partial.narrative ?? null,
     notes: partial.notes ?? null,
     createdAt: partial.createdAt ?? '2026-05-01T10:00:00',
+    tradeEntryPrice: partial.tradeEntryPrice,
+    tradeExitPrice: partial.tradeExitPrice,
+    tradePnlPct: partial.tradePnlPct,
   };
 }
 

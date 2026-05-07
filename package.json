@@ -32,6 +32,7 @@
     "regime:gate-summary": "tsx src/cli.ts regime:gate-summary",
     "regime:seed-gates": "tsx scripts/seed-regime-gates.mts",
     "momentum:backfill-universe": "tsx scripts/backfill-momentum-universe.mts",
+    "momentum:refresh-earnings": "tsx scripts/refresh-earnings-calendar.mts",
     "ingest": "tsx src/cli.ts ingest",
     "enrich": "tsx src/cli.ts enrich",
     "screen": "tsx src/cli.ts screen",

@@ -53,4 +53,16 @@ describe('db/momentum-queries', () => {
     expect(isInEarningsBlackoutCalendarWindow('XYZ', '2026-05-10', db)).toBe(false);
     db.close();
   });
+
+  it('isInEarningsBlackoutCalendarWindow respects custom windowDays', () => {
+    const db = getDb({ path: dbPath });
+    migrate(db);
+    db.prepare(
+      `INSERT INTO earnings_calendar (symbol, expected_date, source, fetched_at)
+       VALUES ('ABC', '2026-05-10', 'yahoo', '2026-05-07')`,
+    ).run();
+    expect(isInEarningsBlackoutCalendarWindow('ABC', '2026-05-08', db, 2)).toBe(true);
+    expect(isInEarningsBlackoutCalendarWindow('ABC', '2026-05-08', db, 1)).toBe(false);
+    db.close();
+  });
 });
