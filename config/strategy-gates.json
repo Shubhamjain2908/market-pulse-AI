@@ -1,62 +1,326 @@
 {
   "description": "Seed matrix for regime_strategy_gate: which strategies run in each regime and position-sizing multipliers. Edit and run `pnpm regime:seed-gates`. Screen names match config/screens.json; meta-strategies (ai_picks_generation, portfolio_exit_signals, trailing_stop_update) gate agents outside the screener.",
   "meta": {
-    "futureStrategies": [
-      "quality_garp",
-      "earnings_reversal",
-      "sector_rotation",
-      "catalyst_driven"
-    ]
+    "futureStrategies": ["quality_garp", "earnings_reversal", "sector_rotation", "catalyst_driven"]
   },
   "rows": [
-    { "strategyId": "momentum_breakout", "regime": "BULL_TRENDING", "allowed": true, "sizeMultiplier": 1.0, "notes": "spec: full size in bull" },
-    { "strategyId": "momentum_breakout", "regime": "CHOPPY", "allowed": false, "sizeMultiplier": 0, "notes": "spec: skip momentum in chop" },
-    { "strategyId": "momentum_breakout", "regime": "BEAR_TRENDING", "allowed": false, "sizeMultiplier": 0, "notes": "spec: skip" },
-    { "strategyId": "momentum_breakout", "regime": "CRISIS", "allowed": false, "sizeMultiplier": 0, "notes": "spec: skip" },
+    {
+      "strategyId": "momentum_breakout",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "spec: full size in bull"
+    },
+    {
+      "strategyId": "momentum_breakout",
+      "regime": "CHOPPY",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": "spec: skip momentum in chop"
+    },
+    {
+      "strategyId": "momentum_breakout",
+      "regime": "BEAR_TRENDING",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": "spec: skip"
+    },
+    {
+      "strategyId": "momentum_breakout",
+      "regime": "CRISIS",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": "spec: skip"
+    },
 
-    { "strategyId": "quality_at_value", "regime": "BULL_TRENDING", "allowed": true, "sizeMultiplier": 1.0, "notes": "maps spec quality_garp" },
-    { "strategyId": "quality_at_value", "regime": "CHOPPY", "allowed": true, "sizeMultiplier": 0.5, "notes": null },
-    { "strategyId": "quality_at_value", "regime": "BEAR_TRENDING", "allowed": true, "sizeMultiplier": 0.25, "notes": null },
-    { "strategyId": "quality_at_value", "regime": "CRISIS", "allowed": false, "sizeMultiplier": 0, "notes": null },
+    {
+      "strategyId": "momentum_mf",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "multi-factor momentum screener (Alpha)"
+    },
+    {
+      "strategyId": "momentum_mf",
+      "regime": "CHOPPY",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": "spec: skip — ranker runs, no paper trades"
+    },
+    {
+      "strategyId": "momentum_mf",
+      "regime": "BEAR_TRENDING",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": "spec: skip"
+    },
+    {
+      "strategyId": "momentum_mf",
+      "regime": "CRISIS",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": "spec: skip"
+    },
 
-    { "strategyId": "fii_accumulation", "regime": "BULL_TRENDING", "allowed": true, "sizeMultiplier": 1.0, "notes": "maps spec sector_rotation-style gate" },
-    { "strategyId": "fii_accumulation", "regime": "CHOPPY", "allowed": true, "sizeMultiplier": 0.5, "notes": null },
-    { "strategyId": "fii_accumulation", "regime": "BEAR_TRENDING", "allowed": false, "sizeMultiplier": 0, "notes": null },
-    { "strategyId": "fii_accumulation", "regime": "CRISIS", "allowed": false, "sizeMultiplier": 0, "notes": null },
+    {
+      "strategyId": "quality_at_value",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "maps spec quality_garp"
+    },
+    {
+      "strategyId": "quality_at_value",
+      "regime": "CHOPPY",
+      "allowed": true,
+      "sizeMultiplier": 0.5,
+      "notes": null
+    },
+    {
+      "strategyId": "quality_at_value",
+      "regime": "BEAR_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 0.25,
+      "notes": null
+    },
+    {
+      "strategyId": "quality_at_value",
+      "regime": "CRISIS",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": null
+    },
 
-    { "strategyId": "rsi_oversold_bounce", "regime": "BULL_TRENDING", "allowed": true, "sizeMultiplier": 1.0, "notes": "maps spec earnings_reversal" },
-    { "strategyId": "rsi_oversold_bounce", "regime": "CHOPPY", "allowed": true, "sizeMultiplier": 0.75, "notes": null },
-    { "strategyId": "rsi_oversold_bounce", "regime": "BEAR_TRENDING", "allowed": false, "sizeMultiplier": 0, "notes": null },
-    { "strategyId": "rsi_oversold_bounce", "regime": "CRISIS", "allowed": false, "sizeMultiplier": 0, "notes": null },
+    {
+      "strategyId": "fii_accumulation",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "maps spec sector_rotation-style gate"
+    },
+    {
+      "strategyId": "fii_accumulation",
+      "regime": "CHOPPY",
+      "allowed": true,
+      "sizeMultiplier": 0.5,
+      "notes": null
+    },
+    {
+      "strategyId": "fii_accumulation",
+      "regime": "BEAR_TRENDING",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": null
+    },
+    {
+      "strategyId": "fii_accumulation",
+      "regime": "CRISIS",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": null
+    },
 
-    { "strategyId": "golden_cross", "regime": "BULL_TRENDING", "allowed": true, "sizeMultiplier": 1.0, "notes": "long-trend screen; bear chop aligned with sector_rotation gate" },
-    { "strategyId": "golden_cross", "regime": "CHOPPY", "allowed": true, "sizeMultiplier": 0.5, "notes": null },
-    { "strategyId": "golden_cross", "regime": "BEAR_TRENDING", "allowed": false, "sizeMultiplier": 0, "notes": null },
-    { "strategyId": "golden_cross", "regime": "CRISIS", "allowed": false, "sizeMultiplier": 0, "notes": null },
+    {
+      "strategyId": "rsi_oversold_bounce",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "maps spec earnings_reversal"
+    },
+    {
+      "strategyId": "rsi_oversold_bounce",
+      "regime": "CHOPPY",
+      "allowed": true,
+      "sizeMultiplier": 0.75,
+      "notes": null
+    },
+    {
+      "strategyId": "rsi_oversold_bounce",
+      "regime": "BEAR_TRENDING",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": null
+    },
+    {
+      "strategyId": "rsi_oversold_bounce",
+      "regime": "CRISIS",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": null
+    },
 
-    { "strategyId": "volume_breakout", "regime": "BULL_TRENDING", "allowed": true, "sizeMultiplier": 1.0, "notes": "maps spec catalyst_driven" },
-    { "strategyId": "volume_breakout", "regime": "CHOPPY", "allowed": true, "sizeMultiplier": 0.75, "notes": null },
-    { "strategyId": "volume_breakout", "regime": "BEAR_TRENDING", "allowed": true, "sizeMultiplier": 0.5, "notes": null },
-    { "strategyId": "volume_breakout", "regime": "CRISIS", "allowed": false, "sizeMultiplier": 0, "notes": null },
+    {
+      "strategyId": "golden_cross",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "long-trend screen; bear chop aligned with sector_rotation gate"
+    },
+    {
+      "strategyId": "golden_cross",
+      "regime": "CHOPPY",
+      "allowed": true,
+      "sizeMultiplier": 0.5,
+      "notes": null
+    },
+    {
+      "strategyId": "golden_cross",
+      "regime": "BEAR_TRENDING",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": null
+    },
+    {
+      "strategyId": "golden_cross",
+      "regime": "CRISIS",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": null
+    },
 
-    { "strategyId": "dividend_compounder", "regime": "BULL_TRENDING", "allowed": true, "sizeMultiplier": 1.0, "notes": "defensive quality; same spirit as quality_at_value" },
-    { "strategyId": "dividend_compounder", "regime": "CHOPPY", "allowed": true, "sizeMultiplier": 0.5, "notes": null },
-    { "strategyId": "dividend_compounder", "regime": "BEAR_TRENDING", "allowed": true, "sizeMultiplier": 0.25, "notes": null },
-    { "strategyId": "dividend_compounder", "regime": "CRISIS", "allowed": false, "sizeMultiplier": 0, "notes": null },
+    {
+      "strategyId": "volume_breakout",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "maps spec catalyst_driven"
+    },
+    {
+      "strategyId": "volume_breakout",
+      "regime": "CHOPPY",
+      "allowed": true,
+      "sizeMultiplier": 0.75,
+      "notes": null
+    },
+    {
+      "strategyId": "volume_breakout",
+      "regime": "BEAR_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 0.5,
+      "notes": null
+    },
+    {
+      "strategyId": "volume_breakout",
+      "regime": "CRISIS",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": null
+    },
 
-    { "strategyId": "ai_picks_generation", "regime": "BULL_TRENDING", "allowed": true, "sizeMultiplier": 1.0, "notes": "thesis-generator agent" },
-    { "strategyId": "ai_picks_generation", "regime": "CHOPPY", "allowed": true, "sizeMultiplier": 0.5, "notes": null },
-    { "strategyId": "ai_picks_generation", "regime": "BEAR_TRENDING", "allowed": false, "sizeMultiplier": 0, "notes": null },
-    { "strategyId": "ai_picks_generation", "regime": "CRISIS", "allowed": false, "sizeMultiplier": 0, "notes": null },
+    {
+      "strategyId": "dividend_compounder",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "defensive quality; same spirit as quality_at_value"
+    },
+    {
+      "strategyId": "dividend_compounder",
+      "regime": "CHOPPY",
+      "allowed": true,
+      "sizeMultiplier": 0.5,
+      "notes": null
+    },
+    {
+      "strategyId": "dividend_compounder",
+      "regime": "BEAR_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 0.25,
+      "notes": null
+    },
+    {
+      "strategyId": "dividend_compounder",
+      "regime": "CRISIS",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": null
+    },
 
-    { "strategyId": "portfolio_exit_signals", "regime": "BULL_TRENDING", "allowed": true, "sizeMultiplier": 1.0, "notes": "stop-loss / exit tooling — always on" },
-    { "strategyId": "portfolio_exit_signals", "regime": "CHOPPY", "allowed": true, "sizeMultiplier": 1.0, "notes": null },
-    { "strategyId": "portfolio_exit_signals", "regime": "BEAR_TRENDING", "allowed": true, "sizeMultiplier": 1.0, "notes": null },
-    { "strategyId": "portfolio_exit_signals", "regime": "CRISIS", "allowed": true, "sizeMultiplier": 1.0, "notes": null },
+    {
+      "strategyId": "ai_picks_generation",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "thesis-generator agent"
+    },
+    {
+      "strategyId": "ai_picks_generation",
+      "regime": "CHOPPY",
+      "allowed": true,
+      "sizeMultiplier": 0.5,
+      "notes": null
+    },
+    {
+      "strategyId": "ai_picks_generation",
+      "regime": "BEAR_TRENDING",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": null
+    },
+    {
+      "strategyId": "ai_picks_generation",
+      "regime": "CRISIS",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": null
+    },
 
-    { "strategyId": "trailing_stop_update", "regime": "BULL_TRENDING", "allowed": true, "sizeMultiplier": 1.0, "notes": "always on" },
-    { "strategyId": "trailing_stop_update", "regime": "CHOPPY", "allowed": true, "sizeMultiplier": 1.0, "notes": null },
-    { "strategyId": "trailing_stop_update", "regime": "BEAR_TRENDING", "allowed": true, "sizeMultiplier": 1.0, "notes": null },
-    { "strategyId": "trailing_stop_update", "regime": "CRISIS", "allowed": true, "sizeMultiplier": 1.0, "notes": null }
+    {
+      "strategyId": "portfolio_exit_signals",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "stop-loss / exit tooling — always on"
+    },
+    {
+      "strategyId": "portfolio_exit_signals",
+      "regime": "CHOPPY",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": null
+    },
+    {
+      "strategyId": "portfolio_exit_signals",
+      "regime": "BEAR_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": null
+    },
+    {
+      "strategyId": "portfolio_exit_signals",
+      "regime": "CRISIS",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": null
+    },
+
+    {
+      "strategyId": "trailing_stop_update",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "always on"
+    },
+    {
+      "strategyId": "trailing_stop_update",
+      "regime": "CHOPPY",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": null
+    },
+    {
+      "strategyId": "trailing_stop_update",
+      "regime": "BEAR_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": null
+    },
+    {
+      "strategyId": "trailing_stop_update",
+      "regime": "CRISIS",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": null
+    }
   ]
 }
