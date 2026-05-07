@@ -5,13 +5,17 @@
  *  - Weekdays 07:30
  *  - Weekdays 15:30
  *  - Saturday 08:00
+ *  - Sunday 06:00 — Yahoo momentum earnings calendar refresh (weekly)
  */
 
 import { Cron } from 'croner';
 import { runDailyWorkflow } from '../agents/daily-workflow.js';
 import { config } from '../config/env.js';
+import { getMomentumUniverseSymbols } from '../config/loaders.js';
 import { MARKET_TIMEZONE } from '../constants.js';
-import { closeDb } from '../db/index.js';
+import { closeDb, getDb, migrate } from '../db/index.js';
+import { isoDateIst } from '../ingestors/base/dates.js';
+import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { child } from '../logger.js';
 
 const log = child({ component: 'market-scheduler' });
@@ -32,11 +36,16 @@ export function startScheduler(): SchedulerHandle {
   const saturdayMorning = new Cron('0 8 * * 6', { timezone: MARKET_TIMEZONE, protect: true }, () =>
     runScheduledJob('sat-0800'),
   );
+  const sundayEarnings = new Cron(
+    '0 6 * * 0',
+    { timezone: MARKET_TIMEZONE, protect: true },
+    () => void runSundayEarningsRefresh(),
+  );
 
   log.info(
     {
       timezone: MARKET_TIMEZONE,
-      schedules: ['30 7 * * 1-5', '30 15 * * 1-5', '0 8 * * 6'],
+      schedules: ['30 7 * * 1-5', '30 15 * * 1-5', '0 8 * * 6', '0 6 * * 0'],
       delivery: config.BRIEFING_DELIVERY,
     },
     'scheduler started',
@@ -47,9 +56,32 @@ export function startScheduler(): SchedulerHandle {
       weekdayMorning.stop();
       weekdayClose.stop();
       saturdayMorning.stop();
+      sundayEarnings.stop();
       log.info('scheduler stopped');
     },
   };
+}
+
+async function runSundayEarningsRefresh(): Promise<void> {
+  const t0 = Date.now();
+  log.info({ tag: 'sun-0600', health: 'started' }, 'Sunday earnings calendar refresh started');
+  try {
+    migrate();
+    const date = isoDateIst();
+    const symbols = getMomentumUniverseSymbols({ fresh: true });
+    const result = await syncMomentumEarningsCalendarFromYahoo(symbols, getDb(), { refDate: date });
+    log.info(
+      { tag: 'sun-0600', health: 'ok', durationMs: Date.now() - t0, ...result },
+      'Sunday earnings calendar refresh finished',
+    );
+  } catch (err) {
+    log.error(
+      { tag: 'sun-0600', health: 'error', durationMs: Date.now() - t0, err },
+      'Sunday earnings calendar refresh failed',
+    );
+  } finally {
+    closeDb();
+  }
 }
 
 async function runScheduledJob(tag: string): Promise<void> {

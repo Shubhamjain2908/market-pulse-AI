@@ -71,6 +71,10 @@ export function isWeekendIst(isoDate: string): boolean {
   return d === 0 || d === 6;
 }
 
+export function isSundayIst(isoDate: string): boolean {
+  return istWeekdaySun0(isoDate) === 0;
+}
+
 export function getHolidayName(isoDate: string): string | undefined {
   return NSE_HOLIDAY_NAMES[isoDate];
 }
