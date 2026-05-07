@@ -3,7 +3,8 @@
  * target, and max-hold time-stop vs session OHLC.
  *
  * Ruling R3: stop fills at `bar.open` when the session gaps through the stop (long).
- * Hard floor: stop never below `entry × (1 + momentum-config hard_stop_pct/100)` after day-1 / trailing updates.
+ * Hard floor: before each bar’s SL/TP checks, `stopLoss = max(stopLoss, hardFloor)` so persisted stops
+ * below the −8% floor still lift when trailing is skipped (e.g. missing `atr_14` that day).
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
@@ -199,6 +200,8 @@ export function evaluateOnePaperTrade(
       }
     }
 
+    stopLoss = Math.max(stopLoss, hardFloor);
+
     const hitSl = bar.low <= stopLoss;
     const hitTg = bar.high >= trade.target;
     const elapsed = dayIndex.get(bar.date) ?? 0;
@@ -223,6 +226,7 @@ export function evaluateOnePaperTrade(
     const logStoppedOut = (logDate: string, notes: string | null, exitReason: ExitReason): void => {
       const exitPx = exitPriceWhenStopHit(bar, stopLoss);
       const gap = bar.open < stopLoss ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
+      // STOPPED_OUT row: new_stop is booked exit price (R3: gap-through uses bar.open).
       const logId = insertStopLog(
         {
           tradeId: trade.id,
