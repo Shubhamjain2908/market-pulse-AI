@@ -34,6 +34,7 @@ export interface MomentumRankerResult {
     zRs: number;
     zBreakout: number;
   }>;
+  excludedSymbols: string[];
 }
 
 function mean(xs: number[]): number {
@@ -195,10 +196,12 @@ export function runMomentumRanker(opts: {
   const eligibleSet = new Set(eligible);
 
   let rankClears = 0;
+  const excludedSymbols: string[] = [];
   for (const sym of universe) {
     if (!eligibleSet.has(sym)) {
       deleteMomentumRankSignals(sym, asOf, db);
       rankClears++;
+      excludedSymbols.push(sym);
     }
   }
 
@@ -211,6 +214,7 @@ export function runMomentumRanker(opts: {
       signalsWritten: 0,
       rankClears,
       ranked: [],
+      excludedSymbols,
     };
   }
 
@@ -325,7 +329,23 @@ export function runMomentumRanker(opts: {
         value: row.falseFlag ? 1 : 0,
         source: MOM_SOURCE,
       },
+      {
+        symbol: row.symbol,
+        date: asOf,
+        name: 'mom_rank_excluded',
+        value: 0,
+        source: MOM_SOURCE,
+      },
     );
+  }
+  for (const sym of excludedSymbols) {
+    outSignals.push({
+      symbol: sym,
+      date: asOf,
+      name: 'mom_rank_excluded',
+      value: 1,
+      source: MOM_SOURCE,
+    });
   }
 
   const signalsWritten = upsertSignals(outSignals, db);
@@ -361,5 +381,6 @@ export function runMomentumRanker(opts: {
       zRs: row.zRs,
       zBreakout: row.zBreakout,
     })),
+    excludedSymbols,
   };
 }
