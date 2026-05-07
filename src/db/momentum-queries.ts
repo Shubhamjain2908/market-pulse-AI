@@ -75,3 +75,34 @@ export function replaceMomentumEarningsCalendarForSymbol(
     ).run(sym, expectedDateIso, meta.source, meta.fetchedAt);
   }
 }
+
+/** Factor signals written daily by the momentum enricher (Factor 2 uses fundamentals at rank time). */
+export const MOMENTUM_FACTOR_SIGNAL_NAMES = [
+  'mom_12_1_return',
+  'mom_relative_strength_ba',
+  'mom_volume_breakout_flag',
+] as const;
+
+export function deleteMomentumFactorSignals(symbol: string, date: string, db: DatabaseType): void {
+  const sym = symbol.toUpperCase();
+  const names = MOMENTUM_FACTOR_SIGNAL_NAMES;
+  const ph = names.map(() => '?').join(',');
+  db.prepare(`DELETE FROM signals WHERE symbol = ? AND date = ? AND name IN (${ph})`).run(
+    sym,
+    date,
+    ...names,
+  );
+}
+
+export function deleteSignalByName(
+  symbol: string,
+  date: string,
+  name: string,
+  db: DatabaseType,
+): void {
+  db.prepare('DELETE FROM signals WHERE symbol = ? AND date = ? AND name = ?').run(
+    symbol.toUpperCase(),
+    date,
+    name,
+  );
+}
