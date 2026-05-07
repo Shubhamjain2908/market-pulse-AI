@@ -176,6 +176,7 @@ export function runMomentumRanker(opts: {
   const cap = cfg.winsorise_zscore;
   const bonus = cfg.breakout_bonus;
   const epsThreshold = cfg.false_flag_eps_threshold_pct;
+  const falseFlagZThreshold = cfg.false_flag_z_threshold;
 
   let universe = (opts.universe ?? getMomentumUniverseSymbols({ fresh: true })).map((s) =>
     s.toUpperCase(),
@@ -206,7 +207,12 @@ export function runMomentumRanker(opts: {
   }
 
   if (eligible.length === 0) {
-    log.warn({ asOf, universeSize: universe.length }, 'momentum ranker: no eligible symbols');
+    log.warn(
+      { asOf, universeSize: universe.length },
+      universe.length > 0
+        ? 'momentum ranker: zero eligible symbols while universe non-empty — verify Phase 3 enrich (mom_12_1_return) for session date'
+        : 'momentum ranker: no eligible symbols (empty universe)',
+    );
     return {
       asOf,
       universeSize: universe.length,
@@ -242,7 +248,7 @@ export function runMomentumRanker(opts: {
   const zRsw = zRs.map((z) => winsorize(z, cap));
   const zBow = zBo.map((z) => winsorize(z, cap));
 
-  const zTopQuartileThreshold = 0.674;
+  const zTopQuartileThreshold = falseFlagZThreshold;
 
   type Row = {
     symbol: string;
