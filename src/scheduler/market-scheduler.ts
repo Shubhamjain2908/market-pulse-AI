@@ -76,7 +76,7 @@ async function runSundayMomentumRebalance(): Promise<void> {
   try {
     migrate();
     const date = isoDateIst();
-    const result = runMomentumRebalance({ calendarDate: date, db: getDb() });
+    const result = await runMomentumRebalance({ calendarDate: date, db: getDb() });
     log.info(
       { tag: 'sun-0800', health: 'ok', durationMs: Date.now() - t0, ...result },
       'Sunday momentum rebalance finished',

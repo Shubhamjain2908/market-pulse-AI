@@ -432,6 +432,7 @@ export interface PaperTradeInsertRow {
   target: number;
   timeHorizon: PaperTradeHorizon;
   maxHoldDays: number;
+  notes?: string | null;
 }
 
 export interface PaperTradeRow {
@@ -466,10 +467,10 @@ export function insertPaperTradeIfAbsent(
     .prepare(`
     INSERT OR IGNORE INTO paper_trades (
       symbol, signal_type, source_date, entry_price, stop_loss, target,
-      time_horizon, max_hold_days, status
+      time_horizon, max_hold_days, status, notes
     ) VALUES (
       @symbol, @signalType, @sourceDate, @entryPrice, @stopLoss, @target,
-      @timeHorizon, @maxHoldDays, 'OPEN'
+      @timeHorizon, @maxHoldDays, 'OPEN', @notes
     )
   `)
     .run({
@@ -481,6 +482,7 @@ export function insertPaperTradeIfAbsent(
       target: row.target,
       timeHorizon: row.timeHorizon,
       maxHoldDays: row.maxHoldDays,
+      notes: row.notes ?? null,
     });
   return result.changes > 0;
 }

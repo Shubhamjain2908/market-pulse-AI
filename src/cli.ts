@@ -262,7 +262,7 @@ program
       .map((s) => s.trim())
       .filter(Boolean)
       .map((s) => s.toUpperCase());
-    const result = runMomentumRebalance({
+    const result = await runMomentumRebalance({
       calendarDate: date,
       universe: universe?.length ? universe : undefined,
       skipRanker: Boolean(opts.skipRanker),
