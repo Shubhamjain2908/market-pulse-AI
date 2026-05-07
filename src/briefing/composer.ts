@@ -32,6 +32,7 @@ import { gatherGlobalCues } from '../market/global-cues.js';
 import { latestQuoteClose, sessionChangeVsPriorClose } from '../market/quote-change.js';
 import { previousOpenTradingDay } from '../market/trading-days.js';
 import type { ScreenDefinition } from '../types/domain.js';
+import { type MomentumRebalanceSummary, renderMomentumBriefingBlock } from './momentum-card.js';
 import { recordPaperTrades } from './paper-trade-writer.js';
 import { renderRegimeCard, renderRegimeChangeBanner } from './regime-card.js';
 import { classifySector } from './sector-classifier.js';
@@ -73,6 +74,8 @@ export interface ComposeBriefingOptions {
   newsLimit?: number;
   /** Force-disable mood LLM even when AI is enabled. */
   moodNarrativeDisabled?: boolean;
+  /** Optional: last weekly momentum rebalance counters (e.g. Sunday job passes through). */
+  momentumRebalanceSummary?: MomentumRebalanceSummary;
 }
 
 export interface ComposedBriefing {
@@ -158,6 +161,9 @@ export async function composeBriefing(
 
   const trailingStopBlock = renderTrailingStopBriefingBlock(date, db) || undefined;
 
+  const momentumBlock =
+    renderMomentumBriefingBlock(date, db, opts.momentumRebalanceSummary) || undefined;
+
   let regimeBlock: string | undefined;
   const regimeRow = getRegimeForCalendarDate(date, db);
   if (regimeRow) {
@@ -191,6 +197,7 @@ export async function composeBriefing(
     aiPicksStatus,
     trailingStopBlock,
     regimeBlock,
+    momentumBlock,
   };
 
   log.info(
