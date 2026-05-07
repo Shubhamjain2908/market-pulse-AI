@@ -12,7 +12,7 @@ import type { Signal } from '../types/domain.js';
 
 const log = child({ component: 'momentum-ranker' });
 
-const MOM_SOURCE = 'momentum' as const;
+const MOM_SOURCE = 'momentum_ranker' as const;
 
 export interface MomentumRankerResult {
   asOf: string;
@@ -20,6 +20,20 @@ export interface MomentumRankerResult {
   eligibleCount: number;
   signalsWritten: number;
   rankClears: number;
+  ranked: Array<{
+    symbol: string;
+    rank: number;
+    composite: number;
+    falseFlag: boolean;
+    factor1Raw: number;
+    factor2Raw: number | null;
+    factor3Raw: number | null;
+    factor4Raw: number | null;
+    z1: number;
+    zEps: number;
+    zRs: number;
+    zBreakout: number;
+  }>;
 }
 
 function mean(xs: number[]): number {
@@ -166,6 +180,10 @@ export function runMomentumRanker(opts: {
     s.toUpperCase(),
   );
   universe = [...new Set(universe)].sort((a, b) => a.localeCompare(b));
+  log.info(
+    { universeSize: universe.length },
+    'liquidity filter deferred to v1.1 — universe loaded from config',
+  );
 
   const factorMap = loadFactorSnapshots(universe, asOf, db);
   const epsMap = loadLatestProfitGrowthYoy(universe, asOf, db);
@@ -192,6 +210,7 @@ export function runMomentumRanker(opts: {
       eligibleCount: 0,
       signalsWritten: 0,
       rankClears,
+      ranked: [],
     };
   }
 
@@ -219,13 +238,20 @@ export function runMomentumRanker(opts: {
   const zRsw = zRs.map((z) => winsorize(z, cap));
   const zBow = zBo.map((z) => winsorize(z, cap));
 
-  const z1Sorted = [...z1w].sort((a, b) => a - b);
-  const q75 = quantileSorted(z1Sorted, 0.75);
+  const zTopQuartileThreshold = 0.674;
 
   type Row = {
     symbol: string;
     composite: number;
     falseFlag: boolean;
+    factor1Raw: number;
+    factor2Raw: number | null;
+    factor3Raw: number | null;
+    factor4Raw: number | null;
+    z1: number;
+    zEps: number;
+    zRs: number;
+    zBreakout: number;
   };
 
   const scored: Row[] = [];
@@ -248,11 +274,23 @@ export function runMomentumRanker(opts: {
       bonus * boTerm;
 
     const rawEps = eps[i];
-    const topQuartile = Number.isFinite(q75) && zv1 >= q75;
+    const topQuartile = zv1 > zTopQuartileThreshold;
     const epsWeak = rawEps != null && Number.isFinite(rawEps) && rawEps < epsThreshold;
     const falseFlag = topQuartile && epsWeak;
 
-    scored.push({ symbol: sym, composite, falseFlag });
+    scored.push({
+      symbol: sym,
+      composite,
+      falseFlag,
+      factor1Raw: f1[i] ?? 0,
+      factor2Raw: eps[i] ?? null,
+      factor3Raw: rs[i] ?? null,
+      factor4Raw: bo[i] ?? null,
+      z1: zv1,
+      zEps: zve,
+      zRs: zvr,
+      zBreakout: zvb,
+    });
   }
 
   scored.sort((a, b) => {
@@ -309,5 +347,19 @@ export function runMomentumRanker(opts: {
     eligibleCount: eligible.length,
     signalsWritten,
     rankClears,
+    ranked: scored.map((row, idx) => ({
+      symbol: row.symbol,
+      rank: idx + 1,
+      composite: row.composite,
+      falseFlag: row.falseFlag,
+      factor1Raw: row.factor1Raw,
+      factor2Raw: row.factor2Raw,
+      factor3Raw: row.factor3Raw,
+      factor4Raw: row.factor4Raw,
+      z1: row.z1,
+      zEps: row.zEps,
+      zRs: row.zRs,
+      zBreakout: row.zBreakout,
+    })),
   };
 }
