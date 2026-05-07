@@ -335,7 +335,7 @@ describe('evaluate paper trades', () => {
       expect(evaluateOnePaperTrade(t, db, d2, { skipAi: true })).toBe('CLOSED_LOSS');
 
       const closed = db
-        .prepare(`SELECT status, exit_price, pnl_pct FROM paper_trades WHERE id = ?`)
+        .prepare('SELECT status, exit_price, pnl_pct FROM paper_trades WHERE id = ?')
         .get(t.id) as { status: string; exit_price: number; pnl_pct: number };
       expect(closed.status).toBe('CLOSED_LOSS');
       expect(closed.exit_price).toBe(98);
@@ -401,6 +401,49 @@ describe('evaluate paper trades', () => {
       expect(evaluateOnePaperTrade(t, db, d1, { skipAi: true })).toBe('still_open');
       const still = getOpenPaperTrades(db)[0];
       expect(still?.stopLoss).toBe(92);
+    });
+
+    it('9.2.4 — hard floor applies when trade already initialized and atr_14 missing today', () => {
+      const src = '2026-11-01';
+      const d1 = '2026-11-02';
+      seedNifty(d1);
+      upsertQuotes([q('INITFLOOR', d1, 100, 105, 91, 102)], db);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'INITFLOOR',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 85,
+          target: 200,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const rowId = (
+        db.prepare('SELECT id FROM paper_trades WHERE symbol = ?').get('INITFLOOR') as {
+          id: number;
+        }
+      ).id;
+      db.prepare(
+        `
+        UPDATE paper_trades
+        SET highest_close_since_entry = ?, atr14_at_entry = ?
+        WHERE id = ?
+      `,
+      ).run(105, 3, rowId);
+
+      const t = getOpenPaperTrades(db)[0];
+      if (t === undefined) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, d1, { skipAi: true })).toBe('CLOSED_LOSS');
+
+      const closed = db
+        .prepare('SELECT exit_price, pnl_pct, exit_reason FROM paper_trades WHERE id = ?')
+        .get(rowId) as { exit_price: number; pnl_pct: number; exit_reason: string | null };
+      expect(closed.exit_price).toBe(92);
+      expect(closed.pnl_pct).toBeCloseTo(-8, 4);
+      expect(closed.exit_reason).toBe('TRAILING_STOP');
     });
   });
 

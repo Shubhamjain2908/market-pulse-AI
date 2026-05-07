@@ -62,6 +62,7 @@ export interface TrailingStopLogInsert {
   symbol: string;
   logDate: string;
   prevStop: number;
+  /** For `STOPPED_OUT`, booked exit price (R3: may be `bar.open` on gap-through). */
   newStop: number;
   stopDelta: number;
   candidateStop: number;
