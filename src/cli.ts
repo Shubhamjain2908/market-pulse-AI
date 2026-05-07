@@ -67,7 +67,10 @@ import { syncSymbolSectorsFromYahoo } from './market/yahoo-sectors.js';
 import { runMomentumRanker } from './rankers/momentum-ranker.js';
 import { startScheduler } from './scheduler/market-scheduler.js';
 import { runEvaluatePaperTrades } from './scripts/evaluate-trades.js';
-import { runMomentumRebalance } from './strategies/momentum-rebalance.js';
+import {
+  runMomentumRebalance,
+  toMomentumRebalanceBriefingSummary,
+} from './strategies/momentum-rebalance.js';
 
 const program = new Command();
 
@@ -254,7 +257,11 @@ program
     'comma-separated universe override for embedded ranker (default: momentum-universe.json)',
   )
   .option('--skip-ranker', 'use existing mom_rank signals for session (no ranker pass)')
-  .action(async (opts: { symbols?: string; skipRanker?: boolean }) => {
+  .option(
+    '--brief',
+    'compose skip-AI briefing with rebalance summary and deliver (same as Sunday scheduler)',
+  )
+  .action(async (opts: { symbols?: string; skipRanker?: boolean; brief?: boolean }) => {
     ensureDb();
     const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
     const universe = opts.symbols
@@ -268,6 +275,22 @@ program
       skipRanker: Boolean(opts.skipRanker),
     });
     logger.info(result, 'momentum-rebalance complete');
+    if (opts.brief) {
+      const summary = toMomentumRebalanceBriefingSummary(result);
+      const closure = getMarketClosure(date);
+      const briefing = await runBriefingComposer({
+        date,
+        skipAi: true,
+        marketClosure: closure ?? undefined,
+        momentumRebalanceSummary: summary,
+        delivery: config.BRIEFING_DELIVERY,
+      });
+      await deliverBriefing(briefing.html, briefing.date, config.BRIEFING_DELIVERY);
+      logger.info(
+        { date: briefing.date, summaryPresent: summary != null },
+        'momentum-rebalance briefing delivered',
+      );
+    }
     closeDb();
   });
 

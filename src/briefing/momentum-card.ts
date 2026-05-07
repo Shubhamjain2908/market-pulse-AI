@@ -50,7 +50,9 @@ export function renderMomentumBriefingBlock(
   const rows = openMom.map((t) => {
     const signals = getLatestSignalsMap(t.symbol, date, db);
     const rank = signals.mom_rank;
-    const falseFlag = signals.mom_false_flag === 1;
+    const falseFlagRaw = signals.mom_false_flag;
+    const falseFlagUnknown = falseFlagRaw == null || !Number.isFinite(falseFlagRaw);
+    const falseFlag = falseFlagRaw === 1;
     const close = getNseCloseOnOrBefore(t.symbol, date, db);
     const pnlPct = close != null ? ((close - t.entryPrice) / t.entryPrice) * 100 : null;
     return {
@@ -61,6 +63,7 @@ export function renderMomentumBriefingBlock(
       stop: t.stopLoss,
       pnlPct,
       rankOk: rank != null && Number.isFinite(rank),
+      falseFlagUnknown,
     };
   });
 
@@ -120,7 +123,7 @@ export function renderMomentumBriefingBlock(
             .map((r) => {
               const rk = r.rankOk ? String(r.rank) : '—';
               const pnl = r.pnlPct == null ? '—' : signedPct(r.pnlPct);
-              const ff = r.falseFlag ? 'Yes' : 'No';
+              const ff = r.falseFlagUnknown ? '—' : r.falseFlag ? 'Yes' : 'No';
               return `
             <tr>
               <td><strong>${esc(r.symbol)}</strong></td>

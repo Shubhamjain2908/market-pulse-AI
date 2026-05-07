@@ -16,8 +16,10 @@ import {
   upsertQuotes,
   upsertSignals,
 } from '../../src/db/index.js';
+import { parseAndValidate } from '../../src/llm/json.js';
 import { MockLlmProvider } from '../../src/llm/providers/mock.js';
-import type { RawQuote, Signal } from '../../src/types/domain.js';
+import type { LlmJsonResult, LlmProvider } from '../../src/llm/types.js';
+import { type RawQuote, type Signal, ThesisSchema } from '../../src/types/domain.js';
 
 describe('thesis generator', () => {
   let dbPath: string;
@@ -232,5 +234,65 @@ describe('thesis generator', () => {
     const thesisCalls = llm.calls.filter((c) => c.method === 'generateJson');
     expect(thesisCalls.length).toBeGreaterThan(0);
     expect(thesisCalls[0]?.system).toContain('MOMENTUM CONTEXT');
+  });
+
+  it('keeps momentum snapshot when technical rows exist only on a newer session date', () => {
+    upsertSignals(
+      [{ symbol: 'RELIANCE', date: '2026-04-24', name: 'mom_rank', value: 12, source: 'momentum' }],
+      db,
+    );
+    const ctx = buildStockContext('RELIANCE', today, db, 'thesis');
+    expect(ctx).toContain('## Momentum factor snapshot');
+    expect(ctx).toContain('Composite rank');
+    expect(ctx).toMatch(/Technical Signals[\s\S]*rsi_14/s);
+  });
+
+  it('clamps confidenceScore to 5 when latest mom_false_flag is 1 even if LLM returns higher', async () => {
+    upsertSignals(
+      [
+        {
+          symbol: 'RELIANCE',
+          date: '2026-04-24',
+          name: 'mom_rank',
+          value: 3,
+          source: 'momentum',
+        },
+        {
+          symbol: 'RELIANCE',
+          date: '2026-04-24',
+          name: 'mom_false_flag',
+          value: 1,
+          source: 'momentum',
+        },
+      ],
+      db,
+    );
+    const hiConfLlm: LlmProvider = {
+      name: 'stub',
+      model: 'stub',
+      async generateText(): Promise<never> {
+        throw new Error('unused');
+      },
+      async generateJson<T>(): Promise<LlmJsonResult<T>> {
+        const raw = JSON.stringify({
+          symbol: 'RELIANCE',
+          thesis: 'This thesis line is deliberately long enough for schema validation.',
+          bullCase: ['Bull'],
+          bearCase: ['Bear'],
+          entryZone: '₹2,900',
+          stopLoss: '₹2,800',
+          target: '₹3,100',
+          timeHorizon: 'medium',
+          confidenceScore: 8,
+          triggerScreen: 'test',
+        });
+        const data = parseAndValidate(raw, ThesisSchema) as T;
+        return { data, raw, model: 'stub', usage: { durationMs: 1 } };
+      },
+    };
+    await generateTheses({ date: today, watchlist: ['RELIANCE'], maxTheses: 1 }, db, hiConfLlm);
+    const stored = getThesesForDate(today, db);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.confidence).toBe(5);
   });
 });

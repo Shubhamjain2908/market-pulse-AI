@@ -8,6 +8,7 @@ import type { LlmProvider } from '../../src/llm/types.js';
 import {
   applyMomentumRegimeGateExits,
   runMomentumRebalance,
+  toMomentumRebalanceBriefingSummary,
 } from '../../src/strategies/momentum-rebalance.js';
 
 function insertRegimeBull(db: ReturnType<typeof getDb>, sessionDate: string): void {
@@ -404,5 +405,51 @@ describe('strategies/momentum-rebalance', () => {
     expect(b.entriesInserted).toBe(0);
     expect(getOpenPaperTradesForSignal('momentum_mf', db)).toHaveLength(1);
     db.close();
+  });
+});
+
+describe('toMomentumRebalanceBriefingSummary', () => {
+  it('returns undefined when rebalance was regime-gated', () => {
+    expect(
+      toMomentumRebalanceBriefingSummary({
+        calendarDate: '2026-05-03',
+        sessionDate: '2026-05-01',
+        regime: 'CHOPPY',
+        regimeAllowed: false,
+        rankerRan: true,
+        closedRankDecay: 0,
+        entriesInserted: 0,
+        sectorCapBlocked: 0,
+        blackoutBlocked: 0,
+        unchangedHeld: 1,
+        thesisFailed: 0,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('maps counters when regime allowed', () => {
+    expect(
+      toMomentumRebalanceBriefingSummary({
+        calendarDate: '2026-05-03',
+        sessionDate: '2026-05-01',
+        regime: 'BULL_TRENDING',
+        regimeAllowed: true,
+        rankerRan: true,
+        closedRankDecay: 2,
+        entriesInserted: 1,
+        sectorCapBlocked: 0,
+        blackoutBlocked: 1,
+        unchangedHeld: 3,
+        thesisFailed: 0,
+      }),
+    ).toEqual({
+      calendarDate: '2026-05-03',
+      sessionDate: '2026-05-01',
+      closedRankDecay: 2,
+      entriesInserted: 1,
+      unchangedHeld: 3,
+      sectorCapBlocked: 0,
+      blackoutBlocked: 1,
+    });
   });
 });

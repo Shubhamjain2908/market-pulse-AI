@@ -22,6 +22,7 @@ import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { type Thesis, ThesisSchema } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
+import { getLatestSignalsMap, getLatestSignalsMapsForSymbols } from './portfolio-trigger.js';
 
 const log = child({ component: 'thesis-generator' });
 
@@ -77,20 +78,13 @@ export function buildMomentumContextAppend(
   date: string,
   db: DatabaseType,
 ): string | null {
-  const sym = symbol.toUpperCase();
-  const rows = db
-    .prepare(
-      `
-      SELECT name, value FROM signals
-      WHERE symbol = ? AND date <= ?
-        AND date = (SELECT MAX(date) FROM signals s2 WHERE s2.symbol = signals.symbol AND s2.date <= ?)
-        AND name LIKE 'mom_%'
-    `,
-    )
-    .all(sym, date, date) as Array<{ name: string; value: number }>;
+  const snap = getLatestSignalsMap(symbol, date, db);
+  const m = new Map<string, number>();
+  for (const [k, v] of Object.entries(snap)) {
+    if (k.startsWith('mom_')) m.set(k, v);
+  }
 
-  if (rows.length === 0) return null;
-  const m = new Map(rows.map((r) => [r.name, r.value] as const));
+  if (m.size === 0) return null;
   const hasGate = [...MOMENTUM_CONTEXT_GATE_NAMES].some((k) => m.has(k));
   if (!hasGate) return null;
 
@@ -215,8 +209,17 @@ export async function generateTheses(
         maxRetries: 2,
       });
 
+      const signalSnap = getLatestSignalsMap(candidate.symbol, date, db);
+      let thesisOut = result.data;
+      if (signalSnap.mom_false_flag === 1) {
+        thesisOut = {
+          ...thesisOut,
+          confidenceScore: Math.min(thesisOut.confidenceScore, 5),
+        };
+      }
+
       const row: UpsertThesisRow = {
-        ...result.data,
+        ...thesisOut,
         symbol: candidate.symbol,
         date,
         model: result.model,
@@ -226,7 +229,7 @@ export async function generateTheses(
       generated++;
 
       log.info(
-        { symbol: candidate.symbol, confidence: result.data.confidenceScore, model: result.model },
+        { symbol: candidate.symbol, confidence: thesisOut.confidenceScore, model: result.model },
         'thesis generated',
       );
     } catch (err) {
@@ -289,24 +292,7 @@ export function getThesisRankMeta(
 function rankCandidates(date: string, universe: string[], db: DatabaseType): Candidate[] {
   if (universe.length === 0) return [];
 
-  const placeholders = universe.map(() => '?').join(',');
-  const rows = db
-    .prepare(`
-      SELECT symbol, name, value FROM signals
-      WHERE date <= ? AND symbol IN (${placeholders})
-        AND date = (
-          SELECT MAX(date) FROM signals s2
-          WHERE s2.symbol = signals.symbol AND s2.date <= ?
-        )
-    `)
-    .all(date, ...universe, date) as Array<{ symbol: string; name: string; value: number }>;
-
-  const bySymbol = new Map<string, Record<string, number>>();
-  for (const r of rows) {
-    const signals = bySymbol.get(r.symbol) ?? {};
-    signals[r.name] = r.value;
-    bySymbol.set(r.symbol, signals);
-  }
+  const bySymbol = getLatestSignalsMapsForSymbols(universe, date, db);
 
   const screenSyms = new Set(
     (
@@ -426,18 +412,15 @@ export function buildStockContext(
     }
   }
 
-  const signals = db
-    .prepare(`
-      SELECT name, value FROM signals
-      WHERE symbol = ? AND date <= ?
-        AND date = (SELECT MAX(date) FROM signals s2 WHERE s2.symbol = signals.symbol AND s2.date <= ?)
-    `)
-    .all(symbol, date, date) as Array<{ name: string; value: number }>;
+  const signalMap = getLatestSignalsMap(symbol, date, db);
+  const techLines = Object.entries(signalMap)
+    .filter(([name]) => !name.startsWith('mom_'))
+    .sort(([a], [b]) => a.localeCompare(b));
 
-  if (signals.length > 0) {
+  if (techLines.length > 0) {
     sections.push('\n## Technical Signals');
-    for (const s of signals) {
-      sections.push(`${s.name}: ${s.value.toFixed(4)}`);
+    for (const [name, value] of techLines) {
+      sections.push(`${name}: ${value.toFixed(4)}`);
     }
   }
 

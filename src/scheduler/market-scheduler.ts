@@ -6,11 +6,13 @@
  *  - Weekdays 15:30
  *  - Saturday 08:00
  *  - Sunday 06:00 — Yahoo momentum earnings calendar refresh (weekly)
- *  - Sunday 08:00 — momentum rank + rebalance (paper_trades)
+ *  - Sunday 08:00 — momentum rank + rebalance (paper_trades), then skip-AI briefing with rebalance summary (delivered per BRIEFING_DELIVERY)
  */
 
 import { Cron } from 'croner';
+import { runBriefingComposer } from '../agents/briefing-composer.js';
 import { runDailyWorkflow } from '../agents/daily-workflow.js';
+import { deliverToEmail, deliverToFile } from '../briefing/index.js';
 import { config } from '../config/env.js';
 import { getMomentumUniverseSymbols } from '../config/loaders.js';
 import { MARKET_TIMEZONE } from '../constants.js';
@@ -18,7 +20,11 @@ import { closeDb, getDb, migrate } from '../db/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { child } from '../logger.js';
-import { runMomentumRebalance } from '../strategies/momentum-rebalance.js';
+import { getMarketClosure } from '../market/nse-calendar.js';
+import {
+  runMomentumRebalance,
+  toMomentumRebalanceBriefingSummary,
+} from '../strategies/momentum-rebalance.js';
 
 const log = child({ component: 'market-scheduler' });
 
@@ -76,7 +82,8 @@ async function runSundayMomentumRebalance(): Promise<void> {
   try {
     migrate();
     const date = isoDateIst();
-    const result = await runMomentumRebalance({ calendarDate: date, db: getDb() });
+    const db = getDb();
+    const result = await runMomentumRebalance({ calendarDate: date, db });
     const snap = result.rankerSnapshot;
     if (snap && snap.eligibleCount === 0 && snap.universeSize > 0) {
       log.warn(
@@ -92,6 +99,31 @@ async function runSundayMomentumRebalance(): Promise<void> {
     log.info(
       { tag: 'sun-0800', health: 'ok', durationMs: Date.now() - t0, ...result },
       'Sunday momentum rebalance finished',
+    );
+
+    const summary = toMomentumRebalanceBriefingSummary(result);
+    const closure = getMarketClosure(date);
+    const briefing = await runBriefingComposer({
+      date,
+      skipAi: true,
+      marketClosure: closure ?? undefined,
+      momentumRebalanceSummary: summary,
+      delivery: config.BRIEFING_DELIVERY,
+    });
+    const method = config.BRIEFING_DELIVERY;
+    if (method === 'file') {
+      deliverToFile(briefing.html, briefing.date, db);
+    } else if (method === 'email') {
+      await deliverToEmail(briefing.html, briefing.date, db);
+    } else {
+      log.warn(
+        { tag: 'sun-0800', delivery: method },
+        'Sunday momentum briefing: delivery channel not implemented — HTML composed only in memory',
+      );
+    }
+    log.info(
+      { tag: 'sun-0800', briefingDate: briefing.date, summaryPresent: summary != null },
+      'Sunday momentum briefing delivered',
     );
   } catch (err) {
     log.error(
