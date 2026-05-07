@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getDb, migrate } from '../../src/db/index.js';
 import { getOpenPaperTradesForSignal } from '../../src/db/queries.js';
+import type { LlmProvider } from '../../src/llm/types.js';
 import {
   applyMomentumRegimeGateExits,
   runMomentumRebalance,
@@ -90,7 +91,7 @@ describe('strategies/momentum-rebalance', () => {
     db.close();
   });
 
-  it('runMomentumRebalance gates in non-bull regime (no rebalance writes)', () => {
+  it('runMomentumRebalance gates in non-bull regime (no rebalance writes)', async () => {
     const db = getDb({ path: dbPath });
     migrate(db);
     const session = '2026-05-08';
@@ -105,10 +106,11 @@ describe('strategies/momentum-rebalance', () => {
     `,
     ).run();
 
-    const r = runMomentumRebalance({
+    const r = await runMomentumRebalance({
       calendarDate: session,
       db,
       skipRanker: true,
+      skipThesis: true,
     });
     expect(r.regimeAllowed).toBe(false);
     expect(r.closedRegime).toBe(0);
@@ -117,7 +119,7 @@ describe('strategies/momentum-rebalance', () => {
     db.close();
   });
 
-  it('exits holdings when mom_rank > exit_rank_threshold', () => {
+  it('exits holdings when mom_rank > exit_rank_threshold', async () => {
     const db = getDb({ path: dbPath });
     migrate(db);
     const session = '2026-05-08';
@@ -133,13 +135,18 @@ describe('strategies/momentum-rebalance', () => {
     `,
     ).run();
 
-    const r = runMomentumRebalance({ calendarDate: session, db, skipRanker: true });
+    const r = await runMomentumRebalance({
+      calendarDate: session,
+      db,
+      skipRanker: true,
+      skipThesis: true,
+    });
     expect(r.closedRankDecay).toBe(1);
     expect(getOpenPaperTradesForSignal('momentum_mf', db)).toHaveLength(0);
     db.close();
   });
 
-  it('skips sector-cap fourth name and promotes next sector', () => {
+  it('skips sector-cap fourth name and promotes next sector', async () => {
     const db = getDb({ path: dbPath });
     migrate(db);
     const session = '2026-05-08';
@@ -158,7 +165,12 @@ describe('strategies/momentum-rebalance', () => {
     sigRank(db, 'EE', session, 5);
     sigRank(db, 'FF', session, 6);
 
-    const r = runMomentumRebalance({ calendarDate: session, db, skipRanker: true });
+    const r = await runMomentumRebalance({
+      calendarDate: session,
+      db,
+      skipRanker: true,
+      skipThesis: true,
+    });
     expect(r.entriesInserted).toBe(4);
     expect(r.sectorCapBlocked).toBeGreaterThanOrEqual(2);
     const open = getOpenPaperTradesForSignal('momentum_mf', db).map((t) => t.symbol);
@@ -171,7 +183,7 @@ describe('strategies/momentum-rebalance', () => {
     db.close();
   });
 
-  it('blocks blackout symbols and takes next rank', () => {
+  it('blocks blackout symbols and takes next rank', async () => {
     const db = getDb({ path: dbPath });
     migrate(db);
     const session = '2026-05-08';
@@ -187,7 +199,12 @@ describe('strategies/momentum-rebalance', () => {
     `,
     ).run(session, session);
 
-    const r = runMomentumRebalance({ calendarDate: session, db, skipRanker: true });
+    const r = await runMomentumRebalance({
+      calendarDate: session,
+      db,
+      skipRanker: true,
+      skipThesis: true,
+    });
     expect(r.blackoutBlocked).toBeGreaterThanOrEqual(1);
     const open = getOpenPaperTradesForSignal('momentum_mf', db).map((t) => t.symbol);
     expect(open).toContain('Q');
@@ -195,7 +212,67 @@ describe('strategies/momentum-rebalance', () => {
     db.close();
   });
 
-  it('second rebalance is idempotent (no duplicate inserts)', () => {
+  it('writes entries using thesis + ATR-integrated stop path', async () => {
+    const db = getDb({ path: dbPath });
+    migrate(db);
+    const session = '2026-05-08';
+    insertRegimeBull(db, session);
+    quote(db, 'THX', session, 100);
+    sigRank(db, 'THX', session, 1);
+    db.prepare(
+      `INSERT INTO signals (symbol, date, name, value, source) VALUES ('THX', ?, 'atr_14', 5, 'test')`,
+    ).run(session);
+    db.prepare(
+      `INSERT INTO signals (symbol, date, name, value, source) VALUES ('THX', ?, 'mom_composite_score', 1.23, 'test')`,
+    ).run(session);
+    db.prepare(
+      `INSERT INTO signals (symbol, date, name, value, source) VALUES ('THX', ?, 'mom_false_flag', 0, 'test')`,
+    ).run(session);
+
+    const llm: LlmProvider = {
+      name: 'mock',
+      model: 'mock-1',
+      async generateText() {
+        return { text: 'ok', usage: { durationMs: 1 }, model: 'mock-1' };
+      },
+      async generateJson<T>() {
+        return {
+          data: {
+            symbol: 'THX',
+            thesis: 'Strong setup with improving breadth and momentum confirmation.',
+            bullCase: ['Trend continuation'],
+            bearCase: ['Failed breakout'],
+            entryZone: '₹98-₹102',
+            stopLoss: '₹88',
+            target: '₹130',
+            timeHorizon: 'medium',
+            confidenceScore: 7,
+            triggerScreen: 'momentum',
+          } as T,
+          raw: '{}',
+          usage: { durationMs: 1 },
+          model: 'mock-1',
+        };
+      },
+    };
+
+    const r = await runMomentumRebalance({
+      calendarDate: session,
+      db,
+      skipRanker: true,
+      llm,
+    });
+    expect(r.entriesInserted).toBe(1);
+    const open = getOpenPaperTradesForSignal('momentum_mf', db);
+    expect(open).toHaveLength(1);
+    const trade = open[0];
+    expect(trade?.stopLoss).toBe(92); // max(hard floor 92, atr stop 90, thesis stop 88)
+    expect(trade?.target).toBe(130);
+    expect(trade?.notes).toContain('"atr14_used":5');
+    db.close();
+  });
+
+  it('second rebalance is idempotent (no duplicate inserts)', async () => {
     const db = getDb({ path: dbPath });
     migrate(db);
     const session = '2026-05-08';
@@ -203,8 +280,18 @@ describe('strategies/momentum-rebalance', () => {
     quote(db, 'ONLY', session, 75);
     sigRank(db, 'ONLY', session, 1);
 
-    const a = runMomentumRebalance({ calendarDate: session, db, skipRanker: true });
-    const b = runMomentumRebalance({ calendarDate: session, db, skipRanker: true });
+    const a = await runMomentumRebalance({
+      calendarDate: session,
+      db,
+      skipRanker: true,
+      skipThesis: true,
+    });
+    const b = await runMomentumRebalance({
+      calendarDate: session,
+      db,
+      skipRanker: true,
+      skipThesis: true,
+    });
     expect(a.entriesInserted).toBe(1);
     expect(b.entriesInserted).toBe(0);
     expect(getOpenPaperTradesForSignal('momentum_mf', db)).toHaveLength(1);

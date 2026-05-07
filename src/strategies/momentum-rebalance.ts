@@ -6,20 +6,28 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 
+import { buildStockContext } from '../agents/thesis-generator.js';
+import { parseInrPriceMidpoint } from '../briefing/paper-trade-parsers.js';
 import { classifySector } from '../briefing/sector-classifier.js';
-import { loadMomentumConfig, loadSectorMap } from '../config/loaders.js';
+import { loadMomentumConfig, loadPortfolio, loadSectorMap } from '../config/loaders.js';
 import { getDb } from '../db/index.js';
 import {
   type PaperTradeRow,
+  type UpsertThesisRow,
   closePaperTrade,
   getNseCloseOnOrBefore,
   getOpenPaperTradesForSignal,
   insertPaperTradeIfAbsent,
+  upsertThesis,
 } from '../db/queries.js';
 import { getRegimeForCalendarDate, isStrategyAllowed } from '../db/regime-queries.js';
+import { getAtr14 } from '../db/trailing-stop-queries.js';
+import { getLlmProvider } from '../llm/index.js';
+import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { lastOpenOnOrBefore } from '../market/trading-days.js';
 import { runMomentumRanker } from '../rankers/momentum-ranker.js';
+import { type Thesis, ThesisSchema } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
 
 const log = child({ component: 'momentum-rebalance' });
@@ -151,6 +159,9 @@ export interface MomentumRebalanceOptions {
   universe?: string[];
   /** When false (default), runs ranker first so `mom_rank` is fresh for `sessionDate`. */
   skipRanker?: boolean;
+  /** Tests / dry-runs can skip LLM thesis generation. */
+  skipThesis?: boolean;
+  llm?: LlmProvider;
 }
 
 export interface MomentumRebalanceResult {
@@ -165,12 +176,126 @@ export interface MomentumRebalanceResult {
   sectorCapBlocked: number;
   blackoutBlocked: number;
   unchangedHeld: number;
+  thesisFailed: number;
   skippedReason?: 'regime_gate';
 }
 
-export function runMomentumRebalance(opts: MomentumRebalanceOptions): MomentumRebalanceResult {
+interface MomentumEntryContext {
+  rank: number;
+  composite: number | null;
+  falseFlag: boolean;
+  mom121: number | null;
+  epsRevision: number | null;
+  rsBa: number | null;
+  breakout: number | null;
+}
+
+function loadMomentumEntryContext(
+  symbol: string,
+  sessionDate: string,
+  rank: number,
+  db: DatabaseType,
+): MomentumEntryContext {
+  const rows = db
+    .prepare(
+      `
+    SELECT name, value FROM signals
+    WHERE symbol = ? AND date = ?
+      AND name IN ('mom_composite_score','mom_false_flag','mom_12_1_return','mom_relative_strength_ba','mom_volume_breakout_flag')
+  `,
+    )
+    .all(symbol, sessionDate) as Array<{ name: string; value: number }>;
+  const m = new Map(rows.map((r) => [r.name, r.value] as const));
+  const epsRow = db
+    .prepare(
+      `
+    SELECT profit_growth_yoy FROM fundamentals
+    WHERE symbol = ? AND as_of <= ?
+    ORDER BY as_of DESC LIMIT 1
+  `,
+    )
+    .get(symbol, sessionDate) as { profit_growth_yoy: number | null } | undefined;
+
+  return {
+    rank,
+    composite: m.get('mom_composite_score') ?? null,
+    falseFlag: (m.get('mom_false_flag') ?? 0) >= 1,
+    mom121: m.get('mom_12_1_return') ?? null,
+    epsRevision: epsRow?.profit_growth_yoy ?? null,
+    rsBa: m.get('mom_relative_strength_ba') ?? null,
+    breakout: m.get('mom_volume_breakout_flag') ?? null,
+  };
+}
+
+function computeSuggestedSizePct(
+  entryPrice: number,
+  stopLoss: number,
+  portfolioValue: number,
+  riskPct: number,
+  maxSingleStockPct: number,
+): number {
+  if (!Number.isFinite(entryPrice) || !Number.isFinite(stopLoss) || entryPrice <= stopLoss) {
+    return Math.max(0, maxSingleStockPct);
+  }
+  const riskAmount = portfolioValue * (riskPct / 100);
+  const perShareRisk = entryPrice - stopLoss;
+  if (perShareRisk <= 0 || !Number.isFinite(perShareRisk)) return Math.max(0, maxSingleStockPct);
+  const shares = riskAmount / perShareRisk;
+  const positionValue = shares * entryPrice;
+  if (!Number.isFinite(positionValue) || portfolioValue <= 0) return Math.max(0, maxSingleStockPct);
+  const pct = (positionValue / portfolioValue) * 100;
+  return Math.max(0, Math.min(maxSingleStockPct, pct));
+}
+
+const MOMENTUM_REBALANCE_SYSTEM = `You are a momentum strategy analyst generating ONE trade thesis.
+Return ONLY valid JSON matching the schema. Keep text concise and concrete.
+Use provided momentum context (rank/factors/false-flag) in reasoning.
+If false_flag is true, confidenceScore must be <= 5.`;
+
+async function generateEntryThesis(
+  symbol: string,
+  sessionDate: string,
+  ctx: MomentumEntryContext,
+  llm: LlmProvider,
+  db: DatabaseType,
+): Promise<{ thesis: Thesis; model: string; raw: string } | null> {
+  try {
+    const base = buildStockContext(symbol, sessionDate, db, 'thesis');
+    const momentumPayload = JSON.stringify(
+      {
+        rank: ctx.rank,
+        composite_score: ctx.composite,
+        mom_12_1_return: ctx.mom121,
+        mom_eps_revision: ctx.epsRevision,
+        mom_relative_strength_ba: ctx.rsBa,
+        mom_volume_breakout_flag: ctx.breakout,
+        mom_false_flag: ctx.falseFlag ? 1 : 0,
+      },
+      null,
+      2,
+    );
+    const user = `${base}\n\n## Momentum Context\n${momentumPayload}`;
+    const result = await llm.generateJson({
+      system: MOMENTUM_REBALANCE_SYSTEM,
+      user,
+      schema: ThesisSchema,
+      temperature: 0.2,
+      maxRetries: 2,
+    });
+    return { thesis: result.data, model: result.model, raw: result.raw };
+  } catch (err) {
+    log.warn({ symbol, err: (err as Error).message }, 'momentum thesis generation failed');
+    return null;
+  }
+}
+
+export async function runMomentumRebalance(
+  opts: MomentumRebalanceOptions,
+): Promise<MomentumRebalanceResult> {
   const db = opts.db ?? getDb();
   const cfg = loadMomentumConfig();
+  const llm = opts.skipThesis ? undefined : (opts.llm ?? getLlmProvider());
+  const portfolioValue = loadPortfolio().totalCapital;
   const calendarDate = opts.calendarDate;
   const sessionDate = lastOpenOnOrBefore(calendarDate);
   if (!sessionDate) {
@@ -204,6 +329,7 @@ export function runMomentumRebalance(opts: MomentumRebalanceOptions): MomentumRe
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
       unchangedHeld: getOpenPaperTradesForSignal('momentum_mf', db).length,
+      thesisFailed: 0,
       skippedReason: 'regime_gate',
     };
   }
@@ -225,6 +351,7 @@ export function runMomentumRebalance(opts: MomentumRebalanceOptions): MomentumRe
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
       unchangedHeld: getOpenPaperTradesForSignal('momentum_mf', db).length,
+      thesisFailed: 0,
       skippedReason: 'regime_gate',
     };
   }
@@ -291,11 +418,12 @@ export function runMomentumRebalance(opts: MomentumRebalanceOptions): MomentumRe
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
       unchangedHeld: heldBeforeEntries.size,
+      thesisFailed: 0,
     };
   }
 
   const hardMult = 1 + cfg.hard_stop_pct / 100;
-  const targetMult = 1 + cfg.position_sizing.trim_return_pct / 100;
+  let thesisFailed = 0;
 
   for (const sym of rankedOrder) {
     if (needed <= 0) break;
@@ -336,8 +464,70 @@ export function runMomentumRebalance(opts: MomentumRebalanceOptions): MomentumRe
       continue;
     }
 
-    const stopLoss = entry * hardMult;
-    const target = entry * targetMult;
+    const entryCtx = loadMomentumEntryContext(sym, sessionDate, rkNew, db);
+    let thesisStop: number | null = null;
+    let thesisTarget: number | null = null;
+    let thesisModel = 'n/a';
+    if (!opts.skipThesis) {
+      if (!llm) {
+        thesisFailed++;
+        continue;
+      }
+      const gen = await generateEntryThesis(sym, sessionDate, entryCtx, llm, db);
+      if (!gen) {
+        thesisFailed++;
+        continue;
+      }
+      thesisModel = gen.model;
+      const thesisRow: UpsertThesisRow = {
+        ...gen.thesis,
+        symbol: sym,
+        date: sessionDate,
+        model: gen.model,
+        raw: gen.raw,
+      };
+      upsertThesis(thesisRow, db);
+      thesisStop = parseInrPriceMidpoint(gen.thesis.stopLoss);
+      thesisTarget = parseInrPriceMidpoint(gen.thesis.target);
+    }
+
+    const atr14 = getAtr14(sym, sessionDate, db);
+    const atrUsed = atr14 ?? entry * 0.02;
+    const atrFallbackUsed = atr14 == null;
+    if (atrFallbackUsed) {
+      log.info({ symbol: sym, sessionDate }, 'ATR14 missing, using 2% proxy for stop sizing');
+    }
+
+    const hardFloorStop = entry * hardMult;
+    const atrStop = entry - cfg.position_sizing.atr_multiplier * atrUsed;
+    const thesisStopSafe = thesisStop != null && thesisStop < entry ? thesisStop : null;
+    const stopLoss = Math.max(hardFloorStop, atrStop, thesisStopSafe ?? Number.NEGATIVE_INFINITY);
+    const target =
+      thesisTarget != null && thesisTarget > entry
+        ? thesisTarget
+        : entry * (1 + cfg.position_sizing.trim_return_pct / 100);
+    if (!Number.isFinite(stopLoss) || !Number.isFinite(target) || target <= entry) {
+      log.warn({ symbol: sym, stopLoss, target, entry }, 'momentum entry skipped: invalid levels');
+      continue;
+    }
+
+    const suggestedSizePct = computeSuggestedSizePct(
+      entry,
+      stopLoss,
+      portfolioValue,
+      cfg.position_sizing.risk_pct,
+      cfg.position_sizing.max_single_stock_pct,
+    );
+    const notes = JSON.stringify({
+      rank: entryCtx.rank,
+      composite_score: entryCtx.composite,
+      suggested_position_size_pct: suggestedSizePct,
+      false_flag: entryCtx.falseFlag,
+      earnings_blackout_checked: true,
+      atr14_used: atrUsed,
+      atr14_fallback_2pct: atrFallbackUsed,
+      thesis_model: thesisModel,
+    });
 
     const ok = insertPaperTradeIfAbsent(
       {
@@ -349,6 +539,7 @@ export function runMomentumRebalance(opts: MomentumRebalanceOptions): MomentumRe
         target,
         timeHorizon: 'medium',
         maxHoldDays: 90,
+        notes,
       },
       db,
     );
@@ -379,6 +570,7 @@ export function runMomentumRebalance(opts: MomentumRebalanceOptions): MomentumRe
       sectorCapBlocked,
       blackoutBlocked,
       heldCount: finalOpen.length,
+      thesisFailed,
     },
     'momentum rebalance complete',
   );
@@ -395,5 +587,6 @@ export function runMomentumRebalance(opts: MomentumRebalanceOptions): MomentumRe
     sectorCapBlocked,
     blackoutBlocked,
     unchangedHeld,
+    thesisFailed,
   };
 }
