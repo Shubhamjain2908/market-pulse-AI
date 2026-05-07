@@ -77,6 +77,18 @@ async function runSundayMomentumRebalance(): Promise<void> {
     migrate();
     const date = isoDateIst();
     const result = await runMomentumRebalance({ calendarDate: date, db: getDb() });
+    const snap = result.rankerSnapshot;
+    if (snap && snap.eligibleCount === 0 && snap.universeSize > 0) {
+      log.warn(
+        {
+          tag: 'sun-0800',
+          sessionDate: result.sessionDate,
+          universeSize: snap.universeSize,
+          eligibleCount: snap.eligibleCount,
+        },
+        'Sunday momentum: ranker produced zero eligible symbols — verify Friday Phase 3 enrich',
+      );
+    }
     log.info(
       { tag: 'sun-0800', health: 'ok', durationMs: Date.now() - t0, ...result },
       'Sunday momentum rebalance finished',
