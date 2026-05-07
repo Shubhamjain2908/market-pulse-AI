@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildLiteSnapshotCopy,
+  getLatestSignalsMap,
   getPortfolioDeepLossPct,
   needsPortfolioLlmReview,
   signalExtremesWarrantReview,
@@ -133,5 +134,18 @@ describe('portfolio-trigger', () => {
   it('signalExtremesWarrantReview detects RSI stretch', () => {
     expect(signalExtremesWarrantReview({ rsi_14: 70 })).toBe(true);
     expect(signalExtremesWarrantReview({ rsi_14: 50 })).toBe(false);
+  });
+
+  it('getLatestSignalsMap merges latest row per signal name across dates', () => {
+    upsertSignals(
+      [
+        { symbol: 'MERGE', date: '2026-04-24', name: 'mom_rank', value: 17, source: 'momentum' },
+        { symbol: 'MERGE', date, name: 'rsi_14', value: 44, source: 'technical' },
+      ],
+      db,
+    );
+    const m = getLatestSignalsMap('MERGE', date, db);
+    expect(m.mom_rank).toBe(17);
+    expect(m.rsi_14).toBe(44);
   });
 });

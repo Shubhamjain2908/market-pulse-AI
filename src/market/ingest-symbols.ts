@@ -4,7 +4,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
-import { loadWatchlist } from '../config/loaders.js';
+import { getMomentumUniverseSymbols, loadWatchlist } from '../config/loaders.js';
 import { getLatestHoldings } from '../db/index.js';
 import { BENCHMARK_QUOTE_SYMBOLS, GLOBAL_MACRO_QUOTE_SYMBOLS } from './benchmarks.js';
 
@@ -16,10 +16,17 @@ import { BENCHMARK_QUOTE_SYMBOLS, GLOBAL_MACRO_QUOTE_SYMBOLS } from './benchmark
 export function defaultIngestSymbolUniverse(db: DatabaseType, explicit?: string[]): string[] {
   const base = (explicit ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
   const holdingSyms = getLatestHoldings(db).map((h) => h.symbol.toUpperCase());
+  let momentumSyms: string[] = [];
+  try {
+    momentumSyms = getMomentumUniverseSymbols();
+  } catch {
+    // Optional until config/momentum-universe.json is committed in new clones.
+  }
   return [
     ...new Set([
       ...base,
       ...holdingSyms,
+      ...momentumSyms,
       ...BENCHMARK_QUOTE_SYMBOLS,
       ...GLOBAL_MACRO_QUOTE_SYMBOLS,
     ]),

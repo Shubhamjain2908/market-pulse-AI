@@ -4,6 +4,7 @@
  */
 
 import { composeBriefing } from '../briefing/composer.js';
+import type { MomentumRebalanceSummary } from '../briefing/momentum-card.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 
@@ -24,6 +25,7 @@ export interface BriefRunOptions {
     eligibleUniverseSize: number;
     watchlistSize: number;
   };
+  momentumRebalanceSummary?: MomentumRebalanceSummary;
 }
 
 export interface BriefRunResult {
@@ -47,6 +49,7 @@ export async function runBriefingComposer(opts: BriefRunOptions = {}): Promise<B
     skipAi: opts.skipAi,
     marketClosure: opts.marketClosure,
     thesisRun: opts.thesisRun,
+    momentumRebalanceSummary: opts.momentumRebalanceSummary,
   });
   const screenMatches = composed.data.screenMatches?.reduce((s, m) => s + m.symbols.length, 0) ?? 0;
   log.info(

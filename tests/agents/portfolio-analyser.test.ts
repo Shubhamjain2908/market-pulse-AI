@@ -6,6 +6,7 @@ import {
   type PortfolioAction,
   PortfolioActionSchema,
   analysePortfolio,
+  applyMomentumPortfolioGuardrails,
   applyPortfolioAddGuardrails,
 } from '../../src/agents/portfolio-analyser.js';
 import {
@@ -219,6 +220,55 @@ describe('portfolio analyser', () => {
       },
     );
     expect(out.action).toBe('ADD');
+  });
+});
+
+describe('applyMomentumPortfolioGuardrails', () => {
+  const baseHold = (): PortfolioAction => ({
+    symbol: 'ITC',
+    action: 'HOLD',
+    conviction: 0.55,
+    thesis: 'Hold line.',
+    bullPoints: ['Trend'],
+    bearPoints: ['Macro'],
+    triggerReason: 'No change.',
+    suggestedStop: null,
+    suggestedTarget: null,
+  });
+
+  it('forces EXIT when mom_rank exceeds configured exit threshold', () => {
+    const out = applyMomentumPortfolioGuardrails(baseHold(), { mom_rank: 21 });
+    expect(out.action).toBe('EXIT');
+    expect(out.triggerReason).toContain('rank decay');
+    expect(out.triggerReason).toContain('mom_rank');
+  });
+
+  it('does not mutate triggerReason when already EXIT', () => {
+    const out = applyMomentumPortfolioGuardrails(
+      { ...baseHold(), action: 'EXIT', triggerReason: 'Manual exit.' },
+      { mom_rank: 99 },
+    );
+    expect(out.action).toBe('EXIT');
+    expect(out.triggerReason).toBe('Manual exit.');
+  });
+
+  it('downgrades ADD to HOLD when mom_false_flag is 1', () => {
+    const out = applyMomentumPortfolioGuardrails(
+      {
+        ...baseHold(),
+        action: 'ADD',
+        conviction: 0.7,
+        triggerReason: 'Scale in.',
+      },
+      { mom_false_flag: 1 },
+    );
+    expect(out.action).toBe('HOLD');
+    expect(out.triggerReason).toContain('mom_false_flag');
+  });
+
+  it('is a no-op when no momentum guardrail fields are present', () => {
+    const a = baseHold();
+    expect(applyMomentumPortfolioGuardrails(a, {})).toEqual(a);
   });
 });
 

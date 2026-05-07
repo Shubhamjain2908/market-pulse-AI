@@ -26,21 +26,66 @@ export interface SignalSnapshot {
   vsSma20Pct?: number;
 }
 
+/**
+ * Latest value per `signals.name` for `symbol` on or before `asOfDate`.
+ * Technical and momentum rows often land on different session dates (daily enrich vs weekly ranker);
+ * taking MAX(date) across all names would drop stale-frequency signals (e.g. mom_* after a Monday RSI write).
+ */
 export function getLatestSignalsMap(
   symbol: string,
-  date: string,
+  asOfDate: string,
   db: DatabaseType,
 ): Record<string, number> {
+  const sym = symbol.toUpperCase();
   const rows = db
     .prepare(
       `
-      SELECT name, value FROM signals
-      WHERE symbol = ? AND date <= ?
-        AND date = (SELECT MAX(date) FROM signals s2 WHERE s2.symbol = signals.symbol AND s2.date <= ?)
+      SELECT name, value FROM (
+        SELECT name, value,
+          ROW_NUMBER() OVER (PARTITION BY name ORDER BY date DESC) AS rn
+        FROM signals
+        WHERE symbol = ? AND date <= ?
+      )
+      WHERE rn = 1
     `,
     )
-    .all(symbol, date, date) as Array<{ name: string; value: number }>;
+    .all(sym, asOfDate) as Array<{ name: string; value: number }>;
   return Object.fromEntries(rows.map((r) => [r.name, r.value]));
+}
+
+/**
+ * Same as {@link getLatestSignalsMap} but batched for many symbols (thesis ranking).
+ */
+export function getLatestSignalsMapsForSymbols(
+  symbols: string[],
+  asOfDate: string,
+  db: DatabaseType,
+): Map<string, Record<string, number>> {
+  if (symbols.length === 0) return new Map();
+  const upper = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  const placeholders = upper.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `
+      SELECT symbol, name, value FROM (
+        SELECT symbol, name, value,
+          ROW_NUMBER() OVER (PARTITION BY symbol, name ORDER BY date DESC) AS rn
+        FROM signals
+        WHERE date <= ? AND symbol IN (${placeholders})
+      )
+      WHERE rn = 1
+    `,
+    )
+    .all(asOfDate, ...upper) as Array<{ symbol: string; name: string; value: number }>;
+
+  const bySym = new Map<string, Record<string, number>>();
+  for (const r of rows) {
+    const sym = r.symbol.toUpperCase();
+    const cur = bySym.get(sym) ?? {};
+    cur[r.name] = r.value;
+    bySym.set(sym, cur);
+  }
+  return bySym;
 }
 
 export function parseSignalSnapshot(s: Record<string, number>): SignalSnapshot {

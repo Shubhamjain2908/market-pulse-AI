@@ -15,3 +15,7 @@ export {
   type TechnicalEnricherOptions,
 } from './technical/enricher.js';
 export { computeRegimeSignals } from './regime-signals.js';
+export {
+  enrichMomentumSignals,
+  type MomentumSignalsStats,
+} from './momentum-signals.js';

@@ -12,7 +12,16 @@ short, actionable briefing before market open.
 > `regime_daily` + `regime_strategy_gate` tables, per-screen and per-agent
 > gating with size multipliers, regime card + change banner in the HTML briefing,
 > and wiring in `pnpm daily` / `pnpm run-all` before screening and thesis
-> generation. **Adaptive trailing stops (paper trades)** shipped end-to-end:
+> generation. **Momentum screener (multi-factor)** shipped: `mom_*` signals +
+> weekly ranker / rebalance into `paper_trades` (`momentum_mf`), regime-gated
+> entries with sector cap + earnings blackout, HTML **Momentum screener** card
+> (rank decay + open-book monitor), thesis/portfolio context that **merges latest
+> values per signal name** (so weekday technical enrich does not drop stale
+> `mom_rank` / `mom_false_flag`), code-enforced **confidence ≤ 5** when
+> `mom_false_flag = 1`, portfolio guardrails (rank-decay EXIT, block ADD on
+> false flag), and **Sunday 08:00** rebalance followed by a skip-AI briefing that
+> includes the rebalance summary (`pnpm cli momentum-rebalance --brief` for the
+> same compose + deliver path). **Adaptive trailing stops (paper trades)** shipped end-to-end:
 > ATR14-based upward-only trailing on `paper_trades`, EOD bar-by-bar evaluator
 > (`runEvaluatePaperTrades`), `trailing_stop_log` audit trail + additive
 > `exit_reason`, HTML **Paper trades · trailing stops** block (above the regime
@@ -34,7 +43,7 @@ short, actionable briefing before market open.
 > screen engine, first-class watchlist alerts, a backtest harness, LLM
 > sentiment scoring, AI thesis generation, and an AI-composed HTML
 > briefing. Supports Cursor Agent, Anthropic, OpenAI, and Vertex AI
-> (Gemini) as LLM backends. See [the roadmap](#roadmap), [Market regime filter](#market-regime-filter-phase-6), and [Adaptive trailing stops](#adaptive-trailing-stops-paper-trades).
+> (Gemini) as LLM backends. See [the roadmap](#roadmap), [Market regime filter](#market-regime-filter-phase-6), [Momentum screener](#momentum-screener-multi-factor), and [Adaptive trailing stops](#adaptive-trailing-stops-paper-trades).
 
 ---
 
@@ -54,6 +63,7 @@ What it does daily:
 - Summarises any earnings or news for your holdings
 - Surfaces 3–5 actionable ideas, each with a thesis, entry zone, stop, and target (when `ai_picks_generation` is allowed for the current regime)
 - Forward-tests AI picks in **`paper_trades`**: after each `pnpm daily` run, `runEvaluatePaperTrades` walks **bar-by-bar** OHLC vs adaptive trailing rules; outcomes feed the **Signal performance** card; stop activity appears under **Paper trades · trailing stops** in the HTML briefing (previous session’s `trailing_stop_log` + live **near stop** rows)
+- Maintains an optional **multi-factor momentum** book (`momentum_mf` paper trades): weekly ranks and rebalance outputs surface in the briefing’s **Momentum screener** block when applicable; daily workflows reuse merged `mom_*` + technical snapshots for thesis and portfolio analysis
 
 Full product spec: regenerate `market-pulse-ai-spec.docx` by running
 `node new.cjs` (the source of truth for requirements lives in that script).
@@ -165,6 +175,13 @@ pnpm cli thesis            # generate AI theses for top-signal stocks
 pnpm cli brief             # stage 4 - compose + deliver briefing
 pnpm cli evaluate          # paper-trade trailing evaluation (bar-by-bar; --skip-ai skips STOPPED_OUT post-mortems)
 
+# Momentum screener (multi-factor rank + paper portfolio)
+pnpm cli momentum-rank              # Phase 4.1: write mom_* signals (composite z-score, rank, false-flag, …)
+pnpm cli momentum-rank -s SYM1,SYM2 # optional universe override
+pnpm cli momentum-rebalance         # Phase 4.2: regime gate → rank exits → entries (sector cap + blackout)
+pnpm cli momentum-rebalance --skip-ranker   # use existing mom_rank rows for session (no ranker pass)
+pnpm cli momentum-rebalance --brief         # after rebalance: compose skip-AI briefing + rebalance summary + deliver (same idea as Sunday scheduler)
+
 # One-shot pipelines
 pnpm cli run-all           # ingest → enrich → regime → gated screen → sentiment → thesis → brief
 pnpm cli daily             # full workflow + Kite portfolio sync + per-holding LLM analysis
@@ -177,8 +194,10 @@ pnpm cli portfolio-analyse -s INFY,HDFCBANK
 pnpm cli portfolio-analyse -j 12    # override parallel calls for speed/tuning
 pnpm cli scan              # one-shot intraday LTP refresh + live alerts
                            # (cron every 5-15 min during market hours)
-pnpm cli schedule          # start built-in croner schedule:
-                           # weekdays 07:30 + 15:30, Saturday 08:00 (IST)
+pnpm cli schedule          # start built-in croner schedule (Asia/Kolkata):
+                           # weekdays 07:30 + 15:30, Saturday 08:00,
+                           # Sunday 06:00 (Yahoo momentum earnings calendar),
+                           # Sunday 08:00 (momentum rank + rebalance + skip-AI briefing w/ rebalance summary + deliver)
 pnpm cli schedule --run-now
 
 pnpm cli doctor            # config diagnostics (no secrets)
@@ -230,6 +249,8 @@ Three places, in order of precedence:
    - [`watchlist.json`](config/watchlist.json) — symbols to highlight
    - [`screens.json`](config/screens.json) — screen criteria DSL
    - [`strategy-gates.json`](config/strategy-gates.json) — which screens / meta-strategies (e.g. `ai_picks_generation`) are allowed per regime and optional **size multipliers** (seed into `regime_strategy_gate` via `pnpm regime:seed-gates`)
+   - [`momentum-config.json`](config/momentum-config.json) — momentum strategy id, regime gate, portfolio slots, exit rank threshold, factor weights, blackout / sector caps, position sizing
+   - [`momentum-universe.json`](config/momentum-universe.json) — bucketed symbol union for the momentum ranker (~150-name screenable list)
    - [`portfolio.json`](config/portfolio.json) — manual holdings, used
      when `PORTFOLIO_SOURCE=manual`. Live Kite sync is the default in
      Phase 5 (`PORTFOLIO_SOURCE=kite`); the analyser doesn't care which
@@ -259,7 +280,7 @@ sources transparently:
 
 | Source                    | Signals                                                                      |
 | ------------------------- | ---------------------------------------------------------------------------- |
-| `signals` table (technical) | `close`, `sma_20`, `sma_50`, `sma_200`, `ema_9`, `ema_21`, `rsi_14`, `atr_14`, `volume_ratio_20d`, `pct_from_52w_high`, `pct_from_52w_low` |
+| `signals` table (technical + optional momentum) | Technical: `close`, `sma_20`, `sma_50`, `sma_200`, `ema_9`, `ema_21`, `rsi_14`, `atr_14`, `volume_ratio_20d`, `pct_from_52w_high`, `pct_from_52w_low`. **Momentum** (`pnpm cli momentum-rank`): `mom_rank`, `mom_composite_score`, `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`, `mom_false_flag`, … |
 | `fundamentals` table      | `pe`, `pb`, `peg`, `roe`, `roce`, `debt_to_equity`, `revenue_growth_yoy`, `profit_growth_yoy`, `promoter_holding_pct`, `promoter_holding_change_qoq`, `dividend_yield`, `market_cap` |
 | `fii_dii` table (computed) | `fii_net`, `dii_net`, `fii_net_5d_sum`, `dii_net_5d_sum`, `fii_net_streak_days`, `dii_net_streak_days` |
 
@@ -401,6 +422,56 @@ A **meta-layer** on top of the existing pipeline: each open session gets a singl
 
 ---
 
+## Momentum screener (multi-factor)
+
+A **regime-gated** momentum sleeve that ranks a configurable universe, writes **`mom_*`** rows into `signals`, and maintains open **`momentum_mf`** rows in **`paper_trades`** (weekly rebalance). It complements the existing watchlist screens and AI picks — not a live order router.
+
+**Config**
+
+- [`config/momentum-config.json`](config/momentum-config.json) — `strategy_id`, `regime_gate`, `portfolio_slots`, **`exit_rank_threshold`** (rank-decay exit), factor weights, earnings blackout window, `max_per_sector`, position sizing knobs.
+- [`config/momentum-universe.json`](config/momentum-universe.json) — union of bucketed symbols fed to the ranker (override via `pnpm cli momentum-rank -s …` / rebalance `--symbols` when testing).
+
+**CLI / code paths**
+
+- **Ranker** — `pnpm cli momentum-rank` → [`src/rankers/momentum-ranker.ts`](src/rankers/momentum-ranker.ts) writes signals such as `mom_rank`, `mom_composite_score`, `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`, **`mom_false_flag`**, `mom_earnings_blackout`, etc.
+- **Rebalance** — `pnpm cli momentum-rebalance` → [`src/strategies/momentum-rebalance.ts`](src/strategies/momentum-rebalance.ts): optional embedded ranker pass, liquidations when regime ∉ gate, rank-decay exits, new entries with sector cap + blackout checks; optional LLM entry thesis (false-flag thesis confidence is clamped in-strategy).
+
+Shortcuts: `pnpm momentum:rank` / `pnpm momentum:rebalance` (wrappers around the same CLI commands).
+- **Daily workflow** — [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) runs Yahoo momentum earnings refresh on **Sunday** IST; [**`applyMomentumRegimeGateExits`**](src/strategies/momentum-rebalance.ts) after regime classification on trading days.
+
+**Signal snapshots (important)**
+
+Technical enrich runs **daily**; momentum ranks are typically **weekly** (rebalance session). Lookups use **`getLatestSignalsMap`** ([`src/agents/portfolio-trigger.ts`](src/agents/portfolio-trigger.ts)): **latest row per `signals.name`** on or before the as-of date (window function), then merged into one map. That way **`mom_rank` / `mom_false_flag` do not disappear** after a newer RSI-only session row is written.
+
+**Thesis generator**
+
+- Stock context adds a **Momentum factor snapshot** when gate fields exist ([`buildMomentumContextAppend`](src/agents/thesis-generator.ts)); the thesis system prompt can include a **momentum addendum** for factor-by-factor narrative and false-momentum wording.
+- If **`mom_false_flag === 1`** in the merged map, persisted thesis **`confidence`** is **`min(LLM, 5)`** after the LLM returns (not prompt-only).
+
+**Portfolio analyser**
+
+- [`applyMomentumPortfolioGuardrails`](src/agents/portfolio-analyser.ts): **`mom_rank` > exit threshold** → **EXIT** (unless already EXIT); **`mom_false_flag === 1`** downgrades **ADD** → **HOLD** with an explicit guardrail suffix. Uses the same merged signal map as lite/full paths.
+
+**Briefing**
+
+- [`src/briefing/momentum-card.ts`](src/briefing/momentum-card.ts) — **Momentum screener** section (between **Screens fired** and **Watchlist alerts**): optional **Last rebalance** summary line when `momentumRebalanceSummary` is passed; **rank decay** highlight for ranks in the configured amber band; **monitor** table for open `momentum_mf` trades ( **`False flag`** shows **—** when `mom_false_flag` is absent).
+
+**Rebalance summary → HTML**
+
+- Helper **`toMomentumRebalanceBriefingSummary`** ([`src/strategies/momentum-rebalance.ts`](src/strategies/momentum-rebalance.ts)) maps rebalance results into the briefing payload (only when **`regimeAllowed`**).
+- **Sunday 08:00** scheduler ([`src/scheduler/market-scheduler.ts`](src/scheduler/market-scheduler.ts)): after **`runMomentumRebalance`**, runs **`runBriefingComposer`** with **`skipAi: true`**, weekend **`marketClosure`** when applicable, the summary, then **`deliverToFile` / `deliverToEmail`** per **`BRIEFING_DELIVERY`**.
+- **`pnpm cli momentum-rebalance --brief`** — same compose + deliver pattern for manual runs.
+- Weekday **`pnpm daily`** does **not** attach a rebalance summary (nothing produces those counters mid-week unless you re-run rebalance or add persistence).
+
+**Verify**
+
+```bash
+pnpm typecheck && pnpm test
+pnpm cli momentum-rebalance --skip-ranker --brief   # requires DB state + regime row; delivers briefing when configured
+```
+
+---
+
 ## Adaptive trailing stops (paper trades)
 
 End-to-end feature for **paper** positions created from AI picks / portfolio adds: **ATR14**-driven upward-only trailing, conservative same-day SL+TP handling, and additive **`exit_reason`** without changing the `CLOSED_WIN` / `CLOSED_LOSS` / `CLOSED_TIME` enum.
@@ -438,20 +509,22 @@ market-pulse-ai/
   src/
     agents/         # one module per pipeline stage (incl. regime-agent, stock-screener, thesis-generator)
     ingestors/      # data-source connectors (NSE, Yahoo, Screener, Kite, ...)
-    enrichers/      # signal computation: technical (Phase 1), sentiment (Phase 3), regime signals (Phase 6)
+    enrichers/      # signal computation: technical (Phase 1), sentiment (Phase 3), regime signals (Phase 6), momentum signals (mom_*)
     analysers/      # screen engine (Phase 2), regime classifier (Phase 6)
-    briefing/       # HTML composer + delivery; AI narrative (Phase 3); regime card (Phase 6)
+    briefing/       # HTML composer + delivery; AI narrative (Phase 3); regime card (Phase 6); momentum-card + trailing-stop-card
     db/             # schema.sql + migrations + prepared queries
     llm/            # LlmProvider interface + adapters
     config/         # env loader (zod-validated)
     portfolio/      # holdings tracker (Phase 4)
     market/         # NSE calendar + benchmark symbol map (report-quality Phase 1)
+    rankers/        # momentum ranker (composite z-score → mom_* signals)
+    strategies/     # momentum rebalance (paper_trades momentum_mf)
     backtest/       # historical replay (Phase 2)
     types/          # shared domain types
     cli.ts          # CLI entry
     constants.ts    # SEBI disclaimer, rate limits, etc.
     logger.ts       # pino logger
-  config/           # committed JSON configs (watchlist, screens, portfolio, strategy-gates)
+  config/           # committed JSON configs (watchlist, screens, portfolio, strategy-gates, momentum-*)
   scripts/          # build helpers + ops scripts
   tests/            # vitest unit/integration tests
   data/             # SQLite DB + caches (git-ignored)
@@ -510,9 +583,10 @@ Holiday dates live in [`src/market/nse-calendar.ts`](src/market/nse-calendar.ts)
 | 1     | Ingest + enrich      | ✅ shipped    | NSE/Yahoo/Screener/RSS ingestors; SMA/EMA/RSI/ATR/volume/52W signals; HTML briefing |
 | 2     | Screening + backtest | ✅ shipped    | JSON screen DSL; momentum / value / FII screens; first-class watchlist alerts; backtest harness with hit-rate / drawdown |
 | 3     | AI layer             | ✅ shipped    | Anthropic/OpenAI/Cursor providers; sentiment enricher; thesis generator; LLM briefing narrative |
-| 4     | Delivery             | ✅ shipped    | Croner schedule (07:30 / 15:30 weekdays, Sat 08:00 IST), Gmail SMTP delivery via nodemailer, stop-loss breach detector |
+| 4     | Delivery             | ✅ shipped    | Croner schedule (07:30 / 15:30 weekdays, Sat 08:00 IST; Sun 06:00 momentum earnings, Sun 08:00 momentum rebalance + skip-AI briefing deliver), Gmail SMTP delivery via nodemailer, stop-loss breach detector |
 | 5     | Real-time + Kite     | ✅ shipped    | Kite Connect HTTP client + interactive login; portfolio sync + per-holding LLM HOLD/ADD/TRIM/EXIT analyser; intraday LTP scanner; 4 new screens; single-command `pnpm daily` |
 | 6     | Market regime filter | ✅ shipped    | `regime_daily` + `regime_strategy_gate`; signal enricher + deterministic classifier; regime agent + briefing card; gated screens + gated AI thesis; seed/config via `strategy-gates.json` |
+| —     | Momentum screener (multi-factor) | ✅ shipped | `momentum-config.json` / `momentum-universe.json`; `mom_*` signals + ranker + rebalance → `paper_trades` (`momentum_mf`); merged latest-per-name signal map; thesis snapshot + confidence cap when false-flag; portfolio guardrails; **`momentum-card`** + Sunday **`--brief`** / scheduler delivery |
 | —     | Adaptive trailing stops (paper trades) | ✅ shipped | Migrations `0007`/`0008`; `runEvaluatePaperTrades` + `trailing_stop_log`; briefing **Paper trades · trailing stops** (above regime); optional LLM post-mortem on `STOPPED_OUT`; tests in `tests/scripts/evaluate-trades.test.ts` + `tests/briefing/trailing-stop-card.test.ts` |
 
 ---

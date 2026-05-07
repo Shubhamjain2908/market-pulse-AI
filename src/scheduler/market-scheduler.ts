@@ -5,14 +5,26 @@
  *  - Weekdays 07:30
  *  - Weekdays 15:30
  *  - Saturday 08:00
+ *  - Sunday 06:00 — Yahoo momentum earnings calendar refresh (weekly)
+ *  - Sunday 08:00 — momentum rank + rebalance (paper_trades), then skip-AI briefing with rebalance summary (delivered per BRIEFING_DELIVERY)
  */
 
 import { Cron } from 'croner';
+import { runBriefingComposer } from '../agents/briefing-composer.js';
 import { runDailyWorkflow } from '../agents/daily-workflow.js';
+import { deliverToEmail, deliverToFile } from '../briefing/index.js';
 import { config } from '../config/env.js';
+import { getMomentumUniverseSymbols } from '../config/loaders.js';
 import { MARKET_TIMEZONE } from '../constants.js';
-import { closeDb } from '../db/index.js';
+import { closeDb, getDb, migrate } from '../db/index.js';
+import { isoDateIst } from '../ingestors/base/dates.js';
+import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { child } from '../logger.js';
+import { getMarketClosure } from '../market/nse-calendar.js';
+import {
+  runMomentumRebalance,
+  toMomentumRebalanceBriefingSummary,
+} from '../strategies/momentum-rebalance.js';
 
 const log = child({ component: 'market-scheduler' });
 
@@ -32,11 +44,21 @@ export function startScheduler(): SchedulerHandle {
   const saturdayMorning = new Cron('0 8 * * 6', { timezone: MARKET_TIMEZONE, protect: true }, () =>
     runScheduledJob('sat-0800'),
   );
+  const sundayEarnings = new Cron(
+    '0 6 * * 0',
+    { timezone: MARKET_TIMEZONE, protect: true },
+    () => void runSundayEarningsRefresh(),
+  );
+  const sundayMomentumRebalance = new Cron(
+    '0 8 * * 0',
+    { timezone: MARKET_TIMEZONE, protect: true },
+    () => void runSundayMomentumRebalance(),
+  );
 
   log.info(
     {
       timezone: MARKET_TIMEZONE,
-      schedules: ['30 7 * * 1-5', '30 15 * * 1-5', '0 8 * * 6'],
+      schedules: ['30 7 * * 1-5', '30 15 * * 1-5', '0 8 * * 6', '0 6 * * 0', '0 8 * * 0'],
       delivery: config.BRIEFING_DELIVERY,
     },
     'scheduler started',
@@ -47,9 +69,92 @@ export function startScheduler(): SchedulerHandle {
       weekdayMorning.stop();
       weekdayClose.stop();
       saturdayMorning.stop();
+      sundayEarnings.stop();
+      sundayMomentumRebalance.stop();
       log.info('scheduler stopped');
     },
   };
+}
+
+async function runSundayMomentumRebalance(): Promise<void> {
+  const t0 = Date.now();
+  log.info({ tag: 'sun-0800', health: 'started' }, 'Sunday momentum rebalance started');
+  try {
+    migrate();
+    const date = isoDateIst();
+    const db = getDb();
+    const result = await runMomentumRebalance({ calendarDate: date, db });
+    const snap = result.rankerSnapshot;
+    if (snap && snap.eligibleCount === 0 && snap.universeSize > 0) {
+      log.warn(
+        {
+          tag: 'sun-0800',
+          sessionDate: result.sessionDate,
+          universeSize: snap.universeSize,
+          eligibleCount: snap.eligibleCount,
+        },
+        'Sunday momentum: ranker produced zero eligible symbols — verify Friday Phase 3 enrich',
+      );
+    }
+    log.info(
+      { tag: 'sun-0800', health: 'ok', durationMs: Date.now() - t0, ...result },
+      'Sunday momentum rebalance finished',
+    );
+
+    const summary = toMomentumRebalanceBriefingSummary(result);
+    const closure = getMarketClosure(date);
+    const briefing = await runBriefingComposer({
+      date,
+      skipAi: true,
+      marketClosure: closure ?? undefined,
+      momentumRebalanceSummary: summary,
+      delivery: config.BRIEFING_DELIVERY,
+    });
+    const method = config.BRIEFING_DELIVERY;
+    if (method === 'file') {
+      deliverToFile(briefing.html, briefing.date, db);
+    } else if (method === 'email') {
+      await deliverToEmail(briefing.html, briefing.date, db);
+    } else {
+      log.warn(
+        { tag: 'sun-0800', delivery: method },
+        'Sunday momentum briefing: delivery channel not implemented — HTML composed only in memory',
+      );
+    }
+    log.info(
+      { tag: 'sun-0800', briefingDate: briefing.date, summaryPresent: summary != null },
+      'Sunday momentum briefing delivered',
+    );
+  } catch (err) {
+    log.error(
+      { tag: 'sun-0800', health: 'error', durationMs: Date.now() - t0, err },
+      'Sunday momentum rebalance failed',
+    );
+  } finally {
+    closeDb();
+  }
+}
+
+async function runSundayEarningsRefresh(): Promise<void> {
+  const t0 = Date.now();
+  log.info({ tag: 'sun-0600', health: 'started' }, 'Sunday earnings calendar refresh started');
+  try {
+    migrate();
+    const date = isoDateIst();
+    const symbols = getMomentumUniverseSymbols({ fresh: true });
+    const result = await syncMomentumEarningsCalendarFromYahoo(symbols, getDb(), { refDate: date });
+    log.info(
+      { tag: 'sun-0600', health: 'ok', durationMs: Date.now() - t0, ...result },
+      'Sunday earnings calendar refresh finished',
+    );
+  } catch (err) {
+    log.error(
+      { tag: 'sun-0600', health: 'error', durationMs: Date.now() - t0, err },
+      'Sunday earnings calendar refresh failed',
+    );
+  } finally {
+    closeDb();
+  }
 }
 
 async function runScheduledJob(tag: string): Promise<void> {

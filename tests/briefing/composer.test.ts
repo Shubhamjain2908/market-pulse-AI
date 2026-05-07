@@ -294,6 +294,60 @@ describe('briefing composer (Phase 3–4)', () => {
     expect(result.html).toContain('Raised');
   });
 
+  it('places momentum card between screens and watchlist when open momentum_mf trades exist', async () => {
+    insertPaperTradeIfAbsent(
+      {
+        symbol: 'TCS',
+        signalType: 'momentum_mf',
+        sourceDate: '2026-04-01',
+        entryPrice: 3500,
+        stopLoss: 3300,
+        target: 3800,
+        timeHorizon: 'medium',
+        maxHoldDays: 90,
+      },
+      db,
+    );
+    upsertQuotes(
+      [
+        {
+          symbol: 'TCS',
+          exchange: 'NSE',
+          date: today,
+          open: 3400,
+          high: 3550,
+          low: 3380,
+          close: 3520,
+          volume: 1_000_000,
+          source: 'test',
+        },
+      ],
+      db,
+    );
+    upsertSignals(
+      [{ symbol: 'TCS', date: today, name: 'mom_rank', value: 17, source: 'momentum' }],
+      db,
+    );
+    db.prepare(
+      `
+      INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+      VALUES ('RELIANCE', ?, 'test_screen', 1, '{}')
+    `,
+    ).run(today);
+    const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
+    const { html } = result;
+    const iScreens = html.indexOf('Screens Fired Today');
+    const iMom = html.indexOf('Momentum screener');
+    const iWatch = html.indexOf('Watchlist Alerts');
+    expect(iScreens).toBeGreaterThan(-1);
+    expect(iMom).toBeGreaterThan(-1);
+    expect(iWatch).toBeGreaterThan(-1);
+    expect(iScreens).toBeLessThan(iMom);
+    expect(iMom).toBeLessThan(iWatch);
+    expect(html).toContain('Rank decay watch');
+    expect(html).toContain('TCS');
+  });
+
   it('falls back to deterministic mood narrative when LLM returns invalid replies repeatedly', async () => {
     let badCalls = 0;
     const badLlm: LlmProvider = {

@@ -95,7 +95,7 @@ export const SignalSchema = z.object({
   name: z.string(),
   value: z.number(),
   /** Stage that produced the signal - useful for invalidation. */
-  source: z.enum(['technical', 'fundamental', 'sentiment', 'flow']),
+  source: z.enum(['technical', 'fundamental', 'sentiment', 'flow', 'momentum', 'momentum_ranker']),
 });
 export type Signal = z.infer<typeof SignalSchema>;
 

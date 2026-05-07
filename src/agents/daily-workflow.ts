@@ -7,12 +7,15 @@
  */
 
 import { config } from '../config/env.js';
+import { getMomentumUniverseSymbols } from '../config/loaders.js';
 import { getDb } from '../db/index.js';
 import { enrichSentiment } from '../enrichers/sentiment/enricher.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
+import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { child } from '../logger.js';
-import { getMarketClosure } from '../market/nse-calendar.js';
+import { getMarketClosure, isSundayIst } from '../market/nse-calendar.js';
 import { runEvaluatePaperTrades } from '../scripts/evaluate-trades.js';
+import { applyMomentumRegimeGateExits } from '../strategies/momentum-rebalance.js';
 import { runBriefingComposer } from './briefing-composer.js';
 import { runDailyIngestor } from './daily-ingestor.js';
 import { analysePortfolio } from './portfolio-analyser.js';
@@ -52,6 +55,22 @@ export async function runDailyWorkflow(
   opts: DailyWorkflowOptions = {},
 ): Promise<DailyWorkflowResult> {
   const date = opts.date ?? isoDateIst();
+
+  if (isSundayIst(date)) {
+    try {
+      await syncMomentumEarningsCalendarFromYahoo(
+        getMomentumUniverseSymbols({ fresh: true }),
+        getDb(),
+        { refDate: date },
+      );
+    } catch (err) {
+      log.warn(
+        { err: (err as Error).message },
+        'Sunday Yahoo earnings calendar refresh failed; continuing',
+      );
+    }
+  }
+
   const closure = getMarketClosure(date);
 
   if (closure) {
@@ -117,6 +136,14 @@ export async function runDailyWorkflow(
   await runDailyIngestor({ date });
   await runSignalEnricher({ date });
   const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
+  const momRegimeExits = applyMomentumRegimeGateExits({
+    calendarDate: date,
+    regime: regimeAgent.regime,
+    db: getDb(),
+  });
+  if (momRegimeExits > 0) {
+    log.info({ momRegimeExits }, 'momentum regime gate: closed paper trades');
+  }
   await runStockScreener({ date, regime: regimeAgent.regime });
 
   let thesisRun:

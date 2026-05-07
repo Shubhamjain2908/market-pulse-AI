@@ -1,11 +1,16 @@
 /**
  * Daily evaluation of open paper trades: adaptive trailing stops, conservative same-day SL+TP,
- * target, and max-hold time-stop vs EOD quotes.
+ * target, and max-hold time-stop vs session OHLC.
+ *
+ * Ruling R3: stop fills at `bar.open` when the session gaps through the stop (long).
+ * Hard floor: before each bar’s SL/TP checks, `stopLoss = max(stopLoss, hardFloor)` so persisted stops
+ * below the −8% floor still lift when trailing is skipped (e.g. missing `atr_14` that day).
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 
 import { scheduleTrailingStopPostMortem } from '../agents/trailing-stop-postmortem.js';
+import { loadMomentumConfig } from '../config/loaders.js';
 import { type PaperTradeRow, closePaperTrade, getOpenPaperTrades } from '../db/queries.js';
 import {
   getAtr14,
@@ -85,6 +90,20 @@ function pnlPctLong(entry: number, exit: number): number {
   return ((exit - entry) / entry) * 100;
 }
 
+/** Spec / momentum-config `hard_stop_pct` (e.g. -8 → floor at 92% of entry for longs). */
+function hardStopFloorFromPct(entryPrice: number, hardStopPct: number): number {
+  return entryPrice * (1 + hardStopPct / 100);
+}
+
+/**
+ * Long R3: if the bar trades through the stop and the session opened below it, fill at the
+ * open; otherwise at the stop level.
+ */
+export function exitPriceWhenStopHit(bar: OhlcBar, stopLoss: number): number {
+  if (bar.open < stopLoss) return bar.open;
+  return stopLoss;
+}
+
 function normalizeTrailingMult(row: PaperTradeRow): number {
   const m = row.trailingMultiplier;
   if (m == null) return 2;
@@ -103,6 +122,8 @@ export function evaluateOnePaperTrade(
 ): 'CLOSED_WIN' | 'CLOSED_LOSS' | 'CLOSED_TIME' | 'no_data' | 'still_open' {
   const bars = getSymbolBars(db, trade.symbol, trade.sourceDate, asOf);
   if (bars.length === 0) return 'no_data';
+
+  const hardFloor = hardStopFloorFromPct(trade.entryPrice, loadMomentumConfig().hard_stop_pct);
 
   const dayIndex = buildTradingDayIndex(db, trade.sourceDate, asOf);
   const initialLlmStop = trade.stopLoss;
@@ -136,6 +157,7 @@ export function evaluateOnePaperTrade(
     if (!initialSetupComplete) {
       const atrOnSource = getAtr14(trade.symbol, trade.sourceDate, db);
       stopLoss = applyDay1InitialStop(trade.entryPrice, initialLlmStop, atrOnSource ?? null);
+      stopLoss = Math.max(stopLoss, hardFloor);
       atr14AtEntryStored = atrOnSource ?? null;
       initialSetupComplete = true;
       skipTrailThisBar = true;
@@ -155,7 +177,7 @@ export function evaluateOnePaperTrade(
         });
         lastTrailCandidate = res.candidateStop;
         lastTrailUnrealisedPct = res.unrealisedPct;
-        stopLoss = res.newStop;
+        stopLoss = Math.max(res.newStop, hardFloor);
         trailingMult = res.multiplier;
 
         insertStopLog(
@@ -177,6 +199,8 @@ export function evaluateOnePaperTrade(
         );
       }
     }
+
+    stopLoss = Math.max(stopLoss, hardFloor);
 
     const hitSl = bar.low <= stopLoss;
     const hitTg = bar.high >= trade.target;
@@ -200,15 +224,17 @@ export function evaluateOnePaperTrade(
     };
 
     const logStoppedOut = (logDate: string, notes: string | null, exitReason: ExitReason): void => {
+      const exitPx = exitPriceWhenStopHit(bar, stopLoss);
       const gap = bar.open < stopLoss ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
+      // STOPPED_OUT row: new_stop is booked exit price (R3: gap-through uses bar.open).
       const logId = insertStopLog(
         {
           tradeId: trade.id,
           symbol: trade.symbol,
           logDate,
           prevStop: stopAtBarStart,
-          newStop: stopLoss,
-          stopDelta: stopLoss - stopAtBarStart,
+          newStop: exitPx,
+          stopDelta: exitPx - stopAtBarStart,
           candidateStop: lastTrailCandidate,
           highestClose: maxCloseSinceEntry,
           atr14Today: getAtr14(trade.symbol, logDate, db) ?? null,
@@ -219,13 +245,14 @@ export function evaluateOnePaperTrade(
         },
         db,
       );
-      const pnl = pnlPctLong(trade.entryPrice, stopLoss);
+      const pnl = pnlPctLong(trade.entryPrice, exitPx);
       const status = pnl >= 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
-      closePaperTrade(trade.id, status, logDate, stopLoss, pnl, db, notes ?? null, exitReason);
+      closePaperTrade(trade.id, status, logDate, exitPx, pnl, db, notes ?? null, exitReason);
       if (logId !== null && !opts?.skipAi) scheduleTrailingStopPostMortem(logId);
     };
 
     if (hitSl && hitTg) {
+      const exitPx = exitPriceWhenStopHit(bar, stopLoss);
       const gap = bar.open < stopLoss ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
       const logId = insertStopLog(
         {
@@ -233,8 +260,8 @@ export function evaluateOnePaperTrade(
           symbol: trade.symbol,
           logDate: bar.date,
           prevStop: stopAtBarStart,
-          newStop: stopLoss,
-          stopDelta: stopLoss - stopAtBarStart,
+          newStop: exitPx,
+          stopDelta: exitPx - stopAtBarStart,
           candidateStop: lastTrailCandidate,
           highestClose: maxCloseSinceEntry,
           atr14Today: getAtr14(trade.symbol, bar.date, db) ?? null,
@@ -245,12 +272,12 @@ export function evaluateOnePaperTrade(
         },
         db,
       );
-      const pnl = pnlPctLong(trade.entryPrice, stopLoss);
+      const pnl = pnlPctLong(trade.entryPrice, exitPx);
       closePaperTrade(
         trade.id,
         'CLOSED_LOSS',
         bar.date,
-        stopLoss,
+        exitPx,
         pnl,
         db,
         'same-day SL+TP: counted as loss (conservative)',
@@ -263,7 +290,8 @@ export function evaluateOnePaperTrade(
     if (hitSl) {
       const exitReasonStop: ExitReason = skipTrailThisBar ? 'INITIAL_STOP' : 'TRAILING_STOP';
       logStoppedOut(bar.date, null, exitReasonStop);
-      return pnlPctLong(trade.entryPrice, stopLoss) >= 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
+      const exitPx = exitPriceWhenStopHit(bar, stopLoss);
+      return pnlPctLong(trade.entryPrice, exitPx) >= 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
     }
 
     if (hitTg) {
