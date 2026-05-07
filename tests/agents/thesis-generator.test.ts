@@ -2,7 +2,11 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { generateTheses, getThesisRankMeta } from '../../src/agents/thesis-generator.js';
+import {
+  buildStockContext,
+  generateTheses,
+  getThesisRankMeta,
+} from '../../src/agents/thesis-generator.js';
 import {
   closeDb,
   getDb,
@@ -191,5 +195,42 @@ describe('thesis generator', () => {
 
     expect(result.generated).toBe(1);
     expect(result.theses[0]?.symbol).toBe('HOTSTOCK');
+  });
+
+  it('appends momentum snapshot to stock context when momentum gate signals exist', () => {
+    upsertSignals(
+      [
+        {
+          symbol: 'RELIANCE',
+          date: today,
+          name: 'mom_rank',
+          value: 5,
+          source: 'momentum',
+        },
+      ],
+      db,
+    );
+    const ctx = buildStockContext('RELIANCE', today, db, 'thesis');
+    expect(ctx).toContain('## Momentum factor snapshot');
+    expect(ctx).toContain('Composite rank');
+  });
+
+  it('adds momentum thesis addendum to the LLM system prompt when momentum context exists', async () => {
+    upsertSignals(
+      [
+        {
+          symbol: 'RELIANCE',
+          date: today,
+          name: 'mom_rank',
+          value: 3,
+          source: 'momentum',
+        },
+      ],
+      db,
+    );
+    await generateTheses({ date: today, watchlist: ['RELIANCE'], maxTheses: 1 }, db, llm);
+    const thesisCalls = llm.calls.filter((c) => c.method === 'generateJson');
+    expect(thesisCalls.length).toBeGreaterThan(0);
+    expect(thesisCalls[0]?.system).toContain('MOMENTUM CONTEXT');
   });
 });
