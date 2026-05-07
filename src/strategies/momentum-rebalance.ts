@@ -16,7 +16,7 @@ import {
   getOpenPaperTradesForSignal,
   insertPaperTradeIfAbsent,
 } from '../db/queries.js';
-import { getRegimeForCalendarDate } from '../db/regime-queries.js';
+import { getRegimeForCalendarDate, isStrategyAllowed } from '../db/regime-queries.js';
 import { child } from '../logger.js';
 import { lastOpenOnOrBefore } from '../market/trading-days.js';
 import { runMomentumRanker } from '../rankers/momentum-ranker.js';
@@ -79,27 +79,46 @@ export function applyMomentumRegimeGateExits(opts: ApplyMomentumRegimeGateOption
 
 interface MomSignalsMaps {
   rankBySymbol: Map<string, number>;
-  blackoutBySymbol: Map<string, boolean>;
 }
 
-function loadMomentumRankAndBlackout(sessionDate: string, db: DatabaseType): MomSignalsMaps {
+function loadMomentumRanks(sessionDate: string, db: DatabaseType): MomSignalsMaps {
   const rows = db
     .prepare(
       `
     SELECT symbol, name, value FROM signals
-    WHERE date = ? AND name IN ('mom_rank', 'mom_earnings_blackout')
+    WHERE date = ? AND name IN ('mom_rank')
   `,
     )
     .all(sessionDate) as Array<{ symbol: string; name: string; value: number }>;
 
   const rankBySymbol = new Map<string, number>();
-  const blackoutBySymbol = new Map<string, boolean>();
   for (const r of rows) {
     const sym = r.symbol.toUpperCase();
     if (r.name === 'mom_rank') rankBySymbol.set(sym, r.value);
-    else blackoutBySymbol.set(sym, r.value >= 1);
   }
-  return { rankBySymbol, blackoutBySymbol };
+  return { rankBySymbol };
+}
+
+function getEarningsBlackoutExpectedDate(
+  symbol: string,
+  sessionDate: string,
+  windowDays: number,
+  db: DatabaseType,
+): string | null {
+  const row = db
+    .prepare(
+      `
+    SELECT expected_date FROM earnings_calendar
+    WHERE symbol = ?
+      AND expected_date BETWEEN date(?, printf('-%d days', ?)) AND date(?, printf('+%d days', ?))
+    ORDER BY expected_date ASC
+    LIMIT 1
+  `,
+    )
+    .get(symbol, sessionDate, windowDays, sessionDate, windowDays) as
+    | { expected_date: string }
+    | undefined;
+  return row?.expected_date ?? null;
 }
 
 function loadRankedSymbolsOrdered(sessionDate: string, db: DatabaseType): string[] {
@@ -146,6 +165,7 @@ export interface MomentumRebalanceResult {
   sectorCapBlocked: number;
   blackoutBlocked: number;
   unchangedHeld: number;
+  skippedReason?: 'regime_gate';
 }
 
 export function runMomentumRebalance(opts: MomentumRebalanceOptions): MomentumRebalanceResult {
@@ -184,43 +204,32 @@ export function runMomentumRebalance(opts: MomentumRebalanceOptions): MomentumRe
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
       unchangedHeld: getOpenPaperTradesForSignal('momentum_mf', db).length,
+      skippedReason: 'regime_gate',
     };
   }
 
-  const regimeAllowed = cfg.regime_gate.includes(regime);
+  const regimeAllowed =
+    cfg.regime_gate.includes(regime) && isStrategyAllowed(cfg.strategy_id, regime, db);
 
   if (!regimeAllowed) {
-    const note = `regime exit: ${regime} not in momentum regime_gate (${calendarDate})`;
-    const open = getOpenPaperTradesForSignal('momentum_mf', db);
-    let closedRegime = 0;
-    for (const t of open) {
-      if (closeManualAtSession(t, sessionDate, note, db)) closedRegime++;
-    }
-    log.info(
-      {
-        calendarDate,
-        sessionDate,
-        regime,
-        closedRegime,
-      },
-      'momentum rebalance skipped (regime); liquidated open trades',
-    );
+    log.info({ calendarDate, sessionDate, regime }, 'momentum-rebalance gated by regime');
     return {
       calendarDate,
       sessionDate,
       regime,
       regimeAllowed: false,
       rankerRan,
-      closedRegime,
+      closedRegime: 0,
       closedRankDecay: 0,
       entriesInserted: 0,
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
-      unchangedHeld: 0,
+      unchangedHeld: getOpenPaperTradesForSignal('momentum_mf', db).length,
+      skippedReason: 'regime_gate',
     };
   }
 
-  const { rankBySymbol, blackoutBySymbol } = loadMomentumRankAndBlackout(sessionDate, db);
+  const { rankBySymbol } = loadMomentumRanks(sessionDate, db);
   const rankedOrder = loadRankedSymbolsOrdered(sessionDate, db);
   const sectorMap = loadSectorMap();
 
@@ -297,7 +306,17 @@ export function runMomentumRebalance(opts: MomentumRebalanceOptions): MomentumRe
       continue;
     }
 
-    if (blackoutBySymbol.get(sym) === true) {
+    const expectedDate = getEarningsBlackoutExpectedDate(
+      sym,
+      sessionDate,
+      cfg.earnings_blackout_days,
+      db,
+    );
+    if (expectedDate != null) {
+      log.info(
+        { symbol: sym, sessionDate, expectedDate },
+        'momentum-rebalance entry skipped — earnings blackout',
+      );
       blackoutBlocked++;
       continue;
     }

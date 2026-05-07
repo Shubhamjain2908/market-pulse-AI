@@ -46,15 +46,6 @@ function sigRank(db: ReturnType<typeof getDb>, sym: string, date: string, rank: 
   ).run(sym, date, rank);
 }
 
-function sigBlackout(db: ReturnType<typeof getDb>, sym: string, date: string, v: number): void {
-  db.prepare(
-    `
-    INSERT INTO signals (symbol, date, name, value, source)
-    VALUES (?, ?, 'mom_earnings_blackout', ?, 'test')
-  `,
-  ).run(sym, date, v);
-}
-
 describe('strategies/momentum-rebalance', () => {
   let dbPath: string;
 
@@ -99,7 +90,7 @@ describe('strategies/momentum-rebalance', () => {
     db.close();
   });
 
-  it('runMomentumRebalance liquidates when regime is non-bull', () => {
+  it('runMomentumRebalance gates in non-bull regime (no rebalance writes)', () => {
     const db = getDb({ path: dbPath });
     migrate(db);
     const session = '2026-05-08';
@@ -120,8 +111,9 @@ describe('strategies/momentum-rebalance', () => {
       skipRanker: true,
     });
     expect(r.regimeAllowed).toBe(false);
-    expect(r.closedRegime).toBe(1);
-    expect(getOpenPaperTradesForSignal('momentum_mf', db)).toHaveLength(0);
+    expect(r.closedRegime).toBe(0);
+    expect(r.skippedReason).toBe('regime_gate');
+    expect(getOpenPaperTradesForSignal('momentum_mf', db)).toHaveLength(1);
     db.close();
   });
 
@@ -187,8 +179,13 @@ describe('strategies/momentum-rebalance', () => {
     quote(db, 'P', session, 50);
     quote(db, 'Q', session, 50);
     sigRank(db, 'P', session, 1);
-    sigBlackout(db, 'P', session, 1);
     sigRank(db, 'Q', session, 2);
+    db.prepare(
+      `
+      INSERT INTO earnings_calendar (symbol, expected_date, source, fetched_at)
+      VALUES ('P', ?, 'test', ?)
+    `,
+    ).run(session, session);
 
     const r = runMomentumRebalance({ calendarDate: session, db, skipRanker: true });
     expect(r.blackoutBlocked).toBeGreaterThanOrEqual(1);
