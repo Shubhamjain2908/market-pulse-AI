@@ -54,6 +54,25 @@ export function upsertQuotes(rows: RawQuote[], db: DatabaseType = getDb()): numb
   return rows.length;
 }
 
+/** Latest NSE cash close on or before `asOf` (for rebalance / regime exits). */
+export function getNseCloseOnOrBefore(
+  symbol: string,
+  asOf: string,
+  db: DatabaseType = getDb(),
+): number | null {
+  const row = db
+    .prepare(
+      `
+    SELECT close FROM quotes
+    WHERE symbol = ? AND exchange = 'NSE' AND date <= ?
+    ORDER BY date DESC LIMIT 1
+  `,
+    )
+    .get(symbol.toUpperCase(), asOf) as { close: number } | undefined;
+  if (!row || !Number.isFinite(row.close)) return null;
+  return row.close;
+}
+
 export function getRecentQuotes(
   symbol: string,
   limit = 200,
@@ -486,6 +505,55 @@ export function getOpenPaperTrades(db: DatabaseType = getDb()): PaperTradeRow[] 
   `,
     )
     .all() as Array<{
+    id: number;
+    symbol: string;
+    signalType: PaperTradeSignalType;
+    sourceDate: string;
+    entryPrice: number;
+    stopLoss: number;
+    target: number;
+    timeHorizon: PaperTradeHorizon;
+    maxHoldDays: number;
+    status: PaperTradeStatus;
+    outcomeDate: string | null;
+    exitPrice: number | null;
+    pnlPct: number | null;
+    notes: string | null;
+    createdAt: string;
+    highestCloseSinceEntry: number | null;
+    atr14AtEntry: number | null;
+    trailingMultiplier: number | null;
+    stopRaisedToday: number | null;
+    exitReason: ExitReason | null;
+  }>;
+
+  return rows;
+}
+
+/** Open rows for a single strategy (`signal_type`). */
+export function getOpenPaperTradesForSignal(
+  signalType: PaperTradeSignalType,
+  db: DatabaseType = getDb(),
+): PaperTradeRow[] {
+  const rows = db
+    .prepare(
+      `
+    SELECT id, symbol, signal_type AS signalType, source_date AS sourceDate,
+           entry_price AS entryPrice, stop_loss AS stopLoss, target,
+           time_horizon AS timeHorizon, max_hold_days AS maxHoldDays,
+           status, outcome_date AS outcomeDate, exit_price AS exitPrice,
+           pnl_pct AS pnlPct, notes, created_at AS createdAt,
+           highest_close_since_entry AS highestCloseSinceEntry,
+           atr14_at_entry AS atr14AtEntry,
+           trailing_multiplier AS trailingMultiplier,
+           stop_raised_today AS stopRaisedToday,
+           exit_reason AS exitReason
+    FROM paper_trades
+    WHERE status = 'OPEN' AND signal_type = ?
+    ORDER BY source_date ASC, id ASC
+  `,
+    )
+    .all(signalType) as Array<{
     id: number;
     symbol: string;
     signalType: PaperTradeSignalType;
