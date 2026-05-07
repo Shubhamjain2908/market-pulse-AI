@@ -203,7 +203,7 @@ program
 
 program
   .command('enrich')
-  .description('stage 2: compute technical signals + mom_earnings_blackout')
+  .description('stage 2: technical indicators + momentum factors (universe) + blackout')
   .option('-s, --symbols <list>', 'comma-separated list of symbols')
   .action(async (opts: { symbols?: string }) => {
     ensureDb();
