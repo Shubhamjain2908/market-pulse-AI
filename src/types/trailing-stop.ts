@@ -17,7 +17,7 @@ export type StopLogAction = (typeof STOP_LOG_ACTIONS)[number];
 
 /**
  * Written to `trailing_stop_log.notes` on STOPPED_OUT when the session opened below the
- * active stop but we still book the fill at `stop_loss` (paper convention). Queryable for
+ * active stop (Ruling R3): fill is booked at `bar.open`, not the stop price. Queryable for
  * signal-quality backtests.
  */
 export const GAP_DOWN_THROUGH_STOP_NOTE = 'gap_down_open:true';

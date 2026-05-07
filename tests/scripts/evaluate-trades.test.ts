@@ -11,6 +11,7 @@ import {
 } from '../../src/db/queries.js';
 import {
   evaluateOnePaperTrade,
+  exitPriceWhenStopHit,
   runEvaluatePaperTrades,
 } from '../../src/scripts/evaluate-trades.js';
 import type { RawQuote } from '../../src/types/domain.js';
@@ -29,6 +30,18 @@ function q(symbol: string, date: string, o: number, h: number, l: number, c: num
     source: 't',
   };
 }
+
+describe('exitPriceWhenStopHit (R3)', () => {
+  it('fills at open when session gaps below the stop', () => {
+    const bar = { date: '2026-01-02', open: 95, high: 100, low: 96, close: 99 };
+    expect(exitPriceWhenStopHit(bar, 99)).toBe(95);
+  });
+
+  it('fills at stop when open is at or above the stop', () => {
+    const bar = { date: '2026-01-02', open: 100, high: 105, low: 92, close: 98 };
+    expect(exitPriceWhenStopHit(bar, 95)).toBe(95);
+  });
+});
 
 describe('evaluate paper trades', () => {
   let dbPath: string;
@@ -297,7 +310,7 @@ describe('evaluate paper trades', () => {
   });
 
   describe('§9.2 evaluator integration (spec)', () => {
-    it('9.2.1 — R3 gap-down open tags STOPPED_OUT log notes', () => {
+    it('9.2.1 — R3 gap-down open: exit at bar.open, STOPPED_OUT log notes, reconciled prices', () => {
       const src = '2026-09-01';
       const d1 = '2026-09-02';
       const d2 = '2026-09-03';
@@ -319,14 +332,22 @@ describe('evaluate paper trades', () => {
       );
       const t = getOpenPaperTrades(db)[0];
       if (t === undefined) throw new Error('missing trade');
-      expect(evaluateOnePaperTrade(t, db, d2, { skipAi: true })).toBe('CLOSED_WIN');
+      expect(evaluateOnePaperTrade(t, db, d2, { skipAi: true })).toBe('CLOSED_LOSS');
 
-      const logNotes = db
+      const closed = db
+        .prepare(`SELECT status, exit_price, pnl_pct FROM paper_trades WHERE id = ?`)
+        .get(t.id) as { status: string; exit_price: number; pnl_pct: number };
+      expect(closed.status).toBe('CLOSED_LOSS');
+      expect(closed.exit_price).toBe(98);
+      expect(closed.pnl_pct).toBeCloseTo(-2, 4);
+
+      const logRow = db
         .prepare(
-          `SELECT notes FROM trailing_stop_log WHERE trade_id = ? AND action = 'STOPPED_OUT'`,
+          `SELECT notes, new_stop FROM trailing_stop_log WHERE trade_id = ? AND action = 'STOPPED_OUT'`,
         )
-        .get(t.id) as { notes: string | null } | undefined;
-      expect(logNotes?.notes).toBe(GAP_DOWN_THROUGH_STOP_NOTE);
+        .get(t.id) as { notes: string | null; new_stop: number };
+      expect(logRow?.notes).toBe(GAP_DOWN_THROUGH_STOP_NOTE);
+      expect(logRow?.new_stop).toBe(98);
     });
 
     it('9.2.2 — first session bar stop-out uses INITIAL_STOP (Day-1 block)', () => {
@@ -355,6 +376,31 @@ describe('evaluate paper trades', () => {
         exit_reason: string | null;
       };
       expect(row.exit_reason).toBe('INITIAL_STOP');
+    });
+
+    it('9.2.3 — momentum hard_stop_pct floor raises loose LLM stop (no atr on source)', () => {
+      const src = '2026-10-01';
+      const d1 = '2026-10-02';
+      seedNifty(d1);
+      upsertQuotes([q('HFLOOR', d1, 100, 105, 93, 102)], db);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'HFLOOR',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 85,
+          target: 200,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const t = getOpenPaperTrades(db)[0];
+      if (t === undefined) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, d1, { skipAi: true })).toBe('still_open');
+      const still = getOpenPaperTrades(db)[0];
+      expect(still?.stopLoss).toBe(92);
     });
   });
 
