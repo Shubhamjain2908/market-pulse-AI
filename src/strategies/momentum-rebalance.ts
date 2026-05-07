@@ -170,7 +170,8 @@ export interface MomentumRebalanceResult {
   regime: Regime | null;
   regimeAllowed: boolean;
   rankerRan: boolean;
-  closedRegime: number;
+  /** Present when embedded ranker ran; regime exits are counted only via `applyMomentumRegimeGateExits` (daily). */
+  rankerSnapshot?: { universeSize: number; eligibleCount: number };
   closedRankDecay: number;
   entriesInserted: number;
   sectorCapBlocked: number;
@@ -282,7 +283,11 @@ async function generateEntryThesis(
       temperature: 0.2,
       maxRetries: 2,
     });
-    return { thesis: result.data, model: result.model, raw: result.raw };
+    let thesis = result.data;
+    if (ctx.falseFlag && thesis.confidenceScore > 5) {
+      thesis = { ...thesis, confidenceScore: 5 };
+    }
+    return { thesis, model: result.model, raw: result.raw };
   } catch (err) {
     log.warn({ symbol, err: (err as Error).message }, 'momentum thesis generation failed');
     return null;
@@ -303,13 +308,15 @@ export async function runMomentumRebalance(
   }
 
   let rankerRan = false;
+  let rankerSnapshot: { universeSize: number; eligibleCount: number } | undefined;
   if (!opts.skipRanker) {
-    runMomentumRanker({
+    const rr = runMomentumRanker({
       asOf: sessionDate,
       db,
       universe: opts.universe,
     });
     rankerRan = true;
+    rankerSnapshot = { universeSize: rr.universeSize, eligibleCount: rr.eligibleCount };
   }
 
   const regimeRow = getRegimeForCalendarDate(calendarDate, db);
@@ -323,7 +330,7 @@ export async function runMomentumRebalance(
       regime: null,
       regimeAllowed: false,
       rankerRan,
-      closedRegime: 0,
+      rankerSnapshot,
       closedRankDecay: 0,
       entriesInserted: 0,
       sectorCapBlocked: 0,
@@ -345,7 +352,7 @@ export async function runMomentumRebalance(
       regime,
       regimeAllowed: false,
       rankerRan,
-      closedRegime: 0,
+      rankerSnapshot,
       closedRankDecay: 0,
       entriesInserted: 0,
       sectorCapBlocked: 0,
@@ -412,7 +419,7 @@ export async function runMomentumRebalance(
       regime,
       regimeAllowed: true,
       rankerRan,
-      closedRegime: 0,
+      rankerSnapshot,
       closedRankDecay,
       entriesInserted: 0,
       sectorCapBlocked: 0,
@@ -571,6 +578,7 @@ export async function runMomentumRebalance(
       blackoutBlocked,
       heldCount: finalOpen.length,
       thesisFailed,
+      rankerSnapshot,
     },
     'momentum rebalance complete',
   );
@@ -581,7 +589,7 @@ export async function runMomentumRebalance(
     regime,
     regimeAllowed: true,
     rankerRan,
-    closedRegime: 0,
+    rankerSnapshot,
     closedRankDecay,
     entriesInserted,
     sectorCapBlocked,
