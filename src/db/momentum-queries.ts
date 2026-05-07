@@ -83,6 +83,7 @@ export const MOMENTUM_FACTOR_SIGNAL_NAMES = [
   'mom_volume_breakout_flag',
 ] as const;
 
+/** Removes momentum factor rows so downstream rankers treat factors as missing (NOT NULL column). */
 export function deleteMomentumFactorSignals(symbol: string, date: string, db: DatabaseType): void {
   const sym = symbol.toUpperCase();
   const names = MOMENTUM_FACTOR_SIGNAL_NAMES;

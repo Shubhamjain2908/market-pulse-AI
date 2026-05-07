@@ -71,6 +71,25 @@ describe('momentum-signals pure helpers', () => {
       expect(Math.abs(rs)).toBeLessThan(0.02);
     }
   });
+
+  it('computeRelativeStrengthBetaAdjusted falls back to raw spread without full beta window', () => {
+    const n = 80;
+    let s = 100;
+    let b = 200;
+    const stock: number[] = [];
+    const bench: number[] = [];
+    for (let i = 0; i < n; i++) {
+      stock.push(s);
+      bench.push(b);
+      s *= 1.002;
+      b *= 1.002;
+    }
+    const rs = computeRelativeStrengthBetaAdjusted(stock, bench, 63, 252, 0.5);
+    expect(rs).not.toBeNull();
+    if (rs != null) {
+      expect(Math.abs(rs)).toBeLessThan(0.02);
+    }
+  });
 });
 
 describe('enrichMomentumSignals integration', () => {
@@ -140,6 +159,54 @@ describe('enrichMomentumSignals integration', () => {
     expect(names.has('mom_relative_strength_ba')).toBe(true);
     expect(names.has('mom_volume_breakout_flag')).toBe(true);
     expect(names.has('mom_earnings_blackout')).toBe(true);
+
+    db.close();
+  });
+
+  it('uses latest quotes before asOf when history exceeds LOOKBACK_CAP (regression)', () => {
+    const db = getDb({ path: dbPath });
+    migrate(db);
+
+    const start = '2024-06-01';
+    const total = 450;
+    const ins = db.prepare(
+      `INSERT INTO quotes (symbol, exchange, date, open, high, low, close, volume, source)
+       VALUES (?, 'NSE', ?, ?, ?, ?, ?, ?, 'test')`,
+    );
+    for (let i = 0; i < total; i++) {
+      const d = addDaysIso(start, i);
+      const flat = i < 429;
+      const c = flat ? 100 : 1000;
+      ins.run('SPIKE', d, c, c, c, c, 1);
+      ins.run(NIFTY_BENCHMARK_SYMBOL, d, c, c, c, c, 1);
+    }
+
+    const asOf = addDaysIso(start, total - 1);
+    upsertSignals(
+      [
+        {
+          symbol: 'SPIKE',
+          date: asOf,
+          name: 'volume_ratio_20d',
+          value: 2,
+          source: 'technical',
+        },
+      ],
+      db,
+    );
+
+    enrichMomentumSignals(asOf, ['SPIKE'], db);
+
+    const row = db
+      .prepare(
+        `SELECT value FROM signals WHERE symbol = 'SPIKE' AND date = ? AND name = 'mom_12_1_return'`,
+      )
+      .get(asOf) as { value: number } | undefined;
+
+    expect(row).toBeDefined();
+    if (row) {
+      expect(row.value).toBeGreaterThan(50);
+    }
 
     db.close();
   });

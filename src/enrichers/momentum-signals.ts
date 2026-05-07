@@ -1,6 +1,9 @@
 /**
  * Daily momentum factors (1, 3, 4) + earnings blackout flag for the momentum universe.
  * Factor 2 (`profit_growth_yoy`) is read from `fundamentals` at rank time — not written here.
+ *
+ * Cold-start / missing data: `signals.value` is NOT NULL, so we **DELETE** factor rows when
+ * inputs are insufficient — rankers treat absent rows like SQL NULL (exclude from z-score).
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
@@ -112,7 +115,11 @@ export function betaFromAlignedReturns(yRet: number[], xRet: number[]): number |
   return cov / vx;
 }
 
-/** Factor 3: 63d stock return minus β-adjusted Nifty return; β from last `betaDays` overlapping daily returns. */
+/**
+ * Factor 3: 63d relative strength vs benchmark.
+ * When ≥ `betaDays` + 1 aligned closes exist, uses β from the last `betaDays` overlapping daily returns
+ * (floored at `betaFloor`). Otherwise falls back to **raw** 63d spread (stock − benchmark).
+ */
 export function computeRelativeStrengthBetaAdjusted(
   stockCloses: number[],
   benchCloses: number[],
@@ -120,10 +127,7 @@ export function computeRelativeStrengthBetaAdjusted(
   betaDays: number,
   betaFloor: number,
 ): number | null {
-  if (
-    stockCloses.length !== benchCloses.length ||
-    stockCloses.length < Math.max(rsDays, betaDays + 1)
-  ) {
+  if (stockCloses.length !== benchCloses.length || stockCloses.length < rsDays) {
     return null;
   }
   const n = stockCloses.length;
@@ -135,18 +139,24 @@ export function computeRelativeStrengthBetaAdjusted(
   const rBench63 = lastB != null && lagB != null && lastB > 0 && lagB > 0 ? lastB / lagB - 1 : null;
   if (rStock63 == null || rBench63 == null) return null;
 
-  const yR = dailyReturns(stockCloses);
-  const xR = dailyReturns(benchCloses);
-  if (yR.length !== xR.length || yR.length < betaDays) return null;
-  const ySlice = yR.slice(-betaDays);
-  const xSlice = xR.slice(-betaDays);
-  const betaHat = betaFromAlignedReturns(ySlice, xSlice);
-  const betaEff = betaHat != null && Number.isFinite(betaHat) ? Math.max(betaHat, betaFloor) : null;
+  const rawSpread = rStock63 - rBench63;
 
-  if (betaEff != null) {
-    return rStock63 - betaEff * rBench63;
+  if (n >= betaDays + 1) {
+    const yR = dailyReturns(stockCloses);
+    const xR = dailyReturns(benchCloses);
+    if (yR.length === xR.length && yR.length >= betaDays) {
+      const ySlice = yR.slice(-betaDays);
+      const xSlice = xR.slice(-betaDays);
+      const betaHat = betaFromAlignedReturns(ySlice, xSlice);
+      const betaEff =
+        betaHat != null && Number.isFinite(betaHat) ? Math.max(betaHat, betaFloor) : null;
+      if (betaEff != null) {
+        return rStock63 - betaEff * rBench63;
+      }
+    }
   }
-  return rStock63 - rBench63;
+
+  return rawSpread;
 }
 
 export function computeVolumeBreakoutFlag(
@@ -167,6 +177,7 @@ export function computeVolumeBreakoutFlag(
   return passesPrice && passesVol ? 1 : 0;
 }
 
+/** Latest `limit` NSE closes on or before `asOf`, ascending (for lag math). */
 function loadStockClosesAsc(
   symbol: string,
   asOf: string,
@@ -178,14 +189,17 @@ function loadStockClosesAsc(
       `
       SELECT close FROM quotes
       WHERE symbol = ? AND exchange = 'NSE' AND date <= ?
-      ORDER BY date ASC
+      ORDER BY date DESC
       LIMIT ?
     `,
     )
     .all(symbol.toUpperCase(), asOf, limit) as Array<{ close: number }>;
-  return rows.map((r) => r.close);
+  const closes = rows.map((r) => r.close);
+  closes.reverse();
+  return closes;
 }
 
+/** Latest `limit` overlapping stock/benchmark closes ≤ `asOf`, ascending. */
 function loadAlignedStockBench(
   stockSym: string,
   benchSym: string,
@@ -196,13 +210,17 @@ function loadAlignedStockBench(
   const rows = db
     .prepare(
       `
-      SELECT s.close AS sc, b.close AS bc
-      FROM quotes s
-      INNER JOIN quotes b
-        ON s.date = b.date AND b.symbol = ? AND b.exchange = 'NSE'
-      WHERE s.symbol = ? AND s.exchange = 'NSE' AND s.date <= ?
-      ORDER BY s.date ASC
-      LIMIT ?
+      SELECT sub.sc AS sc, sub.bc AS bc
+      FROM (
+        SELECT s.date AS d, s.close AS sc, b.close AS bc
+        FROM quotes s
+        INNER JOIN quotes b
+          ON s.date = b.date AND b.symbol = ? AND b.exchange = 'NSE'
+        WHERE s.symbol = ? AND s.exchange = 'NSE' AND s.date <= ?
+        ORDER BY s.date DESC
+        LIMIT ?
+      ) AS sub
+      ORDER BY sub.d ASC
     `,
     )
     .all(benchSym.toUpperCase(), stockSym.toUpperCase(), asOf, limit) as Array<{
