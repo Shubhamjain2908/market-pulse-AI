@@ -7,6 +7,8 @@
  *   mp migrate           Apply DB migrations
  *   mp ingest            Stage 1 - pull data from configured sources
  *   mp enrich            Stage 2 - compute signals from raw data
+ *   mp momentum-rank      Phase 4.1 - momentum composite + ranks (signals)
+ *   mp momentum-rebalance Phase 4.2 - regime gate, rank exits, entries (paper_trades)
  *   mp screen            Stage 3 - run screens + alert scan against today's signals
  *   mp backtest          Replay screens against historical EOD data
  *   mp sentiment         Score news headlines via LLM
@@ -62,8 +64,10 @@ import { logger } from './logger.js';
 import { defaultIngestSymbolUniverse } from './market/ingest-symbols.js';
 import { getMarketClosure } from './market/nse-calendar.js';
 import { syncSymbolSectorsFromYahoo } from './market/yahoo-sectors.js';
+import { runMomentumRanker } from './rankers/momentum-ranker.js';
 import { startScheduler } from './scheduler/market-scheduler.js';
 import { runEvaluatePaperTrades } from './scripts/evaluate-trades.js';
+import { runMomentumRebalance } from './strategies/momentum-rebalance.js';
 
 const program = new Command();
 
@@ -214,6 +218,56 @@ program
     const date = optionalCliIsoDate(program.opts().date);
     const result = await runSignalEnricher({ date, symbols });
     logger.info(result, 'enrich complete');
+    closeDb();
+  });
+
+program
+  .command('momentum-rank')
+  .description('phase 4.1: momentum composite z-score rank + false-flag (writes signals)')
+  .option(
+    '-s, --symbols <list>',
+    'comma-separated universe override (default: momentum-universe.json)',
+  )
+  .action(async (opts: { symbols?: string }) => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+    const universe = opts.symbols
+      ?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => s.toUpperCase());
+    const result = runMomentumRanker({
+      asOf: date,
+      universe: universe?.length ? universe : undefined,
+    });
+    logger.info(result, 'momentum-rank complete');
+    closeDb();
+  });
+
+program
+  .command('momentum-rebalance')
+  .description(
+    'phase 4.2: regime gate → liquidate if non-bull → rank exits → entries (sector cap + blackout)',
+  )
+  .option(
+    '-s, --symbols <list>',
+    'comma-separated universe override for embedded ranker (default: momentum-universe.json)',
+  )
+  .option('--skip-ranker', 'use existing mom_rank signals for session (no ranker pass)')
+  .action(async (opts: { symbols?: string; skipRanker?: boolean }) => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+    const universe = opts.symbols
+      ?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => s.toUpperCase());
+    const result = await runMomentumRebalance({
+      calendarDate: date,
+      universe: universe?.length ? universe : undefined,
+      skipRanker: Boolean(opts.skipRanker),
+    });
+    logger.info(result, 'momentum-rebalance complete');
     closeDb();
   });
 

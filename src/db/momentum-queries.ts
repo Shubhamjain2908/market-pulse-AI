@@ -107,3 +107,21 @@ export function deleteSignalByName(
     name,
   );
 }
+
+/** Written by the momentum ranker (`mom_composite_score`, `mom_rank`, `mom_false_flag`). */
+export const MOMENTUM_RANK_SIGNAL_NAMES = [
+  'mom_composite_score',
+  'mom_rank',
+  'mom_false_flag',
+] as const;
+
+export function deleteMomentumRankSignals(symbol: string, date: string, db: DatabaseType): void {
+  const sym = symbol.toUpperCase();
+  const names = MOMENTUM_RANK_SIGNAL_NAMES;
+  const ph = names.map(() => '?').join(',');
+  db.prepare(`DELETE FROM signals WHERE symbol = ? AND date = ? AND name IN (${ph})`).run(
+    sym,
+    date,
+    ...names,
+  );
+}
