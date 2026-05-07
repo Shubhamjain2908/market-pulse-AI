@@ -15,6 +15,7 @@ import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnin
 import { child } from '../logger.js';
 import { getMarketClosure, isSundayIst } from '../market/nse-calendar.js';
 import { runEvaluatePaperTrades } from '../scripts/evaluate-trades.js';
+import { applyMomentumRegimeGateExits } from '../strategies/momentum-rebalance.js';
 import { runBriefingComposer } from './briefing-composer.js';
 import { runDailyIngestor } from './daily-ingestor.js';
 import { analysePortfolio } from './portfolio-analyser.js';
@@ -135,6 +136,14 @@ export async function runDailyWorkflow(
   await runDailyIngestor({ date });
   await runSignalEnricher({ date });
   const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
+  const momRegimeExits = applyMomentumRegimeGateExits({
+    calendarDate: date,
+    regime: regimeAgent.regime,
+    db: getDb(),
+  });
+  if (momRegimeExits > 0) {
+    log.info({ momRegimeExits }, 'momentum regime gate: closed paper trades');
+  }
   await runStockScreener({ date, regime: regimeAgent.regime });
 
   let thesisRun:
