@@ -32,6 +32,17 @@ export interface SyncMomentumEarningsCalendarResult {
   fetchFailed: number;
 }
 
+function toDateOrNull(raw: unknown): Date | null {
+  if (raw instanceof Date) {
+    return Number.isNaN(raw.getTime()) ? null : raw;
+  }
+  if (typeof raw === 'string' || typeof raw === 'number') {
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
 /**
  * From `earnings.earningsChart.earningsDate` (ISO timestamps), pick the earliest date
  * whose IST calendar day is on or after `refIso`.
@@ -43,14 +54,31 @@ export function pickFirstFutureEarningsDateIso(
   if (!Array.isArray(earningsDateRaw)) return null;
   let best: string | null = null;
   for (const raw of earningsDateRaw) {
-    if (typeof raw !== 'string' && typeof raw !== 'number') continue;
-    const d = new Date(raw);
-    if (Number.isNaN(d.getTime())) continue;
+    const d = toDateOrNull(raw);
+    if (d == null) continue;
     const iso = isoDateIst(d);
     if (iso < refIso) continue;
     if (best === null || iso < best) best = iso;
   }
   return best;
+}
+
+/**
+ * Merge Yahoo earnings timestamps from `earnings` and `calendarEvents` modules.
+ * Indian listings often populate `calendarEvents` when `earningsChart.earningsDate` is empty.
+ */
+export function mergeQuoteSummaryEarningsDates(summary: unknown): unknown[] {
+  if (!summary || typeof summary !== 'object') return [];
+  const s = summary as {
+    earnings?: { earningsChart?: { earningsDate?: unknown } };
+    calendarEvents?: { earnings?: { earningsDate?: unknown } };
+  };
+  const fromChart = s.earnings?.earningsChart?.earningsDate;
+  const fromCalendar = s.calendarEvents?.earnings?.earningsDate;
+  const out: unknown[] = [];
+  if (Array.isArray(fromChart)) out.push(...fromChart);
+  if (Array.isArray(fromCalendar)) out.push(...fromCalendar);
+  return out;
 }
 
 export async function syncMomentumEarningsCalendarFromYahoo(
@@ -87,9 +115,15 @@ export async function syncMomentumEarningsCalendarFromYahoo(
     const fetchedAt = new Date().toISOString();
 
     try {
-      const r = await client.quoteSummary(yTicker, { modules: ['earnings'] });
-      const dates = r.earnings?.earningsChart?.earningsDate;
-      const nextIso = pickFirstFutureEarningsDateIso(dates ?? null, refIso);
+      // Yahoo often omits `estimate` on quarterly rows → schema validation fails though
+      // `earningsDate` is present. We only need dates; skip strict result validation.
+      const r = await client.quoteSummary(
+        yTicker,
+        { modules: ['earnings', 'calendarEvents'] },
+        { validateResult: false },
+      );
+      const merged = mergeQuoteSummaryEarningsDates(r);
+      const nextIso = pickFirstFutureEarningsDateIso(merged, refIso);
 
       if (nextIso) {
         replaceMomentumEarningsCalendarForSymbol(sym, nextIso, db, {
