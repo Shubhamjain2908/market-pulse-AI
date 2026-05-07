@@ -167,6 +167,8 @@ export interface BriefingData {
   trailingStopBlock?: string;
   /** Pre-rendered regime card + optional change banner (inserted above global cues). */
   regimeBlock?: string;
+  /** Momentum screener block (rank monitor + decay alerts); between screener and watchlist. */
+  momentumBlock?: string;
 }
 
 export function renderBriefing(data: BriefingData): string {
@@ -187,8 +189,9 @@ export function renderBriefing(data: BriefingData): string {
     ${data.regimeBlock ?? ''}
     ${renderGlobalCues(data.globalCues)}
     ${renderPortfolio(data.portfolio)}
-    ${renderWatchlistAlerts(data.watchlistAlerts)}
     ${renderScreenMatches(data.screenMatches)}
+    ${data.momentumBlock ?? ''}
+    ${renderWatchlistAlerts(data.watchlistAlerts)}
     ${renderMovers(data.topGainers, data.topLosers)}
     ${renderAiPicks(data.theses, data.aiPicksStatus)}
     ${renderNews(data.news)}
@@ -1018,6 +1021,12 @@ function baseStyles(): string {
     .action-chip.add  { background: #d4edda; color: #155724; }
     .action-chip.trim { background: #fff3cd; color: #856404; }
     .action-chip.exit { background: #f8d7da; color: #721c24; }
+    .momentum-card { border-left: 4px solid #b7791f; }
+    .momentum-rebalance { margin-bottom: 12px; font-size: 13px; line-height: 1.45; }
+    .momentum-sub { margin: 14px 0 6px; font-size: 13px; color: var(--accent); }
+    .momentum-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+    .momentum-table th, .momentum-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+    .momentum-row-amber { background: #fffaf0; }
     .day-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
       font-weight: 600; }
     .day-chip.positive { background: #e6f4ea; color: var(--positive); }

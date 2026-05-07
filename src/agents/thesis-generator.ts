@@ -22,6 +22,7 @@ import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { type Thesis, ThesisSchema } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
+import { getLatestSignalsMap, getLatestSignalsMapsForSymbols } from './portfolio-trigger.js';
 
 const log = child({ component: 'thesis-generator' });
 
@@ -59,6 +60,64 @@ Return ONLY a single JSON object matching this schema:
 }
 
 No markdown, no code fences, no commentary. ONLY the JSON object.`;
+
+/** Appended to {@link SYSTEM_PROMPT} when `buildStockContext` includes a momentum snapshot. */
+const MOMENTUM_THESIS_ADDENDUM = `MOMENTUM CONTEXT (only when the user message contains "## Momentum factor snapshot"):
+- Give a short factor-by-factor read: 12-1 price momentum, fundamentals/EPS growth vs peers (from fundamentals row), relative strength vs benchmark, and breakout/volume where values exist.
+- If the snapshot includes **FALSE MOMENTUM WARNING** (mom_false_flag = 1), call that out prominently and keep confidenceScore **≤ 5**.
+- Treat numeric momentum fields as authoritative; do not contradict them without explicit justification in bearCase.`;
+
+const MOMENTUM_CONTEXT_GATE_NAMES = new Set(['mom_rank', 'mom_composite_score', 'mom_12_1_return']);
+
+/**
+ * Latest-session momentum fields for LLM context (when ranker/signals have run).
+ * Returns null when no momentum snapshot exists for this symbol on or before `date`.
+ */
+export function buildMomentumContextAppend(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+): string | null {
+  const snap = getLatestSignalsMap(symbol, date, db);
+  const m = new Map<string, number>();
+  for (const [k, v] of Object.entries(snap)) {
+    if (k.startsWith('mom_')) m.set(k, v);
+  }
+
+  if (m.size === 0) return null;
+  const hasGate = [...MOMENTUM_CONTEXT_GATE_NAMES].some((k) => m.has(k));
+  if (!hasGate) return null;
+
+  const lines: string[] = [
+    '\n## Momentum factor snapshot (multi-factor ranker)',
+    'Interpret alongside technical signals above. Factor 2 (EPS) uses `profit_growth_yoy` from fundamentals when present.',
+  ];
+  const pick = (name: string, label: string): void => {
+    const v = m.get(name);
+    if (v != null && Number.isFinite(v)) lines.push(`- ${label}: ${v}`);
+  };
+  pick('mom_rank', 'Composite rank (1 = strongest in universe)');
+  pick('mom_composite_score', 'Composite score (winsorised z-mix)');
+  pick('mom_12_1_return', 'Factor 1: 12-1 price momentum %');
+  pick('mom_relative_strength_ba', 'Factor 3: relative strength vs benchmark');
+  pick('mom_volume_breakout_flag', 'Factor 4: volume breakout flag');
+  pick('mom_earnings_blackout', 'Earnings blackout window (1 = block new entries)');
+  pick('mom_rank_excluded', 'Excluded from rank (1 = cold-start / missing factor 1)');
+  const ff = m.get('mom_false_flag');
+  if (ff === 1) {
+    lines.push(
+      '\n**FALSE MOMENTUM WARNING:** `mom_false_flag` = 1 (strong price momentum vs weak EPS growth in cross-section). **confidenceScore must be ≤ 5.**',
+    );
+  } else if (ff != null && Number.isFinite(ff)) {
+    lines.push(`\nmom_false_flag: ${ff} (0 = no false-momentum tag)`);
+  }
+
+  return lines.join('\n');
+}
+
+export function hasMomentumThesisContext(symbol: string, date: string, db: DatabaseType): boolean {
+  return buildMomentumContextAppend(symbol, date, db) != null;
+}
 
 export interface ThesisGeneratorOptions {
   date?: string;
@@ -139,16 +198,28 @@ export async function generateTheses(
   for (const candidate of toGenerate) {
     try {
       const context = buildStockContext(candidate.symbol, date, db);
+      const system = hasMomentumThesisContext(candidate.symbol, date, db)
+        ? `${SYSTEM_PROMPT}\n\n${MOMENTUM_THESIS_ADDENDUM}`
+        : SYSTEM_PROMPT;
       const result = await llm.generateJson<Thesis>({
-        system: SYSTEM_PROMPT,
+        system,
         user: context,
         schema: ThesisSchema,
         temperature: 0.3,
         maxRetries: 2,
       });
 
+      const signalSnap = getLatestSignalsMap(candidate.symbol, date, db);
+      let thesisOut = result.data;
+      if (signalSnap.mom_false_flag === 1) {
+        thesisOut = {
+          ...thesisOut,
+          confidenceScore: Math.min(thesisOut.confidenceScore, 5),
+        };
+      }
+
       const row: UpsertThesisRow = {
-        ...result.data,
+        ...thesisOut,
         symbol: candidate.symbol,
         date,
         model: result.model,
@@ -158,7 +229,7 @@ export async function generateTheses(
       generated++;
 
       log.info(
-        { symbol: candidate.symbol, confidence: result.data.confidenceScore, model: result.model },
+        { symbol: candidate.symbol, confidence: thesisOut.confidenceScore, model: result.model },
         'thesis generated',
       );
     } catch (err) {
@@ -221,24 +292,7 @@ export function getThesisRankMeta(
 function rankCandidates(date: string, universe: string[], db: DatabaseType): Candidate[] {
   if (universe.length === 0) return [];
 
-  const placeholders = universe.map(() => '?').join(',');
-  const rows = db
-    .prepare(`
-      SELECT symbol, name, value FROM signals
-      WHERE date <= ? AND symbol IN (${placeholders})
-        AND date = (
-          SELECT MAX(date) FROM signals s2
-          WHERE s2.symbol = signals.symbol AND s2.date <= ?
-        )
-    `)
-    .all(date, ...universe, date) as Array<{ symbol: string; name: string; value: number }>;
-
-  const bySymbol = new Map<string, Record<string, number>>();
-  for (const r of rows) {
-    const signals = bySymbol.get(r.symbol) ?? {};
-    signals[r.name] = r.value;
-    bySymbol.set(r.symbol, signals);
-  }
+  const bySymbol = getLatestSignalsMapsForSymbols(universe, date, db);
 
   const screenSyms = new Set(
     (
@@ -358,18 +412,15 @@ export function buildStockContext(
     }
   }
 
-  const signals = db
-    .prepare(`
-      SELECT name, value FROM signals
-      WHERE symbol = ? AND date <= ?
-        AND date = (SELECT MAX(date) FROM signals s2 WHERE s2.symbol = signals.symbol AND s2.date <= ?)
-    `)
-    .all(symbol, date, date) as Array<{ name: string; value: number }>;
+  const signalMap = getLatestSignalsMap(symbol, date, db);
+  const techLines = Object.entries(signalMap)
+    .filter(([name]) => !name.startsWith('mom_'))
+    .sort(([a], [b]) => a.localeCompare(b));
 
-  if (signals.length > 0) {
+  if (techLines.length > 0) {
     sections.push('\n## Technical Signals');
-    for (const s of signals) {
-      sections.push(`${s.name}: ${s.value.toFixed(4)}`);
+    for (const [name, value] of techLines) {
+      sections.push(`${name}: ${value.toFixed(4)}`);
     }
   }
 
@@ -389,6 +440,9 @@ export function buildStockContext(
       }
     }
   }
+
+  const momentumCtx = buildMomentumContextAppend(symbol, date, db);
+  if (momentumCtx) sections.push(momentumCtx);
 
   const news =
     variant === 'portfolio'

@@ -7,6 +7,7 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 
 import { buildStockContext } from '../agents/thesis-generator.js';
+import type { MomentumRebalanceSummary } from '../briefing/momentum-card.js';
 import { parseInrPriceMidpoint } from '../briefing/paper-trade-parsers.js';
 import { classifySector } from '../briefing/sector-classifier.js';
 import { loadMomentumConfig, loadPortfolio, loadSectorMap } from '../config/loaders.js';
@@ -179,6 +180,22 @@ export interface MomentumRebalanceResult {
   unchangedHeld: number;
   thesisFailed: number;
   skippedReason?: 'regime_gate';
+}
+
+/** Shape expected by {@link renderMomentumBriefingBlock} when composing after a successful rebalance. */
+export function toMomentumRebalanceBriefingSummary(
+  r: MomentumRebalanceResult,
+): MomentumRebalanceSummary | undefined {
+  if (!r.regimeAllowed) return undefined;
+  return {
+    calendarDate: r.calendarDate,
+    sessionDate: r.sessionDate,
+    closedRankDecay: r.closedRankDecay,
+    entriesInserted: r.entriesInserted,
+    unchangedHeld: r.unchangedHeld,
+    sectorCapBlocked: r.sectorCapBlocked,
+    blackoutBlocked: r.blackoutBlocked,
+  };
 }
 
 interface MomentumEntryContext {
