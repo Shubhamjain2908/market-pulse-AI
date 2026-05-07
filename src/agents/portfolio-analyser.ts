@@ -10,6 +10,7 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import pLimit from 'p-limit';
 import { z } from 'zod';
 import { config } from '../config/env.js';
+import { loadMomentumConfig } from '../config/loaders.js';
 import {
   type PortfolioAnalysisRow,
   type PortfolioHoldingRow,
@@ -97,6 +98,48 @@ HOLD is only acceptable if idiosyncratic recovery evidence exists in the supplie
 Otherwise prefer TRIM or EXIT and say why. Cite the drawdown magnitude in triggerReason.`;
 }
 
+function truncateTriggerReason(s: string): string {
+  if (s.length <= 280) return s;
+  return `${s.slice(0, 276)}…`;
+}
+
+/**
+ * Momentum overlay (spec §6.4): rank decay → EXIT; false-flag → block ADD.
+ * No-op when `mom_rank` / `mom_false_flag` are absent from `signals`.
+ */
+export function applyMomentumPortfolioGuardrails(
+  action: PortfolioAction,
+  signals: Record<string, number>,
+): PortfolioAction {
+  const cfg = loadMomentumConfig();
+  const rank = signals.mom_rank;
+  const exitTh = cfg.exit_rank_threshold;
+
+  if (rank != null && Number.isFinite(rank) && rank > exitTh) {
+    if (action.action === 'EXIT') return action;
+    const suffix = `[Momentum: mom_rank ${rank} > ${exitTh} — rank decay EXIT.]`;
+    return {
+      ...action,
+      action: 'EXIT',
+      conviction: Math.max(action.conviction, 0.68),
+      triggerReason: truncateTriggerReason(`${action.triggerReason} ${suffix}`),
+    };
+  }
+
+  const falseFlag = signals.mom_false_flag === 1;
+  if (falseFlag && action.action === 'ADD') {
+    const suffix = '[Guardrail: mom_false_flag=1 — do not ADD.]';
+    return {
+      ...action,
+      action: 'HOLD',
+      conviction: Math.min(action.conviction, 0.55),
+      triggerReason: truncateTriggerReason(`${action.triggerReason} ${suffix}`),
+    };
+  }
+
+  return action;
+}
+
 /** Code-level enforcement: ADD into extension (RSI / 52W) and averaging-down R:R. */
 export function applyPortfolioAddGuardrails(
   action: PortfolioAction,
@@ -110,8 +153,7 @@ export function applyPortfolioAddGuardrails(
   const volRatio = signals.volume_ratio_20d;
   const overbought = rsi != null && rsi > 70;
   const near52wHigh = pctHi != null && pctHi >= -3;
-  const weakVolume =
-    volRatio != null && Number.isFinite(volRatio) && volRatio < 0.5;
+  const weakVolume = volRatio != null && Number.isFinite(volRatio) && volRatio < 0.5;
   if (overbought || near52wHigh || weakVolume) {
     const bits: string[] = [];
     if (overbought) bits.push(`RSI ${rsi?.toFixed(0)} > 70`);
@@ -280,9 +322,9 @@ function buildLitePortfolioRow(
   db: DatabaseType,
 ): PortfolioAnalysisRow {
   const copy = buildLiteSnapshotCopy(h, date, db);
-  return {
+  const signals = getLatestSignalsMap(h.symbol, date, db);
+  const baseAction: PortfolioAction = {
     symbol: h.symbol,
-    date,
     action: 'HOLD',
     conviction: 0.35,
     thesis: copy.thesis,
@@ -291,6 +333,20 @@ function buildLitePortfolioRow(
     triggerReason: copy.triggerReason,
     suggestedStop: null,
     suggestedTarget: null,
+  };
+  const g = applyMomentumPortfolioGuardrails(baseAction, signals);
+
+  return {
+    symbol: h.symbol,
+    date,
+    action: g.action,
+    conviction: g.conviction,
+    thesis: g.thesis,
+    bullPoints: g.bullPoints,
+    bearPoints: g.bearPoints,
+    triggerReason: g.triggerReason,
+    suggestedStop: g.suggestedStop ?? null,
+    suggestedTarget: g.suggestedTarget ?? null,
     pnlPct: h.pnlPct ?? null,
     model: 'lite-snapshot-v1',
     raw: null,
@@ -316,10 +372,13 @@ async function analyseOne(
     maxRetries: 1,
   });
   const signals = getLatestSignalsMap(h.symbol, date, db);
-  const a: PortfolioAction = applyPortfolioAddGuardrails(result.data, signals, {
-    pnlPct: h.pnlPct ?? null,
-    lastPrice: h.lastPrice ?? null,
-  });
+  const a: PortfolioAction = applyMomentumPortfolioGuardrails(
+    applyPortfolioAddGuardrails(result.data, signals, {
+      pnlPct: h.pnlPct ?? null,
+      lastPrice: h.lastPrice ?? null,
+    }),
+    signals,
+  );
 
   return {
     symbol: h.symbol,
