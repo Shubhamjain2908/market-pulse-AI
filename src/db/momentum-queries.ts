@@ -28,7 +28,7 @@ export function hasMinPriceHistory(
 }
 
 /**
- * Earnings blackout around `expected_date` in `earnings_calendar` (±3 calendar days per product spec).
+ * Earnings blackout around `expected_date` in `earnings_calendar` (±`windowDays` calendar days).
  * Fail-open: returns false when no matching row (including empty table / Yahoo miss).
  *
  * Blackout is risk-reduction only — missing data must NOT block entries.
@@ -37,16 +37,41 @@ export function isInEarningsBlackoutCalendarWindow(
   symbol: string,
   refDate: string,
   db: DatabaseType = getDb(),
+  windowDays = 3,
 ): boolean {
   const row = db
     .prepare(
       `
       SELECT 1 AS ok FROM earnings_calendar
       WHERE symbol = ?
-        AND expected_date BETWEEN date(?, '-3 days') AND date(?, '+3 days')
+        AND expected_date BETWEEN date(?, printf('-%d days', ?)) AND date(?, printf('+%d days', ?))
       LIMIT 1
     `,
     )
-    .get(symbol.toUpperCase(), refDate, refDate) as { ok: number } | undefined;
+    .get(symbol.toUpperCase(), refDate, windowDays, refDate, windowDays) as
+    | { ok: number }
+    | undefined;
   return row != null;
+}
+
+/**
+ * Replace all calendar rows for a symbol with at most one upcoming earnings row.
+ * Passing `null` clears the symbol (fail-open after Yahoo miss / stale data).
+ */
+export function replaceMomentumEarningsCalendarForSymbol(
+  symbol: string,
+  expectedDateIso: string | null,
+  db: DatabaseType,
+  meta: { source: string; fetchedAt: string },
+): void {
+  const sym = symbol.toUpperCase();
+  db.prepare('DELETE FROM earnings_calendar WHERE symbol = ?').run(sym);
+  if (expectedDateIso) {
+    db.prepare(
+      `
+      INSERT INTO earnings_calendar (symbol, expected_date, source, fetched_at)
+      VALUES (?, ?, ?, ?)
+    `,
+    ).run(sym, expectedDateIso, meta.source, meta.fetchedAt);
+  }
 }

@@ -20,7 +20,7 @@
  *   mp portfolio-sync    Pull holdings from Kite (or manual) into the DB
  *   mp portfolio-analyse Run LLM-driven HOLD/ADD/TRIM/EXIT analysis per holding
  *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
- *   mp schedule          Start croner jobs (07:30 / 15:30 weekdays, Sat 08:00)
+ *   mp schedule          Start croner jobs (07:30 / 15:30 weekdays, Sat 08:00, Sun 06:00 earnings)
  *   mp doctor            Print runtime/config diagnostics
  *   mp regime            Full regime agent (classify + LLM narrative → regime_daily)
  *   mp regime:classify   Deterministic regime only (narrative null)
@@ -203,7 +203,7 @@ program
 
 program
   .command('enrich')
-  .description('stage 2: compute technical + fundamental signals')
+  .description('stage 2: compute technical signals + mom_earnings_blackout')
   .option('-s, --symbols <list>', 'comma-separated list of symbols')
   .action(async (opts: { symbols?: string }) => {
     ensureDb();

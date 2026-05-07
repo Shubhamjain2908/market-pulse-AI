@@ -7,11 +7,13 @@
  */
 
 import { config } from '../config/env.js';
+import { getMomentumUniverseSymbols } from '../config/loaders.js';
 import { getDb } from '../db/index.js';
 import { enrichSentiment } from '../enrichers/sentiment/enricher.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
+import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { child } from '../logger.js';
-import { getMarketClosure } from '../market/nse-calendar.js';
+import { getMarketClosure, isSundayIst } from '../market/nse-calendar.js';
 import { runEvaluatePaperTrades } from '../scripts/evaluate-trades.js';
 import { runBriefingComposer } from './briefing-composer.js';
 import { runDailyIngestor } from './daily-ingestor.js';
@@ -52,6 +54,22 @@ export async function runDailyWorkflow(
   opts: DailyWorkflowOptions = {},
 ): Promise<DailyWorkflowResult> {
   const date = opts.date ?? isoDateIst();
+
+  if (isSundayIst(date)) {
+    try {
+      await syncMomentumEarningsCalendarFromYahoo(
+        getMomentumUniverseSymbols({ fresh: true }),
+        getDb(),
+        { refDate: date },
+      );
+    } catch (err) {
+      log.warn(
+        { err: (err as Error).message },
+        'Sunday Yahoo earnings calendar refresh failed; continuing',
+      );
+    }
+  }
+
   const closure = getMarketClosure(date);
 
   if (closure) {

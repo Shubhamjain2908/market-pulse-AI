@@ -6,6 +6,7 @@
 
 import { getDb } from '../db/index.js';
 import { type EnricherStats, TechnicalEnricher } from '../enrichers/index.js';
+import { upsertMomentumEarningsBlackoutSignals } from '../enrichers/momentum-earnings-blackout.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 import { defaultIngestSymbolUniverse } from '../market/ingest-symbols.js';
@@ -19,6 +20,7 @@ export interface EnrichRunOptions {
 
 export interface EnrichRunResult extends EnricherStats {
   date: string;
+  momentumBlackoutSignalsWritten: number;
 }
 
 export async function runSignalEnricher(opts: EnrichRunOptions = {}): Promise<EnrichRunResult> {
@@ -30,6 +32,8 @@ export async function runSignalEnricher(opts: EnrichRunOptions = {}): Promise<En
   log.info({ date, symbols: symbols.length }, 'starting technical enrichment');
   const enricher = new TechnicalEnricher({ asOfDate: date });
   const stats = enricher.enrich(symbols);
+  const db = getDb();
+  const momentumBlackoutSignalsWritten = upsertMomentumEarningsBlackoutSignals(date, symbols, db);
 
-  return { date, ...stats };
+  return { date, ...stats, momentumBlackoutSignalsWritten };
 }
