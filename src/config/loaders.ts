@@ -9,7 +9,7 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import { PortfolioSchema, ScreenDefinitionSchema } from '../types/domain.js';
 import type { Portfolio, ScreenDefinition } from '../types/domain.js';
-import { StrategyGatesFileSchema } from '../types/regime.js';
+import { RegimeSchema, StrategyGatesFileSchema } from '../types/regime.js';
 import type { StrategyGatesFile } from '../types/regime.js';
 
 const cache = new Map<string, unknown>();
@@ -30,6 +30,61 @@ const PortfolioFileSchema = PortfolioSchema.extend({
   description: z.string().optional(),
 });
 export type PortfolioFile = z.infer<typeof PortfolioFileSchema>;
+
+const MomentumUniverseFileSchema = z.object({
+  asOf: z.string(),
+  description: z.string().optional(),
+  buckets: z.object({
+    watchlist: z.array(z.string().min(1)),
+    nifty_100: z.array(z.string().min(1)),
+    nifty_midcap_50: z.array(z.string().min(1)),
+  }),
+});
+export type MomentumUniverseFile = z.infer<typeof MomentumUniverseFileSchema>;
+
+const MomentumConfigSchema = z.object({
+  strategy_id: z.string(),
+  regime_gate: z.array(RegimeSchema),
+  universe: z.string(),
+  portfolio_slots: z.number(),
+  exit_rank_threshold: z.number(),
+  hard_stop_pct: z.number(),
+  rebalance_day: z.string(),
+  weights: z.object({
+    mom_12_1: z.number(),
+    eps_revision: z.number(),
+    rel_strength_ba: z.number(),
+    breakout_flag: z.number(),
+  }),
+  breakout_bonus: z.number(),
+  winsorise_zscore: z.number(),
+  lookback: z.object({
+    price_momentum_start_days: z.number(),
+    price_momentum_lag_days: z.number(),
+    beta_days: z.number(),
+    rs_days: z.number(),
+    eps_revision_days: z.number(),
+    volume_avg_days: z.number(),
+  }),
+  breakout_threshold_pct: z.number(),
+  breakout_volume_ratio: z.number(),
+  beta_floor: z.number(),
+  false_flag_eps_threshold_pct: z.number(),
+  max_per_sector: z.number(),
+  earnings_blackout_days: z.number(),
+  position_sizing: z.object({
+    risk_pct: z.number(),
+    atr_multiplier: z.number(),
+    add_tranche_atr: z.number(),
+    add_tranche_size_pct: z.number(),
+    trim_rsi_threshold: z.number(),
+    trim_return_pct: z.number(),
+    trim_days_max: z.number(),
+    trim_amount_pct: z.number(),
+    max_single_stock_pct: z.number(),
+  }),
+});
+export type MomentumConfig = z.infer<typeof MomentumConfigSchema>;
 
 export interface LoaderOptions {
   /** Override the path to the config file. */
@@ -63,6 +118,27 @@ export function loadPortfolio(opts: LoaderOptions = {}): Portfolio {
 export function loadStrategyGates(opts: LoaderOptions = {}): StrategyGatesFile {
   const path = opts.path ?? resolve(process.cwd(), 'config/strategy-gates.json');
   return readJsonConfig(path, StrategyGatesFileSchema, opts.fresh);
+}
+
+/** Bucketed symbol lists for the momentum screener (~150-name union). */
+export function loadMomentumUniverse(opts: LoaderOptions = {}): MomentumUniverseFile {
+  const path = opts.path ?? resolve(process.cwd(), 'config/momentum-universe.json');
+  return readJsonConfig(path, MomentumUniverseFileSchema, opts.fresh);
+}
+
+/** Deduped union of all momentum universe buckets, uppercased and sorted. */
+export function getMomentumUniverseSymbols(opts: LoaderOptions = {}): string[] {
+  const f = loadMomentumUniverse(opts);
+  const set = new Set<string>();
+  for (const s of f.buckets.watchlist) set.add(s.toUpperCase());
+  for (const s of f.buckets.nifty_100) set.add(s.toUpperCase());
+  for (const s of f.buckets.nifty_midcap_50) set.add(s.toUpperCase());
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+export function loadMomentumConfig(opts: LoaderOptions = {}): MomentumConfig {
+  const path = opts.path ?? resolve(process.cwd(), 'config/momentum-config.json');
+  return readJsonConfig(path, MomentumConfigSchema, opts.fresh);
 }
 
 function readJsonConfig<T>(path: string, schema: z.ZodType<T>, fresh = false): T {

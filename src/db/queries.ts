@@ -400,7 +400,7 @@ export function upsertSymbolMetadata(
 // Paper trades (forward-testing ledger)
 // ---------------------------------------------------------------------------
 
-export type PaperTradeSignalType = 'AI_PICK' | 'PORTFOLIO_ADD';
+export type PaperTradeSignalType = 'AI_PICK' | 'PORTFOLIO_ADD' | 'momentum_mf';
 export type PaperTradeStatus = 'OPEN' | 'CLOSED_WIN' | 'CLOSED_LOSS' | 'CLOSED_TIME';
 export type PaperTradeHorizon = 'short' | 'medium' | 'long';
 

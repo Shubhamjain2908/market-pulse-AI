@@ -1,0 +1,42 @@
+{
+  "strategy_id": "momentum_mf",
+  "regime_gate": ["BULL_TRENDING"],
+  "universe": "MOMENTUM_UNIVERSE_JSON",
+  "portfolio_slots": 10,
+  "exit_rank_threshold": 20,
+  "hard_stop_pct": -8,
+  "rebalance_day": "Sunday",
+  "weights": {
+    "mom_12_1": 0.4,
+    "eps_revision": 0.25,
+    "rel_strength_ba": 0.25,
+    "breakout_flag": 0.1
+  },
+  "breakout_bonus": 0.5,
+  "winsorise_zscore": 3,
+  "lookback": {
+    "price_momentum_start_days": 253,
+    "price_momentum_lag_days": 21,
+    "beta_days": 252,
+    "rs_days": 63,
+    "eps_revision_days": 90,
+    "volume_avg_days": 20
+  },
+  "breakout_threshold_pct": 3,
+  "breakout_volume_ratio": 1.5,
+  "beta_floor": 0.5,
+  "false_flag_eps_threshold_pct": -5,
+  "max_per_sector": 3,
+  "earnings_blackout_days": 3,
+  "position_sizing": {
+    "risk_pct": 1,
+    "atr_multiplier": 2,
+    "add_tranche_atr": 1,
+    "add_tranche_size_pct": 50,
+    "trim_rsi_threshold": 75,
+    "trim_return_pct": 15,
+    "trim_days_max": 10,
+    "trim_amount_pct": 30,
+    "max_single_stock_pct": 5
+  }
+}
