@@ -11,6 +11,7 @@ import { MockLlmProvider } from './providers/mock.js';
 import { OpenAIProvider } from './providers/openai.js';
 import { VertexProvider } from './providers/vertex.js';
 import type { LlmProvider } from './types.js';
+import { GoogleStudioProvider } from "./providers/google-studio.js";
 
 let cached: LlmProvider | null = null;
 
@@ -40,6 +41,8 @@ function createLlmProvider(): LlmProvider {
       return new VertexProvider();
     case 'openai':
       return new OpenAIProvider();
+    case 'google-studio':
+      return new GoogleStudioProvider();
     case 'mock':
       return new MockLlmProvider();
     default: {
