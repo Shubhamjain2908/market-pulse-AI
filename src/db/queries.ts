@@ -4,6 +4,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+import type { MomentumRebalanceSummary } from '../briefing/momentum-card.js';
 import type {
   FiiDiiRow,
   Fundamentals,
@@ -714,5 +715,165 @@ export function getPaperTradeStats(
     avgLoserPct,
     expectancyPct,
     minSampleMet,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Momentum rebalance → briefing (persisted for weekend `brief` without --brief)
+// ---------------------------------------------------------------------------
+
+/** Top names by ascending `mom_rank` for a session (excludes `mom_rank_excluded`). */
+export interface MomentumRankSnapshotRow {
+  symbol: string;
+  rank: number;
+  composite: number | null;
+  falseFlag: number | null;
+}
+
+export function getTopMomentumRankSnapshotForSession(
+  sessionDate: string,
+  limit: number,
+  db: DatabaseType = getDb(),
+): MomentumRankSnapshotRow[] {
+  const rows = db
+    .prepare(
+      `
+    SELECT r.symbol AS symbol, r.value AS rank, c.value AS composite, f.value AS false_flag
+    FROM signals r
+    LEFT JOIN signals c ON c.symbol = r.symbol AND c.date = r.date AND c.name = 'mom_composite_score'
+    LEFT JOIN signals f ON f.symbol = r.symbol AND f.date = r.date AND f.name = 'mom_false_flag'
+    WHERE r.date = ? AND r.name = 'mom_rank'
+      AND NOT EXISTS (
+        SELECT 1 FROM signals x
+        WHERE x.symbol = r.symbol AND x.date = r.date AND x.name = 'mom_rank_excluded' AND x.value >= 1
+      )
+    ORDER BY r.value ASC, r.symbol ASC
+    LIMIT ?
+  `,
+    )
+    .all(sessionDate, limit) as Array<{
+    symbol: string;
+    rank: number;
+    composite: number | null;
+    false_flag: number | null;
+  }>;
+  return rows.map((r) => ({
+    symbol: r.symbol.toUpperCase(),
+    rank: r.rank,
+    composite: r.composite ?? null,
+    falseFlag: r.false_flag ?? null,
+  }));
+}
+
+export function upsertMomentumRebalanceBriefing(
+  row: MomentumRebalanceSummary,
+  db: DatabaseType = getDb(),
+): void {
+  db.prepare(
+    `
+    INSERT INTO momentum_rebalance_briefing (
+      calendar_date, session_date, regime_allowed, regime, closed_rank_decay,
+      entries_inserted, unchanged_held, sector_cap_blocked, blackout_blocked, skipped_reason,
+      thesis_failed, ranker_universe_size, ranker_eligible_count
+    ) VALUES (
+      @calendarDate, @sessionDate, @regimeAllowed, @regime, @closedRankDecay,
+      @entriesInserted, @unchangedHeld, @sectorCapBlocked, @blackoutBlocked, @skippedReason,
+      @thesisFailed, @rankerUniverseSize, @rankerEligibleCount
+    )
+    ON CONFLICT(calendar_date) DO UPDATE SET
+      session_date       = excluded.session_date,
+      regime_allowed     = excluded.regime_allowed,
+      regime             = excluded.regime,
+      closed_rank_decay  = excluded.closed_rank_decay,
+      entries_inserted   = excluded.entries_inserted,
+      unchanged_held     = excluded.unchanged_held,
+      sector_cap_blocked = excluded.sector_cap_blocked,
+      blackout_blocked   = excluded.blackout_blocked,
+      skipped_reason     = excluded.skipped_reason,
+      thesis_failed         = excluded.thesis_failed,
+      ranker_universe_size  = excluded.ranker_universe_size,
+      ranker_eligible_count = excluded.ranker_eligible_count,
+      updated_at         = datetime('now')
+  `,
+  ).run({
+    calendarDate: row.calendarDate,
+    sessionDate: row.sessionDate,
+    regimeAllowed: row.regimeAllowed ? 1 : 0,
+    regime: row.regime ?? null,
+    closedRankDecay: row.closedRankDecay,
+    entriesInserted: row.entriesInserted,
+    unchangedHeld: row.unchangedHeld,
+    sectorCapBlocked: row.sectorCapBlocked,
+    blackoutBlocked: row.blackoutBlocked,
+    skippedReason: row.skippedReason ?? null,
+    thesisFailed: row.thesisFailed ?? null,
+    rankerUniverseSize: row.rankerSnapshot?.universeSize ?? null,
+    rankerEligibleCount: row.rankerSnapshot?.eligibleCount ?? null,
+  });
+}
+
+export function getMomentumRebalanceBriefingForCalendarDate(
+  calendarDate: string,
+  db: DatabaseType = getDb(),
+): MomentumRebalanceSummary | null {
+  const r = db
+    .prepare(
+      `
+    SELECT calendar_date AS calendarDate, session_date AS sessionDate,
+           regime_allowed AS regimeAllowed, regime,
+           closed_rank_decay AS closedRankDecay,
+           entries_inserted AS entriesInserted,
+           unchanged_held AS unchangedHeld,
+           sector_cap_blocked AS sectorCapBlocked,
+           blackout_blocked AS blackoutBlocked,
+           skipped_reason AS skippedReason,
+           thesis_failed AS thesisFailed,
+           ranker_universe_size AS rankerUniverseSize,
+           ranker_eligible_count AS rankerEligibleCount
+    FROM momentum_rebalance_briefing
+    WHERE calendar_date = ?
+  `,
+    )
+    .get(calendarDate) as
+    | {
+        calendarDate: string;
+        sessionDate: string;
+        regimeAllowed: number;
+        regime: string | null;
+        closedRankDecay: number;
+        entriesInserted: number;
+        unchangedHeld: number;
+        sectorCapBlocked: number;
+        blackoutBlocked: number;
+        skippedReason: string | null;
+        thesisFailed: number | null;
+        rankerUniverseSize: number | null;
+        rankerEligibleCount: number | null;
+      }
+    | undefined;
+  if (!r) return null;
+  const rankerSnapshot =
+    r.rankerUniverseSize != null &&
+    r.rankerEligibleCount != null &&
+    Number.isFinite(r.rankerUniverseSize) &&
+    Number.isFinite(r.rankerEligibleCount)
+      ? { universeSize: r.rankerUniverseSize, eligibleCount: r.rankerEligibleCount }
+      : undefined;
+  return {
+    calendarDate: r.calendarDate,
+    sessionDate: r.sessionDate,
+    regimeAllowed: r.regimeAllowed === 1,
+    regime: r.regime,
+    closedRankDecay: r.closedRankDecay,
+    entriesInserted: r.entriesInserted,
+    unchangedHeld: r.unchangedHeld,
+    sectorCapBlocked: r.sectorCapBlocked,
+    blackoutBlocked: r.blackoutBlocked,
+    skippedReason:
+      r.skippedReason === 'regime_gate' || r.skippedReason === 'missing_regime'
+        ? r.skippedReason
+        : undefined,
+    thesisFailed: r.thesisFailed ?? undefined,
+    rankerSnapshot,
   };
 }

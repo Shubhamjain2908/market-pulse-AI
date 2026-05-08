@@ -19,6 +19,7 @@ import {
   getNseCloseOnOrBefore,
   getOpenPaperTradesForSignal,
   insertPaperTradeIfAbsent,
+  upsertMomentumRebalanceBriefing,
   upsertThesis,
 } from '../db/queries.js';
 import { getRegimeForCalendarDate, isStrategyAllowed } from '../db/regime-queries.js';
@@ -179,23 +180,35 @@ export interface MomentumRebalanceResult {
   blackoutBlocked: number;
   unchangedHeld: number;
   thesisFailed: number;
-  skippedReason?: 'regime_gate';
+  skippedReason?: 'regime_gate' | 'missing_regime';
 }
 
-/** Shape expected by {@link renderMomentumBriefingBlock} when composing after a successful rebalance. */
+/** Shape expected by {@link renderMomentumBriefingBlock} (also persisted for weekend `brief`). */
 export function toMomentumRebalanceBriefingSummary(
   r: MomentumRebalanceResult,
-): MomentumRebalanceSummary | undefined {
-  if (!r.regimeAllowed) return undefined;
+): MomentumRebalanceSummary {
   return {
     calendarDate: r.calendarDate,
     sessionDate: r.sessionDate,
+    regimeAllowed: r.regimeAllowed,
+    regime: r.regime,
     closedRankDecay: r.closedRankDecay,
     entriesInserted: r.entriesInserted,
     unchangedHeld: r.unchangedHeld,
     sectorCapBlocked: r.sectorCapBlocked,
     blackoutBlocked: r.blackoutBlocked,
+    skippedReason: r.skippedReason,
+    thesisFailed: r.thesisFailed,
+    rankerSnapshot: r.rankerSnapshot,
   };
+}
+
+function finishMomentumRebalance(
+  db: DatabaseType,
+  r: MomentumRebalanceResult,
+): MomentumRebalanceResult {
+  upsertMomentumRebalanceBriefing(toMomentumRebalanceBriefingSummary(r), db);
+  return r;
 }
 
 interface MomentumEntryContext {
@@ -341,7 +354,7 @@ export async function runMomentumRebalance(
 
   if (regime == null) {
     log.warn({ calendarDate, sessionDate }, 'momentum rebalance aborted: missing regime_daily row');
-    return {
+    return finishMomentumRebalance(db, {
       calendarDate,
       sessionDate,
       regime: null,
@@ -354,8 +367,8 @@ export async function runMomentumRebalance(
       blackoutBlocked: 0,
       unchangedHeld: getOpenPaperTradesForSignal('momentum_mf', db).length,
       thesisFailed: 0,
-      skippedReason: 'regime_gate',
-    };
+      skippedReason: 'missing_regime',
+    });
   }
 
   const regimeAllowed =
@@ -363,7 +376,7 @@ export async function runMomentumRebalance(
 
   if (!regimeAllowed) {
     log.info({ calendarDate, sessionDate, regime }, 'momentum-rebalance gated by regime');
-    return {
+    return finishMomentumRebalance(db, {
       calendarDate,
       sessionDate,
       regime,
@@ -377,7 +390,7 @@ export async function runMomentumRebalance(
       unchangedHeld: getOpenPaperTradesForSignal('momentum_mf', db).length,
       thesisFailed: 0,
       skippedReason: 'regime_gate',
-    };
+    });
   }
 
   const { rankBySymbol } = loadMomentumRanks(sessionDate, db);
@@ -430,7 +443,7 @@ export async function runMomentumRebalance(
       },
       'momentum rebalance: portfolio full after rank exits',
     );
-    return {
+    return finishMomentumRebalance(db, {
       calendarDate,
       sessionDate,
       regime,
@@ -443,7 +456,7 @@ export async function runMomentumRebalance(
       blackoutBlocked: 0,
       unchangedHeld: heldBeforeEntries.size,
       thesisFailed: 0,
-    };
+    });
   }
 
   const hardMult = 1 + cfg.hard_stop_pct / 100;
@@ -600,7 +613,7 @@ export async function runMomentumRebalance(
     'momentum rebalance complete',
   );
 
-  return {
+  return finishMomentumRebalance(db, {
     calendarDate,
     sessionDate,
     regime,
@@ -613,5 +626,5 @@ export async function runMomentumRebalance(
     blackoutBlocked,
     unchangedHeld,
     thesisFailed,
-  };
+  });
 }
