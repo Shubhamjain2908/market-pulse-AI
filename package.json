@@ -46,6 +46,9 @@
     "kite-verify": "tsx src/cli.ts kite-verify",
     "scan": "tsx src/cli.ts scan",
     "schedule": "tsx src/cli.ts schedule",
+    "healthcheck": "tsx deploy/healthcheck.ts",
+    "llm:smoke:google-studio": "LLM_PROVIDER=google-studio tsx scripts/smoke-google-studio.mts",
+    "llm:smoke:google-studio:flash": "LLM_PROVIDER=google-studio VERTEX_MODEL=gemini-2.5-flash tsx scripts/smoke-google-studio.mts",
     "prepare": "echo 'skip husky setup until added'"
   },
   "keywords": [
