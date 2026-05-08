@@ -6,7 +6,7 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 
-import { buildStockContext } from '../agents/thesis-generator.js';
+import { THESIS_JSON_SYSTEM_PROMPT, buildStockContext } from '../agents/thesis-generator.js';
 import type { MomentumRebalanceSummary } from '../briefing/momentum-card.js';
 import { parseInrPriceMidpoint } from '../briefing/paper-trade-parsers.js';
 import { classifySector } from '../briefing/sector-classifier.js';
@@ -278,10 +278,15 @@ function computeSuggestedSizePct(
   return Math.max(0, Math.min(maxSingleStockPct, pct));
 }
 
-const MOMENTUM_REBALANCE_SYSTEM = `You are a momentum strategy analyst generating ONE trade thesis.
-Return ONLY valid JSON matching the schema. Keep text concise and concrete.
-Use provided momentum context (rank/factors/false-flag) in reasoning.
-If false_flag is true, confidenceScore must be <= 5.`;
+const MOMENTUM_ENTRY_THESIS_ADDENDUM = `MOMENTUM SLEEVE ENTRY (same JSON schema as above):
+- The "## Momentum Context" block has rank and factor numbers — weave them into thesis, bullCase, and bearCase.
+- Set triggerScreen to "momentum_mf (rank entry)" (or include that phrase).
+- The JSON "symbol" field MUST be exactly the ticker from the first line of the user message ("Ticker for JSON symbol field").
+- If mom_false_flag is 1 in Momentum Context, confidenceScore must be ≤ 5.`;
+
+const MOMENTUM_ENTRY_SYSTEM = `${THESIS_JSON_SYSTEM_PROMPT}
+
+${MOMENTUM_ENTRY_THESIS_ADDENDUM}`;
 
 async function generateEntryThesis(
   symbol: string,
@@ -305,15 +310,16 @@ async function generateEntryThesis(
       null,
       2,
     );
-    const user = `${base}\n\n## Momentum Context\n${momentumPayload}`;
+    const user = `Ticker for JSON symbol field (required): ${symbol.toUpperCase()}\n\n${base}\n\n## Momentum Context\n${momentumPayload}`;
     const result = await llm.generateJson({
-      system: MOMENTUM_REBALANCE_SYSTEM,
+      system: MOMENTUM_ENTRY_SYSTEM,
       user,
       schema: ThesisSchema,
       temperature: 0.2,
       maxRetries: 2,
     });
     let thesis = result.data;
+    thesis = { ...thesis, symbol: symbol.toUpperCase() };
     if (ctx.falseFlag && thesis.confidenceScore > 5) {
       thesis = { ...thesis, confidenceScore: 5 };
     }
