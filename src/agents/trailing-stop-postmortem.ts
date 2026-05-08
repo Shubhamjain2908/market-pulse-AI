@@ -19,9 +19,14 @@ export const TRAILING_STOP_POSTMORTEM_SYSTEM_PREFIX =
 const TRAILING_STOP_POSTMORTEM_SYSTEM = `${TRAILING_STOP_POSTMORTEM_SYSTEM_PREFIX}.
 
 Facts arrive as JSON only — do not invent prices or dates.
-Write 2–4 complete sentences in plain English: what the stop-out reflects about volatility (ATR context),
-how trailing behaved versus the entry thesis, and whether a gap-through-stop flag matters.
-No buy/sell recommendations. No bullet points.`;
+Write 3–5 complete sentences in plain English covering ALL of the following:
+1. The entry price, the stop-fill price, and the realised or unrealised P&L percentage.
+2. What the ATR context reveals about volatility at the time of the stop-out.
+3. How the trailing stop behaved (multiplier used, highest close reached, whether it tightened at 15% gain threshold).
+4. Whether a gap-down-through-stop occurred and its significance.
+5. A brief assessment of whether the stop-out was expected given the trade setup.
+Always finish every sentence before ending your response.
+No buy/sell recommendations. No bullet points. No markdown.`;
 
 function validateNarrative(text: string): void {
   const t = text.trim();
@@ -125,7 +130,7 @@ export async function runTrailingStopPostMortem(logId: number, db?: DatabaseType
       system: TRAILING_STOP_POSTMORTEM_SYSTEM,
       user: `stop_out_facts_json:\n${JSON.stringify(payload)}`,
       temperature: 0.25,
-      maxOutputTokens: 280,
+      maxOutputTokens: 1000,
     });
     const text = result.text.trim();
     validateNarrative(text);
