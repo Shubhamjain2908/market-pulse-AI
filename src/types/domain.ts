@@ -163,16 +163,54 @@ export type ScreenResult = z.infer<typeof ScreenResultSchema>;
 // AI thesis (output of LLM)
 // ---------------------------------------------------------------------------
 
+/** LLMs often return INR levels as numbers or `{low,high}`; normalize to display strings. */
+function thesisInrTextField() {
+  return z.preprocess((v: unknown) => {
+    if (typeof v === 'string') return v.trim();
+    if (typeof v === 'number' && Number.isFinite(v)) return `₹${v}`;
+    if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+      const o = v as Record<string, unknown>;
+      if (typeof o.low === 'number' && typeof o.high === 'number') return `₹${o.low}–₹${o.high}`;
+      if (typeof o.min === 'number' && typeof o.max === 'number') return `₹${o.min}–₹${o.max}`;
+    }
+    return v;
+  }, z.string().min(1));
+}
+
+/** Bull/bear sometimes arrive as one string instead of a string array. */
+function thesisBulletList() {
+  return z.preprocess((v: unknown) => {
+    if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+    if (typeof v === 'string' && v.trim()) return [v.trim()];
+    return v;
+  }, z.array(z.string()).min(1).max(5));
+}
+
+/** LLMs often return prose ("1-3 Months") instead of enum tokens. */
+function thesisTimeHorizon() {
+  return z.preprocess(
+    (v: unknown) => {
+      if (v === 'short' || v === 'medium' || v === 'long') return v;
+      const s = String(v).toLowerCase();
+      if (/(year|12\s*[-–]?\s*month|long[-\s]term|^long$)/i.test(s)) return 'long';
+      if (/(1[-–]?\s*3|1[-–]?\s*4\s*month|month|quarter|medium)/i.test(s)) return 'medium';
+      if (/(week|1[-–]?\s*4\s*week|^short$)/i.test(s)) return 'short';
+      return v;
+    },
+    z.enum(['short', 'medium', 'long']),
+  );
+}
+
 export const ThesisSchema = z.object({
   symbol: z.string(),
   thesis: z.string().min(20),
-  bullCase: z.array(z.string()).min(1).max(5),
-  bearCase: z.array(z.string()).min(1).max(5),
-  entryZone: z.string(),
-  stopLoss: z.string(),
-  target: z.string(),
-  timeHorizon: z.enum(['short', 'medium', 'long']),
-  confidenceScore: z.number().int().min(1).max(10),
+  bullCase: thesisBulletList(),
+  bearCase: thesisBulletList(),
+  entryZone: thesisInrTextField(),
+  stopLoss: thesisInrTextField(),
+  target: thesisInrTextField(),
+  timeHorizon: thesisTimeHorizon(),
+  confidenceScore: z.coerce.number().int().min(1).max(10),
   triggerScreen: z.string(),
 });
 export type Thesis = z.infer<typeof ThesisSchema>;

@@ -26,7 +26,8 @@ import { getLatestSignalsMap, getLatestSignalsMapsForSymbols } from './portfolio
 
 const log = child({ component: 'thesis-generator' });
 
-const SYSTEM_PROMPT = `You are a senior Indian equity research analyst (SEBI-registered RIA mindset).
+/** System prompt for structured thesis JSON — shared with momentum sleeve entry theses. */
+export const THESIS_JSON_SYSTEM_PROMPT = `You are a senior Indian equity research analyst (SEBI-registered RIA mindset).
 You produce actionable, concise investment theses for NSE/BSE stocks.
 
 CONTEXT:
@@ -61,7 +62,7 @@ Return ONLY a single JSON object matching this schema:
 
 No markdown, no code fences, no commentary. ONLY the JSON object.`;
 
-/** Appended to {@link SYSTEM_PROMPT} when `buildStockContext` includes a momentum snapshot. */
+/** Appended to {@link THESIS_JSON_SYSTEM_PROMPT} when `buildStockContext` includes a momentum snapshot. */
 const MOMENTUM_THESIS_ADDENDUM = `MOMENTUM CONTEXT (only when the user message contains "## Momentum factor snapshot"):
 - Give a short factor-by-factor read: 12-1 price momentum, fundamentals/EPS growth vs peers (from fundamentals row), relative strength vs benchmark, and breakout/volume where values exist.
 - If the snapshot includes **FALSE MOMENTUM WARNING** (mom_false_flag = 1), call that out prominently and keep confidenceScore **≤ 5**.
@@ -199,8 +200,8 @@ export async function generateTheses(
     try {
       const context = buildStockContext(candidate.symbol, date, db);
       const system = hasMomentumThesisContext(candidate.symbol, date, db)
-        ? `${SYSTEM_PROMPT}\n\n${MOMENTUM_THESIS_ADDENDUM}`
-        : SYSTEM_PROMPT;
+        ? `${THESIS_JSON_SYSTEM_PROMPT}\n\n${MOMENTUM_THESIS_ADDENDUM}`
+        : THESIS_JSON_SYSTEM_PROMPT;
       const result = await llm.generateJson<Thesis>({
         system,
         user: context,

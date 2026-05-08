@@ -258,41 +258,53 @@ program
   )
   .option('--skip-ranker', 'use existing mom_rank signals for session (no ranker pass)')
   .option(
+    '--skip-thesis',
+    'skip LLM entry thesis (paper entries use ATR + hard-stop sizing only; for backfills / no API key)',
+  )
+  .option(
     '--brief',
     'compose skip-AI briefing with rebalance summary and deliver (same as Sunday scheduler)',
   )
-  .action(async (opts: { symbols?: string; skipRanker?: boolean; brief?: boolean }) => {
-    ensureDb();
-    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
-    const universe = opts.symbols
-      ?.split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .map((s) => s.toUpperCase());
-    const result = await runMomentumRebalance({
-      calendarDate: date,
-      universe: universe?.length ? universe : undefined,
-      skipRanker: Boolean(opts.skipRanker),
-    });
-    logger.info(result, 'momentum-rebalance complete');
-    if (opts.brief) {
-      const summary = toMomentumRebalanceBriefingSummary(result);
-      const closure = getMarketClosure(date);
-      const briefing = await runBriefingComposer({
-        date,
-        skipAi: true,
-        marketClosure: closure ?? undefined,
-        momentumRebalanceSummary: summary,
-        delivery: config.BRIEFING_DELIVERY,
+  .action(
+    async (opts: {
+      symbols?: string;
+      skipRanker?: boolean;
+      brief?: boolean;
+      skipThesis?: boolean;
+    }) => {
+      ensureDb();
+      const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+      const universe = opts.symbols
+        ?.split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => s.toUpperCase());
+      const result = await runMomentumRebalance({
+        calendarDate: date,
+        universe: universe?.length ? universe : undefined,
+        skipRanker: Boolean(opts.skipRanker),
+        skipThesis: Boolean(opts.skipThesis),
       });
-      await deliverBriefing(briefing.html, briefing.date, config.BRIEFING_DELIVERY);
-      logger.info(
-        { date: briefing.date, summaryPresent: summary != null },
-        'momentum-rebalance briefing delivered',
-      );
-    }
-    closeDb();
-  });
+      logger.info(result, 'momentum-rebalance complete');
+      if (opts.brief) {
+        const summary = toMomentumRebalanceBriefingSummary(result);
+        const closure = getMarketClosure(date);
+        const briefing = await runBriefingComposer({
+          date,
+          skipAi: true,
+          marketClosure: closure ?? undefined,
+          momentumRebalanceSummary: summary,
+          delivery: config.BRIEFING_DELIVERY,
+        });
+        await deliverBriefing(briefing.html, briefing.date, config.BRIEFING_DELIVERY);
+        logger.info(
+          { date: briefing.date, summaryPresent: summary != null },
+          'momentum-rebalance briefing delivered',
+        );
+      }
+      closeDb();
+    },
+  );
 
 program
   .command('screen')

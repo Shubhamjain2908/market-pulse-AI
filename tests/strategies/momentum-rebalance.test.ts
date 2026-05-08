@@ -409,7 +409,7 @@ describe('strategies/momentum-rebalance', () => {
 });
 
 describe('toMomentumRebalanceBriefingSummary', () => {
-  it('returns undefined when rebalance was regime-gated', () => {
+  it('includes counters and regime when rebalance was regime-gated', () => {
     expect(
       toMomentumRebalanceBriefingSummary({
         calendarDate: '2026-05-03',
@@ -423,8 +423,21 @@ describe('toMomentumRebalanceBriefingSummary', () => {
         blackoutBlocked: 0,
         unchangedHeld: 1,
         thesisFailed: 0,
+        skippedReason: 'regime_gate',
       }),
-    ).toBeUndefined();
+    ).toEqual({
+      calendarDate: '2026-05-03',
+      sessionDate: '2026-05-01',
+      regimeAllowed: false,
+      regime: 'CHOPPY',
+      closedRankDecay: 0,
+      entriesInserted: 0,
+      unchangedHeld: 1,
+      sectorCapBlocked: 0,
+      blackoutBlocked: 0,
+      skippedReason: 'regime_gate',
+      thesisFailed: 0,
+    });
   });
 
   it('maps counters when regime allowed', () => {
@@ -445,11 +458,14 @@ describe('toMomentumRebalanceBriefingSummary', () => {
     ).toEqual({
       calendarDate: '2026-05-03',
       sessionDate: '2026-05-01',
+      regimeAllowed: true,
+      regime: 'BULL_TRENDING',
       closedRankDecay: 2,
       entriesInserted: 1,
       unchangedHeld: 3,
       sectorCapBlocked: 0,
       blackoutBlocked: 1,
+      thesisFailed: 0,
     });
   });
 });

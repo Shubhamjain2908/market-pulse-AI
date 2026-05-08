@@ -22,7 +22,12 @@ import {
   getRegimeForCalendarDate,
   listAllowedGatesForRegime,
 } from '../db/index.js';
-import { getPaperTradeStats, getSymbolSectors, getThesesForDate } from '../db/queries.js';
+import {
+  getMomentumRebalanceBriefingForCalendarDate,
+  getPaperTradeStats,
+  getSymbolSectors,
+  getThesesForDate,
+} from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
@@ -161,8 +166,11 @@ export async function composeBriefing(
 
   const trailingStopBlock = renderTrailingStopBriefingBlock(date, db) || undefined;
 
-  const momentumBlock =
-    renderMomentumBriefingBlock(date, db, opts.momentumRebalanceSummary) || undefined;
+  const momentumSummary: MomentumRebalanceSummary | undefined =
+    opts.momentumRebalanceSummary ??
+    getMomentumRebalanceBriefingForCalendarDate(date, db) ??
+    undefined;
+  const momentumBlock = renderMomentumBriefingBlock(date, db, momentumSummary) || undefined;
 
   let regimeBlock: string | undefined;
   const regimeRow = getRegimeForCalendarDate(date, db);

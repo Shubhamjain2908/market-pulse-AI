@@ -180,6 +180,7 @@ pnpm cli momentum-rank              # Phase 4.1: write mom_* signals (composite 
 pnpm cli momentum-rank -s SYM1,SYM2 # optional universe override
 pnpm cli momentum-rebalance         # Phase 4.2: regime gate → rank exits → entries (sector cap + blackout)
 pnpm cli momentum-rebalance --skip-ranker   # use existing mom_rank rows for session (no ranker pass)
+pnpm cli momentum-rebalance --skip-thesis  # skip LLM entry thesis (paper sizing from ATR + hard stop; backfills / no API key)
 pnpm cli momentum-rebalance --brief         # after rebalance: compose skip-AI briefing + rebalance summary + deliver (same idea as Sunday scheduler)
 
 # One-shot pipelines
@@ -280,7 +281,7 @@ sources transparently:
 
 | Source                    | Signals                                                                      |
 | ------------------------- | ---------------------------------------------------------------------------- |
-| `signals` table (technical + optional momentum) | Technical: `close`, `sma_20`, `sma_50`, `sma_200`, `ema_9`, `ema_21`, `rsi_14`, `atr_14`, `volume_ratio_20d`, `pct_from_52w_high`, `pct_from_52w_low`. **Momentum** (`pnpm cli momentum-rank`): `mom_rank`, `mom_composite_score`, `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`, `mom_false_flag`, … |
+| `signals` table (technical + optional momentum) | Technical (`pnpm cli enrich`): `close`, `sma_20`, `sma_50`, `sma_200`, `ema_9`, `ema_21`, `rsi_14`, `atr_14`, `volume_ratio_20d`, `pct_from_52w_high`, `pct_from_52w_low`. **Momentum factors + blackout** (same enrich path, momentum-universe symbols): `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`, `mom_earnings_blackout`. **Momentum rank** (`pnpm cli momentum-rank`): `mom_rank`, `mom_composite_score`, `mom_false_flag`, `mom_rank_excluded`. |
 | `fundamentals` table      | `pe`, `pb`, `peg`, `roe`, `roce`, `debt_to_equity`, `revenue_growth_yoy`, `profit_growth_yoy`, `promoter_holding_pct`, `promoter_holding_change_qoq`, `dividend_yield`, `market_cap` |
 | `fii_dii` table (computed) | `fii_net`, `dii_net`, `fii_net_5d_sum`, `dii_net_5d_sum`, `fii_net_streak_days`, `dii_net_streak_days` |
 
@@ -433,11 +434,15 @@ A **regime-gated** momentum sleeve that ranks a configurable universe, writes **
 
 **CLI / code paths**
 
-- **Ranker** — `pnpm cli momentum-rank` → [`src/rankers/momentum-ranker.ts`](src/rankers/momentum-ranker.ts) writes signals such as `mom_rank`, `mom_composite_score`, `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`, **`mom_false_flag`**, `mom_earnings_blackout`, etc.
+- **Signal enrich** — `pnpm cli enrich` → [`TechnicalEnricher`](src/enrichers/index.ts) plus [`enrichMomentumSignals`](src/enrichers/momentum-signals.ts) for the momentum universe: **`mom_12_1_return`**, `mom_relative_strength_ba`, `mom_volume_breakout_flag`, `mom_earnings_blackout`. Requires sufficient quote history in SQLite for 12–1 style momentum math.
+- **Ranker** — `pnpm cli momentum-rank` → [`src/rankers/momentum-ranker.ts`](src/rankers/momentum-ranker.ts) reads those factor rows for `asOf` and writes **`mom_rank`**, `mom_composite_score`, **`mom_false_flag`**, `mom_rank_excluded`.
 - **Rebalance** — `pnpm cli momentum-rebalance` → [`src/strategies/momentum-rebalance.ts`](src/strategies/momentum-rebalance.ts): optional embedded ranker pass, liquidations when regime ∉ gate, rank-decay exits, new entries with sector cap + blackout checks; optional LLM entry thesis (false-flag thesis confidence is clamped in-strategy).
 
 Shortcuts: `pnpm momentum:rank` / `pnpm momentum:rebalance` (wrappers around the same CLI commands).
+
 - **Daily workflow** — [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) runs Yahoo momentum earnings refresh on **Sunday** IST; [**`applyMomentumRegimeGateExits`**](src/strategies/momentum-rebalance.ts) after regime classification on trading days.
+
+**Historical session (quotes only ≠ momentum factors)** — `pnpm momentum:backfill-universe` loads **quotes** for the momentum universe; it does **not** insert `mom_12_1_return` or other factor rows. For a past calendar date `D`: ensure quotes cover the lookback window, then run **`pnpm cli enrich -d D`**, then **`pnpm cli momentum-rank -d D`**, then **`pnpm cli momentum-rebalance -d D`** (or your usual pipeline).
 
 **Signal snapshots (important)**
 
@@ -454,20 +459,23 @@ Technical enrich runs **daily**; momentum ranks are typically **weekly** (rebala
 
 **Briefing**
 
-- [`src/briefing/momentum-card.ts`](src/briefing/momentum-card.ts) — **Momentum screener** section (between **Screens fired** and **Watchlist alerts**): optional **Last rebalance** summary line when `momentumRebalanceSummary` is passed; **rank decay** highlight for ranks in the configured amber band; **monitor** table for open `momentum_mf` trades ( **`False flag`** shows **—** when `mom_false_flag` is absent).
+- [`src/briefing/momentum-card.ts`](src/briefing/momentum-card.ts) — **Momentum screener** card in the HTML brief: **after Screens fired today, before Watchlist alerts** (then **Portfolio**). That order keeps the block visible; it is omitted only when there is no rebalance summary and no open `momentum_mf` trades / rank-decay rows to show. **Last rebalance** counters when the sleeve ran (**`regimeAllowed`**); a clear **gated / missing regime** message when it did not; **rank decay** highlight for ranks in the configured amber band; **monitor** table for open `momentum_mf` trades ( **`False flag`** shows **—** when `mom_false_flag` is absent).
 
 **Rebalance summary → HTML**
 
-- Helper **`toMomentumRebalanceBriefingSummary`** ([`src/strategies/momentum-rebalance.ts`](src/strategies/momentum-rebalance.ts)) maps rebalance results into the briefing payload (only when **`regimeAllowed`**).
-- **Sunday 08:00** scheduler ([`src/scheduler/market-scheduler.ts`](src/scheduler/market-scheduler.ts)): after **`runMomentumRebalance`**, runs **`runBriefingComposer`** with **`skipAi: true`**, weekend **`marketClosure`** when applicable, the summary, then **`deliverToFile` / `deliverToEmail`** per **`BRIEFING_DELIVERY`**.
-- **`pnpm cli momentum-rebalance --brief`** — same compose + deliver pattern for manual runs.
-- Weekday **`pnpm daily`** does **not** attach a rebalance summary (nothing produces those counters mid-week unless you re-run rebalance or add persistence).
+- Each **`runMomentumRebalance`** upserts a row into **`momentum_rebalance_briefing`** (migration **`0010`**) keyed by **`calendar_date`**. [`composeBriefing`](src/briefing/composer.ts) loads it when **`momentumRebalanceSummary`** is not passed, so **`pnpm cli brief -d 2026-05-10`** still shows the block after you ran rebalance for that Sunday.
+- Helper **`toMomentumRebalanceBriefingSummary`** ([`src/strategies/momentum-rebalance.ts`](src/strategies/momentum-rebalance.ts)) maps the rebalance result for the LLM path and for persistence (includes **`regimeAllowed`**, **`regime`**, **`skippedReason`**, optional **`thesisFailed`** / **`rankerSnapshot`** for the HTML card).
+- **Sunday 08:00** scheduler ([`src/scheduler/market-scheduler.ts`](src/scheduler/market-scheduler.ts)): after **`runMomentumRebalance`**, runs **`runBriefingComposer`** with **`skipAi: true`**, weekend **`marketClosure`** when applicable, the in-memory summary, then **`deliverToFile` / `deliverToEmail`** per **`BRIEFING_DELIVERY`**.
+- **`pnpm cli momentum-rebalance --brief`** — same compose + deliver pattern for manual runs (DB row still persisted for a later standalone **`brief`**).
 
 **Verify**
 
 ```bash
+pnpm migrate   # applies 0010_momentum_rebalance_briefing on existing DBs
 pnpm typecheck && pnpm test
-pnpm cli momentum-rebalance --skip-ranker --brief   # requires DB state + regime row; delivers briefing when configured
+pnpm cli momentum-rebalance -d 2026-05-10        # persist summary for that calendar day
+pnpm cli brief -d 2026-05-10 --skip-ai           # reads persisted summary → Momentum screener card
+pnpm cli momentum-rebalance --skip-ranker --brief # one-shot compose + deliver when configured
 ```
 
 ---
