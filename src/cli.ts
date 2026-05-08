@@ -44,7 +44,7 @@ import { runSignalEnricher } from './agents/signal-enricher.js';
 import { runStockScreener } from './agents/stock-screener.js';
 import { generateTheses } from './agents/thesis-generator.js';
 import { runRegimeClassifier } from './analysers/regime-classifier.js';
-import { deliverToEmail, deliverToFile } from './briefing/index.js';
+import { deliverBriefing } from './briefing/index.js';
 import { config } from './config/env.js';
 import { APP_NAME, APP_VERSION } from './constants.js';
 import {
@@ -647,25 +647,6 @@ program
       // Intentionally never resolved; process exits on SIGINT/SIGTERM handlers.
     });
   });
-
-async function deliverBriefing(
-  html: string,
-  date: string,
-  method: 'file' | 'email' | 'slack' | 'telegram',
-): Promise<void> {
-  if (method === 'file') {
-    deliverToFile(html, date);
-    return;
-  }
-  if (method === 'email') {
-    await deliverToEmail(html, date);
-    return;
-  }
-  logger.warn(
-    { delivery: method },
-    'delivery channel not implemented yet - briefing not delivered',
-  );
-}
 
 program
   .command('doctor')

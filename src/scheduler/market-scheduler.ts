@@ -12,7 +12,7 @@
 import { Cron } from 'croner';
 import { runBriefingComposer } from '../agents/briefing-composer.js';
 import { runDailyWorkflow } from '../agents/daily-workflow.js';
-import { deliverToEmail, deliverToFile } from '../briefing/index.js';
+import { deliverBriefing } from '../briefing/dispatch.js';
 import { config } from '../config/env.js';
 import { getMomentumUniverseSymbols } from '../config/loaders.js';
 import { MARKET_TIMEZONE } from '../constants.js';
@@ -110,17 +110,7 @@ async function runSundayMomentumRebalance(): Promise<void> {
       momentumRebalanceSummary: summary,
       delivery: config.BRIEFING_DELIVERY,
     });
-    const method = config.BRIEFING_DELIVERY;
-    if (method === 'file') {
-      deliverToFile(briefing.html, briefing.date, db);
-    } else if (method === 'email') {
-      await deliverToEmail(briefing.html, briefing.date, db);
-    } else {
-      log.warn(
-        { tag: 'sun-0800', delivery: method },
-        'Sunday momentum briefing: delivery channel not implemented — HTML composed only in memory',
-      );
-    }
+    await deliverBriefing(briefing.html, briefing.date, config.BRIEFING_DELIVERY);
     log.info(
       { tag: 'sun-0800', briefingDate: briefing.date, summaryPresent: summary != null },
       'Sunday momentum briefing delivered',
@@ -162,6 +152,7 @@ async function runScheduledJob(tag: string): Promise<void> {
   log.info({ tag, health: 'started' }, 'scheduled job started');
   try {
     const result = await runDailyWorkflow();
+    await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
     log.info(
       {
         tag,

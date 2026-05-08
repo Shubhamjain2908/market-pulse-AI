@@ -14,6 +14,9 @@ importers:
       '@google-cloud/vertexai':
         specifier: ^1.12.0
         version: 1.12.0
+      '@google/genai':
+        specifier: ^2.0.0
+        version: 2.0.0
       better-sqlite3:
         specifier: ^11.5.0
         version: 11.10.0
@@ -460,6 +463,15 @@ packages:
 
   '@google/genai@1.51.0':
     resolution: {integrity: sha512-vTZZF3CSimN7cn2zsLpW2p5WF0eZa5Gz69ITMPCNHpPrDlAstOfGifSfi0p/s9Z9400f7xJRkgvkQNrcM7pJ6w==}
+    engines: {node: '>=20.0.0'}
+    peerDependencies:
+      '@modelcontextprotocol/sdk': ^1.25.2
+    peerDependenciesMeta:
+      '@modelcontextprotocol/sdk':
+        optional: true
+
+  '@google/genai@2.0.0':
+    resolution: {integrity: sha512-6XpO+YbGutXkm5QgR7NZktISxSz0dw3pSs9NtCUQwvhJc1eyA3KhdKhE/0Uaxp3a6eul3LC0SKau1bXymjOKUg==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': ^1.25.2
@@ -1788,6 +1800,17 @@ snapshots:
       - utf-8-validate
 
   '@google/genai@1.51.0':
+    dependencies:
+      google-auth-library: 10.6.2
+      p-retry: 4.6.2
+      protobufjs: 7.5.6
+      ws: 8.20.0
+    transitivePeerDependencies:
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+
+  '@google/genai@2.0.0':
     dependencies:
       google-auth-library: 10.6.2
       p-retry: 4.6.2

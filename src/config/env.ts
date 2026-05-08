@@ -29,7 +29,7 @@ const EnvSchema = z.object({
 
   DATABASE_PATH: z.string().default('./data/market-pulse.db'),
 
-  LLM_PROVIDER: z.enum(['cursor-agent', 'anthropic', 'vertex', 'openai', 'mock']).default('vertex'),
+  LLM_PROVIDER: z.enum(['cursor-agent', 'anthropic', 'vertex', 'openai', 'google-studio', 'mock']).default('vertex'),
 
   CURSOR_AGENT_BIN: z.string().optional(),
   CURSOR_AGENT_MODEL: z.string().optional(),
@@ -39,6 +39,9 @@ const EnvSchema = z.object({
 
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-5'),
+
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
 
   GOOGLE_VERTEX_PROJECT: z.string().optional(),
   GOOGLE_VERTEX_LOCATION: z.string().default('us-central1'),
