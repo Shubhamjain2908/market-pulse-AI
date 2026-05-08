@@ -64,6 +64,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
     "@google-cloud/vertexai": "^1.12.0",
+    "@google/genai": "^2.0.0",
     "better-sqlite3": "^11.5.0",
     "cheerio": "^1.2.0",
     "commander": "^12.1.0",
@@ -90,6 +91,10 @@
     "vitest": "^2.1.8"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@biomejs/biome", "better-sqlite3", "esbuild"]
+    "onlyBuiltDependencies": [
+      "@biomejs/biome",
+      "better-sqlite3",
+      "esbuild"
+    ]
   }
 }
