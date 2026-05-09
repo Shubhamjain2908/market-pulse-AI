@@ -28,6 +28,67 @@ const RESEARCH_SAFETY_SETTINGS = [
     },
 ];
 
+const GEMINI_CALLS_PER_MINUTE = 15;
+const GEMINI_WINDOW_MS = 60_000;
+
+/**
+ * Simple in-process sliding-window limiter that queues callers instead of failing.
+ * When the window is saturated, callers wait until the oldest start time falls out
+ * of the 60s window and then proceed in FIFO order.
+ */
+export class SlidingWindowRateLimiter {
+    private tail: Promise<void> = Promise.resolve();
+    private readonly timestamps: number[] = [];
+
+    constructor(
+        private readonly capacity: number,
+        private readonly windowMs: number,
+        private readonly now: () => number = () => Date.now(),
+        private readonly sleep: (ms: number) => Promise<void> = (ms) =>
+            new Promise((resolve) => setTimeout(resolve, ms)),
+    ) {}
+
+    acquire(): Promise<void> {
+        const run = async () => {
+            for (;;) {
+                const current = this.now();
+                while (this.timestamps.length > 0) {
+                    const oldest = this.timestamps[0];
+                    if (oldest == null) {
+                        this.timestamps.shift();
+                        continue;
+                    }
+                    if (current - oldest < this.windowMs) {
+                        break;
+                    }
+                    this.timestamps.shift();
+                }
+
+                if (this.timestamps.length < this.capacity) {
+                    this.timestamps.push(current);
+                    return;
+                }
+
+                const oldest = this.timestamps[0];
+                if (oldest == null) {
+                    continue;
+                }
+                const waitMs = Math.max(this.windowMs - (current - oldest), 1);
+                await this.sleep(waitMs);
+            }
+        };
+
+        const next = this.tail.then(run, run);
+        this.tail = next.then(
+            () => undefined,
+            () => undefined,
+        );
+        return next;
+    }
+}
+
+const geminiRateLimiter = new SlidingWindowRateLimiter(GEMINI_CALLS_PER_MINUTE, GEMINI_WINDOW_MS);
+
 export class GoogleStudioProvider implements LlmProvider {
     readonly model: string;
     readonly name: string = 'google-studio';
@@ -49,6 +110,8 @@ export class GoogleStudioProvider implements LlmProvider {
 
     async generateText(opts: GenerateTextOptions): Promise<LlmTextResult> {
         const started = Date.now();
+
+        await geminiRateLimiter.acquire();
 
         // Call global unified generateContent engine directly from models schema
         const result = await this.ai.models.generateContent({
@@ -92,6 +155,8 @@ export class GoogleStudioProvider implements LlmProvider {
                     : `${opts.user}\n\nIMPORTANT: Return ONLY a single valid JSON object matching the requested schema. Do not output markdown codeblocks.`;
 
             try {
+                await geminiRateLimiter.acquire();
+
                 const result = await this.ai.models.generateContent({
                     model: this.model,
                     contents: userPrompt,
