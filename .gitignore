@@ -46,3 +46,5 @@ briefings/
 
 spec/
 .cursor/plans/
+sync-db-to-vm.sh
+sync-env-to-vm.sh
