@@ -43,6 +43,7 @@
     "run-all": "tsx src/cli.ts run-all",
     "daily": "tsx src/cli.ts daily",
     "kite-login": "tsx src/cli.ts kite-login",
+    "kite-auth": "tsx src/auth/kite-auth-server.ts",
     "kite-verify": "tsx src/cli.ts kite-verify",
     "scan": "tsx src/cli.ts scan",
     "schedule": "tsx src/cli.ts schedule",
@@ -73,6 +74,7 @@
     "commander": "^12.1.0",
     "croner": "^9.0.0",
     "dotenv": "^16.4.5",
+    "express": "^5.2.1",
     "got": "^14.6.6",
     "nodemailer": "^8.0.7",
     "openai": "^6.35.0",
@@ -87,6 +89,7 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/better-sqlite3": "^7.6.12",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.10.0",
     "@types/nodemailer": "^8.0.0",
     "tsx": "^4.19.2",
