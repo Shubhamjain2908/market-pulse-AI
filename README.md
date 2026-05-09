@@ -2,7 +2,7 @@
 
 A personal morning-briefing agent for Indian stock markets (NSE/BSE).
 **Not** an auto-trader — every order is still placed by you. The system is a
-modular pipeline that runs every weekday at 7:30 AM IST and emails you a
+modular pipeline that runs every weekday at 9:15 AM IST and emails you a
 short, actionable briefing before market open.
 
 > **Status:** Phases 0–5 shipped (Delivery included). **Phase 6 — Market Regime
@@ -38,7 +38,7 @@ short, actionable briefing before market open.
 > single-command `pnpm daily` that runs the entire pipeline end-to-end and
 > produces a briefing with a "My Portfolio" section showing each
 > position's recommended action. Phase 4 adds croner scheduling
-> (07:30 / 15:30 weekdays, Sat 08:00 IST), Gmail SMTP delivery via
+> (09:15 / 15:30 weekdays, Sat 08:00 IST), Gmail SMTP delivery via
 > nodemailer, and stop-loss breach detection alerts. Earlier phases provide: a JSON-driven
 > screen engine, first-class watchlist alerts, a backtest harness, LLM
 > sentiment scoring, AI thesis generation, and an AI-composed HTML
@@ -77,7 +77,7 @@ can be re-run independently for debugging or backtesting.
 
 ```mermaid
 flowchart LR
-    Cron["croner 7:30 IST"] --> Ingest
+    Cron["croner 9:15 IST"] --> Ingest
     subgraph Ingest [Stage 1 - Ingestors]
         NSE[NseIngestor]
         Yahoo[YahooIngestor]
@@ -196,7 +196,7 @@ pnpm cli portfolio-analyse -j 12    # override parallel calls for speed/tuning
 pnpm cli scan              # one-shot intraday LTP refresh + live alerts
                            # (cron every 5-15 min during market hours)
 pnpm cli schedule          # start built-in croner schedule (Asia/Kolkata):
-                           # weekdays 07:30 + 15:30, Saturday 08:00,
+                           # weekdays 09:15 + 15:30, Saturday 08:00,
                            # Sunday 06:00 (Yahoo momentum earnings calendar),
                            # Sunday 08:00 (momentum rank + rebalance + skip-AI briefing w/ rebalance summary + deliver)
 pnpm cli schedule --run-now
@@ -352,7 +352,7 @@ To enable it:
    ```
    pnpm schedule
    ```
-   Starts recurring jobs at 07:30 / 15:30 on weekdays and 08:00 on
+   Starts recurring jobs at 09:15 / 15:30 on weekdays and 08:00 on
    Saturdays (IST), using your configured delivery channel.
 
 If you'd rather skip Kite entirely, leave `PORTFOLIO_SOURCE=manual` (the
@@ -591,7 +591,7 @@ Holiday dates live in [`src/market/nse-calendar.ts`](src/market/nse-calendar.ts)
 | 1     | Ingest + enrich      | ✅ shipped    | NSE/Yahoo/Screener/RSS ingestors; SMA/EMA/RSI/ATR/volume/52W signals; HTML briefing |
 | 2     | Screening + backtest | ✅ shipped    | JSON screen DSL; momentum / value / FII screens; first-class watchlist alerts; backtest harness with hit-rate / drawdown |
 | 3     | AI layer             | ✅ shipped    | Anthropic/OpenAI/Cursor providers; sentiment enricher; thesis generator; LLM briefing narrative |
-| 4     | Delivery             | ✅ shipped    | Croner schedule (07:30 / 15:30 weekdays, Sat 08:00 IST; Sun 06:00 momentum earnings, Sun 08:00 momentum rebalance + skip-AI briefing deliver), Gmail SMTP delivery via nodemailer, stop-loss breach detector |
+| 4     | Delivery             | ✅ shipped    | Croner schedule (09:15 / 15:30 weekdays, Sat 08:00 IST; Sun 06:00 momentum earnings, Sun 08:00 momentum rebalance + skip-AI briefing deliver), Gmail SMTP delivery via nodemailer, stop-loss breach detector |
 | 5     | Real-time + Kite     | ✅ shipped    | Kite Connect HTTP client + interactive login; portfolio sync + per-holding LLM HOLD/ADD/TRIM/EXIT analyser; intraday LTP scanner; 4 new screens; single-command `pnpm daily` |
 | 6     | Market regime filter | ✅ shipped    | `regime_daily` + `regime_strategy_gate`; signal enricher + deterministic classifier; regime agent + briefing card; gated screens + gated AI thesis; seed/config via `strategy-gates.json` |
 | —     | Momentum screener (multi-factor) | ✅ shipped | `momentum-config.json` / `momentum-universe.json`; `mom_*` signals + ranker + rebalance → `paper_trades` (`momentum_mf`); merged latest-per-name signal map; thesis snapshot + confidence cap when false-flag; portfolio guardrails; **`momentum-card`** + Sunday **`--brief`** / scheduler delivery |

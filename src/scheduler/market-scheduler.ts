@@ -2,7 +2,7 @@
  * Croner-based scheduler for recurring workflows.
  *
  * Required schedules (Asia/Kolkata):
- *  - Weekdays 07:30
+ *  - Weekdays 09:15
  *  - Weekdays 15:30
  *  - Saturday 08:00
  *  - Sunday 06:00 — Yahoo momentum earnings calendar refresh (weekly)
@@ -34,9 +34,9 @@ export interface SchedulerHandle {
 
 export function startScheduler(): SchedulerHandle {
   const weekdayMorning = new Cron(
-    '30 7 * * 1-5',
+    '15 9 * * 1-5',
     { timezone: MARKET_TIMEZONE, protect: true },
-    () => runScheduledJob('weekday-0730'),
+    () => runScheduledJob('weekday-0915'),
   );
   const weekdayClose = new Cron('30 15 * * 1-5', { timezone: MARKET_TIMEZONE, protect: true }, () =>
     runScheduledJob('weekday-1530'),
@@ -58,7 +58,7 @@ export function startScheduler(): SchedulerHandle {
   log.info(
     {
       timezone: MARKET_TIMEZONE,
-      schedules: ['30 7 * * 1-5', '30 15 * * 1-5', '0 8 * * 6', '0 6 * * 0', '0 8 * * 0'],
+      schedules: ['15 9 * * 1-5', '30 15 * * 1-5', '0 8 * * 6', '0 6 * * 0', '0 8 * * 0'],
       delivery: config.BRIEFING_DELIVERY,
     },
     'scheduler started',
