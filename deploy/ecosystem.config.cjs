@@ -33,5 +33,23 @@ module.exports = {
       error_file: path.join(logDir, 'pm2-combined.log'),
       time: true,
     },
+    {
+      name: 'kite-auth',
+      cwd: root,
+      script: 'dist/auth/kite-auth-server.js',
+      interpreter: 'node',
+      instances: 1,
+      autorestart: true,
+      max_restarts: 20,
+      min_uptime: '10s',
+      env: {
+        NODE_ENV: 'production',
+      },
+      merge_logs: true,
+      combine_logs: true,
+      out_file: path.join(logDir, 'pm2-combined.log'),
+      error_file: path.join(logDir, 'pm2-combined.log'),
+      time: true,
+    },
   ],
 };
