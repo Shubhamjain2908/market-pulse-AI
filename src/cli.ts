@@ -23,6 +23,7 @@
  *   mp portfolio-analyse Run LLM-driven HOLD/ADD/TRIM/EXIT analysis per holding
  *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
  *   mp schedule          Start croner jobs (07:30 / 15:30 weekdays, Sat 08:00, Sun 06:00 earnings)
+ *   mp llm-smoke         Quick live LLM text+JSON sanity check for current provider
  *   mp doctor            Print runtime/config diagnostics
  *   mp regime            Full regime agent (classify + LLM narrative → regime_daily)
  *   mp regime:classify   Deterministic regime only (narrative null)
@@ -32,6 +33,7 @@
  */
 
 import { Command } from 'commander';
+import { z } from 'zod';
 import { runBacktester } from './agents/backtester.js';
 import { runBriefingComposer } from './agents/briefing-composer.js';
 import { runDailyIngestor } from './agents/daily-ingestor.js';
@@ -61,6 +63,7 @@ import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
 import { KiteApiError, KiteClient } from './ingestors/kite/client.js';
 import { logger } from './logger.js';
+import { getLlmProvider } from './llm/index.js';
 import { defaultIngestSymbolUniverse } from './market/ingest-symbols.js';
 import { getMarketClosure } from './market/nse-calendar.js';
 import { syncSymbolSectorsFromYahoo } from './market/yahoo-sectors.js';
@@ -646,6 +649,38 @@ program
     await new Promise<void>(() => {
       // Intentionally never resolved; process exits on SIGINT/SIGTERM handlers.
     });
+  });
+
+program
+  .command('llm-smoke')
+  .description('quick live LLM text + JSON smoke check for active provider')
+  .action(async () => {
+    const provider = getLlmProvider();
+    console.log(`provider: ${provider.name} (model=${provider.model})`);
+
+    const text = await provider.generateText({
+      system: 'You are a concise assistant.',
+      user: 'Reply with exactly: PONG',
+      temperature: 0,
+      maxOutputTokens: 32,
+    });
+    console.log(`text: ${text.text}`);
+
+    const SmokeSchema = z.object({
+      ok: z.boolean(),
+      provider: z.string().min(1),
+    });
+
+    const json = await provider.generateJson({
+      system: 'Return strict JSON only. No markdown.',
+      user: 'Return JSON object: {"ok": true, "provider": "llm-smoke"}',
+      schema: SmokeSchema,
+      maxRetries: 0,
+      temperature: 0,
+      maxOutputTokens: 64,
+    });
+    console.log(`json: ${JSON.stringify(json.data)}`);
+    console.log('LLM smoke test passed.');
   });
 
 program
