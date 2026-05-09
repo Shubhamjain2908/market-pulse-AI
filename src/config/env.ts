@@ -59,6 +59,7 @@ const EnvSchema = z.object({
   KITE_API_SECRET: z.string().optional(),
   KITE_ACCESS_TOKEN: z.string().optional(),
   KITE_API_BASE: z.string().url().default('https://api.kite.trade'),
+  KITE_AUTH_PORT: z.coerce.number().int().min(1).max(65535).default(3001),
   /** Where to source portfolio holdings: manual JSON or live from Kite. */
   PORTFOLIO_SOURCE: z.enum(['manual', 'kite']).default('manual'),
 
