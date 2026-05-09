@@ -3,6 +3,7 @@ import { config } from '../../config/env.js';
 import { parseAndValidate } from '../json.js';
 import {HarmBlockThreshold, HarmCategory} from "@google-cloud/vertexai";
 import {GoogleGenAI} from "@google/genai";
+import { child } from '../../logger.js';
 
 /**
  * Research-oriented safety mapping for the @google/genai SDK:
@@ -30,6 +31,8 @@ const RESEARCH_SAFETY_SETTINGS = [
 
 const GEMINI_CALLS_PER_MINUTE = 15;
 const GEMINI_WINDOW_MS = 60_000;
+const LIMITER_LONG_WAIT_INFO_MS = 2_000;
+const limiterLog = child({ component: 'google-studio-rate-limiter', provider: 'google-studio' });
 
 /**
  * Simple in-process sliding-window limiter that queues callers instead of failing.
@@ -39,6 +42,8 @@ const GEMINI_WINDOW_MS = 60_000;
 export class SlidingWindowRateLimiter {
     private tail: Promise<void> = Promise.resolve();
     private readonly timestamps: number[] = [];
+    private pending = 0;
+    private requestSeq = 0;
 
     constructor(
         private readonly capacity: number,
@@ -49,32 +54,76 @@ export class SlidingWindowRateLimiter {
     ) {}
 
     acquire(): Promise<void> {
+        const requestId = ++this.requestSeq;
+        const enqueuedAt = this.now();
+        this.pending += 1;
+        limiterLog.debug(
+            {
+                requestId,
+                pending: this.pending,
+                windowUsage: this.timestamps.length,
+                capacity: this.capacity,
+            },
+            'gemini limiter: acquire queued',
+        );
+
         const run = async () => {
-            for (;;) {
-                const current = this.now();
-                while (this.timestamps.length > 0) {
+            try {
+                for (;;) {
+                    const current = this.now();
+                    while (this.timestamps.length > 0) {
+                        const oldest = this.timestamps[0];
+                        if (oldest == null) {
+                            this.timestamps.shift();
+                            continue;
+                        }
+                        if (current - oldest < this.windowMs) {
+                            break;
+                        }
+                        this.timestamps.shift();
+                    }
+
+                    if (this.timestamps.length < this.capacity) {
+                        this.timestamps.push(current);
+                        const waitedMs = current - enqueuedAt;
+                        const level = waitedMs >= LIMITER_LONG_WAIT_INFO_MS ? 'info' : 'debug';
+                        limiterLog[level](
+                            {
+                                requestId,
+                                waitedMs,
+                                pending: this.pending,
+                                windowUsage: this.timestamps.length,
+                                capacity: this.capacity,
+                            },
+                            'gemini limiter: acquire granted',
+                        );
+                        return;
+                    }
+
                     const oldest = this.timestamps[0];
                     if (oldest == null) {
-                        this.timestamps.shift();
+                        limiterLog.warn(
+                            { requestId, pending: this.pending },
+                            'gemini limiter: missing oldest timestamp while saturated; retrying loop',
+                        );
                         continue;
                     }
-                    if (current - oldest < this.windowMs) {
-                        break;
-                    }
-                    this.timestamps.shift();
+                    const waitMs = Math.max(this.windowMs - (current - oldest), 1);
+                    limiterLog.debug(
+                        {
+                            requestId,
+                            waitMs,
+                            pending: this.pending,
+                            windowUsage: this.timestamps.length,
+                            capacity: this.capacity,
+                            oldestAgeMs: current - oldest,
+                        },
+                        'gemini limiter: waiting for slot',
+                    );
+                    await this.sleep(waitMs);
                 }
-
-                if (this.timestamps.length < this.capacity) {
-                    this.timestamps.push(current);
-                    return;
-                }
-
-                const oldest = this.timestamps[0];
-                if (oldest == null) {
-                    continue;
-                }
-                const waitMs = Math.max(this.windowMs - (current - oldest), 1);
-                await this.sleep(waitMs);
+            } finally {
+                this.pending = Math.max(0, this.pending - 1);
             }
         };
 
