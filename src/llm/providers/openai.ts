@@ -26,7 +26,10 @@ export class OpenAIProvider implements LlmProvider {
       );
     }
     this.model = config.OPENAI_MODEL;
-    this.client = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+    this.client = new OpenAI({
+      baseURL: 'https://api.deepseek.com',
+      apiKey: config.OPENAI_API_KEY
+    });
   }
 
   async generateText(opts: GenerateTextOptions): Promise<LlmTextResult> {
