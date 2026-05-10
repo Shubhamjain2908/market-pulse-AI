@@ -51,6 +51,7 @@ const EnvSchema = z.object({
   /** Per-request HTTP timeout for Vertex generateContent (large prompts). */
   VERTEX_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
 
+  OPENAI_BASE_URL: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4o'),
 
