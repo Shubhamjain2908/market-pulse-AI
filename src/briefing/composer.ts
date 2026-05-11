@@ -8,6 +8,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+import juice from 'juice';
 import { technicalSummaryLine } from '../agents/portfolio-trigger.js';
 import { getThesisRankMeta } from '../agents/thesis-generator.js';
 import { getAlertsForDate } from '../analysers/alerts.js';
@@ -223,7 +224,12 @@ export async function composeBriefing(
     'composed briefing payload',
   );
 
-  return { date, html: renderBriefing(data), data };
+  const rawHtml = renderBriefing(data);
+  const html = juice(rawHtml, {
+    preserveMediaQueries: true,
+    removeStyleTags: true,
+  });
+  return { date, html, data };
 }
 
 function resolveAiPicksStatus(
