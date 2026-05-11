@@ -88,6 +88,12 @@ const MomentumConfigSchema = z.object({
 });
 export type MomentumConfig = z.infer<typeof MomentumConfigSchema>;
 
+const EtfExclusionsFileSchema = z.object({
+  description: z.string().optional(),
+  symbols: z.array(z.string().min(1)).default([]),
+});
+export type EtfExclusionsFile = z.infer<typeof EtfExclusionsFileSchema>;
+
 export interface LoaderOptions {
   /** Override the path to the config file. */
   path?: string;
@@ -141,6 +147,14 @@ export function getMomentumUniverseSymbols(opts: LoaderOptions = {}): string[] {
 export function loadMomentumConfig(opts: LoaderOptions = {}): MomentumConfig {
   const path = opts.path ?? resolve(process.cwd(), 'config/momentum-config.json');
   return readJsonConfig(path, MomentumConfigSchema, opts.fresh);
+}
+
+/** Configurable symbol list where RSI/volume heuristics should be ignored. */
+export function loadEtfExclusions(opts: LoaderOptions = {}): string[] {
+  const path = opts.path ?? resolve(process.cwd(), 'config/etf-exclusions.json');
+  const file = readJsonConfig(path, EtfExclusionsFileSchema, opts.fresh);
+  const symbols = file.symbols ?? [];
+  return [...new Set(symbols.map((s) => s.toUpperCase()))].sort((a, b) => a.localeCompare(b));
 }
 
 function readJsonConfig<T>(path: string, schema: z.ZodType<T>, fresh = false): T {

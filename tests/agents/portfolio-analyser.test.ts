@@ -12,6 +12,7 @@ import {
 import {
   closeDb,
   getDb,
+  insertPaperTradeIfAbsent,
   getPortfolioAnalysisForDate,
   migrate,
   upsertHoldings,
@@ -20,6 +21,7 @@ import {
 } from '../../src/db/index.js';
 import { parseAndValidate } from '../../src/llm/json.js';
 import { MockLlmProvider } from '../../src/llm/providers/mock.js';
+import type { LlmProvider } from '../../src/llm/types.js';
 import type { RawQuote } from '../../src/types/domain.js';
 
 describe('portfolio analyser', () => {
@@ -220,6 +222,159 @@ describe('portfolio analyser', () => {
       },
     );
     expect(out.action).toBe('ADD');
+  });
+
+  it('blocks ADD when the symbol already has open paper trades', async () => {
+    insertPaperTradeIfAbsent(
+      {
+        symbol: 'INFY',
+        signalType: 'PORTFOLIO_ADD',
+        sourceDate: '2026-04-29',
+        entryPrice: 1590,
+        stopLoss: 1500,
+        target: 1750,
+        timeHorizon: 'medium',
+        maxHoldDays: 90,
+      },
+      db,
+    );
+
+    const addLlm = {
+      name: 'test-add',
+      model: 'test-add',
+      async generateText() {
+        return { text: 'unused', model: 'test-add', usage: { durationMs: 1 } };
+      },
+      async generateJson() {
+        return {
+          data: {
+            symbol: 'INFY',
+            action: 'ADD',
+            conviction: 0.84,
+            thesis: 'Momentum and setup still support accumulation in this swing timeframe.',
+            bullPoints: ['Setup intact'],
+            bearPoints: ['Event risk'],
+            triggerReason: 'Adding to position after confirmation.',
+            suggestedStop: 1540,
+            suggestedTarget: 1760,
+          },
+          raw: '{}',
+          model: 'test-add',
+          usage: { durationMs: 1 },
+        };
+      },
+    };
+
+    const result = await analysePortfolio(
+      { date, symbols: ['INFY'] },
+      db,
+      addLlm as unknown as LlmProvider,
+    );
+    const row = result.rows.find((r) => r.symbol === 'INFY');
+    expect(row?.action).toBe('HOLD');
+    expect(row?.triggerReason).toContain('ADD blocked');
+    expect(row?.triggerReason).toContain('1 open trades for INFY');
+  });
+
+  it('does not apply RSI ADD guardrail for excluded ETF/SGB symbols', () => {
+    const out = applyPortfolioAddGuardrails(
+      { ...baseAction(), symbol: 'GOLDBEES', triggerReason: 'ETF add test.' },
+      { rsi_14: 88, pct_from_52w_high: -12, volume_ratio_20d: 2.2 },
+      {
+        pnlPct: 3,
+        lastPrice: 315,
+      },
+    );
+    expect(out.action).toBe('ADD');
+  });
+
+  it('omits RSI and volume-ratio lines from LLM payload for excluded symbols', async () => {
+    upsertQuotes(
+      [
+        {
+          symbol: 'GOLDBEES',
+          exchange: 'NSE',
+          date,
+          open: 60,
+          high: 61,
+          low: 59,
+          close: 60.5,
+          adjClose: 60.5,
+          volume: 1_000_000,
+          source: 'test',
+        },
+      ],
+      db,
+    );
+    upsertHoldings(
+      [
+        {
+          symbol: 'GOLDBEES',
+          exchange: 'NSE',
+          asOf: date,
+          qty: 100,
+          avgPrice: 58,
+          lastPrice: 60.5,
+          pnl: 250,
+          pnlPct: 4.3,
+          dayChange: 20,
+          dayChangePct: 0.3,
+          product: 'CNC',
+          source: 'kite',
+        },
+      ],
+      db,
+    );
+    upsertSignals(
+      [
+        { symbol: 'GOLDBEES', date, name: 'rsi_14', value: 76, source: 'technical' },
+        { symbol: 'GOLDBEES', date, name: 'volume_ratio_20d', value: 0.4, source: 'technical' },
+      ],
+      db,
+    );
+    db.prepare(
+      `
+      INSERT INTO alerts (symbol, date, signal, kind, value, message)
+      VALUES ('GOLDBEES', ?, 'RSI 14', 'rsi_overbought', 76, 'RSI crossed 70')
+    `,
+    ).run(date);
+
+    let capturedUser = '';
+    const captureLlm = {
+      name: 'capture',
+      model: 'capture',
+      async generateText() {
+        return { text: 'unused', model: 'capture', usage: { durationMs: 1 } };
+      },
+      async generateJson(opts: { user: string }) {
+        capturedUser = opts.user;
+        return {
+          data: {
+            symbol: 'GOLDBEES',
+            action: 'HOLD',
+            conviction: 0.5,
+            thesis: 'Excluded ETF symbol, so hold without RSI or volume-ratio interpretation.',
+            bullPoints: ['Stable exposure'],
+            bearPoints: ['Macro risk'],
+            triggerReason: 'No add trigger.',
+            suggestedStop: null,
+            suggestedTarget: null,
+          },
+          raw: '{}',
+          model: 'capture',
+          usage: { durationMs: 1 },
+        };
+      },
+    };
+
+    await analysePortfolio(
+      { date, symbols: ['GOLDBEES'] },
+      db,
+      captureLlm as unknown as LlmProvider,
+    );
+    expect(capturedUser).not.toContain('rsi_14:');
+    expect(capturedUser).not.toContain('volume_ratio_20d:');
+    expect(capturedUser).not.toContain('rsi_overbought');
   });
 });
 
