@@ -1,5 +1,6 @@
 export { composeBriefing, type ComposeBriefingOptions, type ComposedBriefing } from './composer.js';
 export {
+  THEME,
   renderBriefing,
   type BriefingData,
   type MarketMood,

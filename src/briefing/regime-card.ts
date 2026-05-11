@@ -82,26 +82,31 @@ export function renderRegimeCard(row: RegimeRow, gateSummary: RegimeGateSummary)
   const tiles = buckets
     .map(
       (b) => `
+      <td width="25%" valign="top" style="padding:4px;">
       <div class="regime-tile">
         <div class="regime-tile-label">${esc(b.name)}</div>
         <div class="regime-tile-value">${b.value >= 0 ? '+' : ''}${esc(b.value.toFixed(1))}</div>
-      </div>`,
+      </div></td>`,
     )
     .join('');
 
   return `
-  <section class="regime-card ${pal.cssClass}" style="--regime-border:${pal.border};--regime-bg:${pal.bg};" aria-label="Market regime">
-    <div class="regime-card-header">
-      <div class="regime-badge">${esc(pal.icon)} ${esc(pal.label)}</div>
-      <div class="regime-meta">Day ${esc(row.regimeAge)} · Score ${row.scoreTotal >= 0 ? '+' : ''}${esc(row.scoreTotal.toFixed(1))}</div>
-    </div>
+  <section class="regime-card ${pal.cssClass}" style="border:2px solid ${pal.border};background:${pal.bg};" aria-label="Market regime">
+    <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout regime-card-header-table" style="margin-bottom:10px;"><tr>
+      <td valign="top"><div class="regime-badge">${esc(pal.icon)} ${esc(pal.label)}</div></td>
+      <td valign="top" align="right" style="font-size:13px;color:#6b7280;">Day ${esc(row.regimeAge)} · Score ${row.scoreTotal >= 0 ? '+' : ''}${esc(row.scoreTotal.toFixed(1))}</td>
+    </tr></table>
     <div class="regime-scorebar-wrap" aria-hidden="true">
       <div class="regime-scorebar-track">
         <div class="regime-scorebar-fill" style="width:${barPct.toFixed(1)}%"></div>
       </div>
-      <div class="regime-scorebar-labels"><span>-16</span><span>0</span><span>+16</span></div>
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout regime-scorebar-labels" style="margin-top:2px;font-size:10px;color:#6b7280;"><tr>
+        <td width="33%" valign="top">-16</td>
+        <td width="34%" valign="top" align="center">0</td>
+        <td width="33%" valign="top" align="right">+16</td>
+      </tr></table>
     </div>
-    <div class="regime-tiles">${tiles}</div>
+    <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout regime-tiles-table" style="margin-bottom:12px;"><tr>${tiles}</tr></table>
     <p class="regime-narrative">${esc(narrative)}</p>
     <p class="regime-gate-summary muted">${esc(gateLine)}</p>
   </section>`;

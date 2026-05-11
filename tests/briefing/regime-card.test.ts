@@ -43,6 +43,12 @@ describe('regime-card HTML', () => {
     CHOPPY: '#E67E22',
     CRISIS: '#8E44AD',
   };
+  const bgByRegime: Record<Regime, string> = {
+    BULL_TRENDING: '#EAFAF1',
+    BEAR_TRENDING: '#FDEDEC',
+    CHOPPY: '#FEF9E7',
+    CRISIS: '#F5EEF8',
+  };
   const badgeText: Record<Regime, string> = {
     BULL_TRENDING: 'BULL TRENDING',
     BEAR_TRENDING: 'BEAR TRENDING',
@@ -53,7 +59,8 @@ describe('regime-card HTML', () => {
   for (const regime of regimes) {
     it(`renderRegimeCard uses §7.1 palette and structure (${regime})`, () => {
       const html = renderRegimeCard(rowForRegime(regime), gateSummary);
-      expect(html).toContain(`--regime-border:${borderByRegime[regime]}`);
+      expect(html).toContain(`border:2px solid ${borderByRegime[regime]}`);
+      expect(html).toContain(`background:${bgByRegime[regime]}`);
       expect(html).toContain(badgeText[regime]);
       expect(html).toContain('Narrative for');
       expect(html).toContain('strategies active');

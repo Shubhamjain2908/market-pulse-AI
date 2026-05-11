@@ -13,6 +13,18 @@
 import { SEBI_DISCLAIMER } from '../constants.js';
 import type { GlobalCuesSection } from '../market/global-cues.js';
 
+/** Palette for briefing HTML — interpolated into `<style>` and critical inline styles (no `var()`). */
+export const THEME = {
+  accent: '#2e86ab',
+  positive: '#1a7f37',
+  negative: '#cf222e',
+  bg: '#f7f8fa',
+  card: '#ffffff',
+  text: '#1a1f2c',
+  muted: '#6b7280',
+  border: '#e5e7eb',
+} as const;
+
 export interface MarketMood {
   fiiNet?: number;
   diiNet?: number;
@@ -172,16 +184,8 @@ export interface BriefingData {
 }
 
 export function renderBriefing(data: BriefingData): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Market Pulse - ${esc(data.date)}</title>
-  <style>${baseStyles()}</style>
-</head>
-<body>
-  <main class="wrap">
+  const t = THEME;
+  const bodyInner = `
     ${renderHeader(data.date)}
     ${renderMood(data.date, data.mood, data.moodNarrative, data.marketClosure)}
     ${renderSignalPerformance(data.signalPerformance)}
@@ -195,8 +199,29 @@ export function renderBriefing(data: BriefingData): string {
     ${renderMovers(data.topGainers, data.topLosers)}
     ${renderAiPicks(data.theses, data.aiPicksStatus)}
     ${renderNews(data.news)}
-    ${renderFooter()}
-  </main>
+    ${renderFooter()}`;
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Market Pulse - ${esc(data.date)}</title>
+  <style>${baseStyles()}</style>
+</head>
+<body style="margin:0;padding:0;background-color:${t.bg};color:${t.text};font-size:15px;line-height:1.5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;">
+  <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout" style="background-color:${t.bg};">
+    <tr>
+      <td align="center" style="padding:16px 12px;">
+        <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout" style="max-width:600px;margin:0 auto;background-color:${t.bg};">
+          <tr>
+            <td class="email-master-cell" style="vertical-align:top;">
+              ${bodyInner}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
 </html>`;
 }
@@ -224,7 +249,7 @@ function renderMood(
     ? `<div class="closure-banner"><strong>NSE closed</strong> (${esc(marketClosure.label)}). Values below are from the latest saved session in your database; dates marked <span class="tag">prev</span> are earlier than ${esc(briefingDate)}.</div>`
     : '';
 
-  const cards = [
+  const moodCells = [
     moodCard(
       'FII Net (Cash)',
       formatCroreOrNoData(mood.fiiNet),
@@ -253,7 +278,13 @@ function renderMood(
       mood.niftyBarDate,
       briefingDate,
     ),
-  ].join('');
+  ]
+    .map(
+      (cell) =>
+        `<td width="25%" valign="top" style="padding:4px;">${cell}</td>`,
+    )
+    .join('');
+  const moodTable = `<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout mood-cells-table"><tr>${moodCells}</tr></table>`;
 
   const narrativeHtml = narrative
     ? `<p class="section-lede muted">Plain-language read — figures stay in the cards above.</p><div class="mood-narrative">${esc(narrative)}</div>`
@@ -263,7 +294,7 @@ function renderMood(
     <section class="card">
       <h2>Market Mood</h2>
       ${banner}
-      <div class="grid grid-4">${cards}</div>
+      ${moodTable}
       ${narrativeHtml}
     </section>`;
 }
@@ -275,15 +306,26 @@ function renderSignalPerformance(perf?: SignalPerformance): string {
   const rate = (r: number | null) => (r == null ? '—' : `${(r * 100).toFixed(1)}%`);
 
   const body = perf.minSampleMet
-    ? `<div class="grid grid-2 signal-performance-grid">
-        <div class="stat"><div class="stat-label">Win rate (${perf.windowDays}d)</div><div class="stat-value">${rate(perf.winRate)}</div></div>
-        <div class="stat"><div class="stat-label">Expectancy / trade</div><div class="stat-value">${pct(perf.expectancyPct)}</div></div>
-        <div class="stat"><div class="stat-label">Avg winner</div><div class="stat-value positive">${pct(perf.avgWinnerPct)}</div></div>
-        <div class="stat"><div class="stat-label">Avg loser</div><div class="stat-value negative">${pct(perf.avgLoserPct)}</div></div>
-        <div class="stat"><div class="stat-label">Closed in window</div><div class="stat-value">${perf.closed}</div></div>
-        <div class="stat"><div class="stat-label">Open (total)</div><div class="stat-value">${perf.open}</div></div>
-      </div>
-      <p class="section-lede muted">Based on forward-tested paper trades (EOD). Not investment advice.</p>`
+    ? (() => {
+        const statDivs = [
+          `<div class="stat"><div class="stat-label">Win rate (${perf.windowDays}d)</div><div class="stat-value">${rate(perf.winRate)}</div></div>`,
+          `<div class="stat"><div class="stat-label">Expectancy / trade</div><div class="stat-value">${pct(perf.expectancyPct)}</div></div>`,
+          `<div class="stat"><div class="stat-label">Avg winner</div><div class="stat-value positive">${pct(perf.avgWinnerPct)}</div></div>`,
+          `<div class="stat"><div class="stat-label">Avg loser</div><div class="stat-value negative">${pct(perf.avgLoserPct)}</div></div>`,
+          `<div class="stat"><div class="stat-label">Closed in window</div><div class="stat-value">${perf.closed}</div></div>`,
+          `<div class="stat"><div class="stat-label">Open (total)</div><div class="stat-value">${perf.open}</div></div>`,
+        ];
+        const perfRows: string[] = [];
+        for (let i = 0; i < statDivs.length; i += 2) {
+          const left = statDivs[i] ?? '';
+          const right = statDivs[i + 1] ?? '&nbsp;';
+          perfRows.push(
+            `<tr><td width="50%" valign="top" style="padding:4px;">${left}</td><td width="50%" valign="top" style="padding:4px;">${right}</td></tr>`,
+          );
+        }
+        return `<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout signal-performance-grid">${perfRows.join('')}</table>
+      <p class="section-lede muted">Based on forward-tested paper trades (EOD). Not investment advice.</p>`;
+      })()
     : `<p class="section-lede muted">Collecting forward-testing data. At least 5 closed trades in the last ${perf.windowDays} days are required before win rate and expectancy are shown. (Currently <strong>${perf.closed}</strong> closed, <strong>${perf.open}</strong> open.)</p>`;
 
   return `
@@ -295,24 +337,31 @@ function renderSignalPerformance(perf?: SignalPerformance): string {
 
 function renderGlobalCues(section: GlobalCuesSection): string {
   if (section.rows.length === 0) return '';
-  const rows = section.rows
-    .map((r) => {
-      const staleTag = r.stale ? ` <span class="tag">prev ${esc(r.asOf ?? '')}</span>` : '';
-      const note = r.note ? `<div class="muted global-cue-note">${esc(r.note)}</div>` : '';
-      const cls = r.changePct == null ? 'neutral' : r.changePct >= 0 ? 'positive' : 'negative';
-      return `
+  const cells = section.rows.map((r) => {
+    const staleTag = r.stale ? ` <span class="tag">prev ${esc(r.asOf ?? '')}</span>` : '';
+    const note = r.note ? `<div class="muted global-cue-note">${esc(r.note)}</div>` : '';
+    const cls = r.changePct == null ? 'neutral' : r.changePct >= 0 ? 'positive' : 'negative';
+    return `
         <div class="global-cue ${cls}">
           <div class="mood-label">${esc(r.label)}</div>
           <div class="mood-value">${esc(r.display)}${staleTag}</div>
           ${note}
         </div>`;
-    })
-    .join('');
+  });
+  const cueRows: string[] = [];
+  for (let i = 0; i < cells.length; i += 3) {
+    const c0 = cells[i] ?? '';
+    const c1 = cells[i + 1] ?? '';
+    const c2 = cells[i + 2] ?? '';
+    cueRows.push(
+      `<tr><td width="33%" valign="top" style="padding:4px;">${c0}</td><td width="33%" valign="top" style="padding:4px;">${c1}</td><td width="34%" valign="top" style="padding:4px;">${c2}</td></tr>`,
+    );
+  }
   return `
     <section class="card">
       <h2>Global Cues</h2>
       <p class="section-lede muted">Overnight / US session markers from Yahoo macro symbols ingested with your pipeline. Nifty 50 spot uses the same cash benchmark series as elsewhere in this report — not USD-denominated offshore futures.</p>
-      <div class="grid grid-3">${rows}</div>
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout global-cues-table">${cueRows.join('')}</table>
     </section>`;
 }
 
@@ -360,7 +409,7 @@ function renderWatchlistAlerts(alerts: WatchlistAlert[]): string {
     <section class="card">
       <h2>Watchlist Alerts</h2>
       <p class="section-lede muted">Automated threshold crosses — confirm vs your plan before acting.</p>
-      <table>
+      <table class="briefing-data-table">
         <thead><tr><th>Symbol</th><th>Signal</th><th>Value</th><th>Note</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -374,29 +423,34 @@ function renderPortfolio(p?: PortfolioSummary): string {
   const dayClass =
     p.dayChangePct == null ? 'neutral' : p.dayChangePct >= 0 ? 'positive' : 'negative';
 
-  const summary = `
-    <div class="grid grid-4">
-      <div class="mood neutral">
+  const summary = `<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout portfolio-summary-table"><tr>
+      <td width="25%" valign="top" style="padding:4px;"><div class="mood neutral">
         <div class="mood-label">Total Value</div>
         <div class="mood-value">${formatInr(p.totalValue)}</div>
-      </div>
-      <div class="mood ${summaryClass}">
+      </div></td>
+      <td width="25%" valign="top" style="padding:4px;"><div class="mood ${summaryClass}">
         <div class="mood-label">Unrealised P&amp;L</div>
         <div class="mood-value">${signed(formatInr(p.totalPnl))} (${p.totalPnlPct.toFixed(2)}%)</div>
-      </div>
-      <div class="mood ${dayClass}">
+      </div></td>
+      <td width="25%" valign="top" style="padding:4px;"><div class="mood ${dayClass}">
         <div class="mood-label">Today's Change</div>
         <div class="mood-value">${p.dayChangePct == null ? '—' : `${signedPct(p.dayChangePct)}`}</div>
-      </div>
-      <div class="mood neutral">
+      </div></td>
+      <td width="25%" valign="top" style="padding:4px;"><div class="mood neutral">
         <div class="mood-label">Holdings</div>
         <div class="mood-value">${p.positions.length}</div>
-      </div>
-    </div>`;
+      </div></td>
+    </tr></table>`;
 
   const risk = p.riskRollup ? renderPortfolioRiskRollup(p.riskRollup) : '';
 
-  const cards = p.positions.map(renderPositionCard).join('');
+  const cardRows = p.positions
+    .map(
+      (c) =>
+        `<tr><td style="padding:0 0 12px 0;vertical-align:top;">${renderPositionCard(c)}</td></tr>`,
+    )
+    .join('');
+  const positionTable = `<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout position-cards-table">${cardRows}</table>`;
 
   return `
     <section class="card">
@@ -404,7 +458,7 @@ function renderPortfolio(p?: PortfolioSummary): string {
       <p class="section-lede muted">Recommendations come from today&apos;s saved analysis — align with your risk limits.</p>
       ${summary}
       ${risk}
-      <div class="position-cards">${cards}</div>
+      ${positionTable}
     </section>`;
 }
 
@@ -432,23 +486,23 @@ function renderPortfolioRiskRollup(r: PortfolioRiskRollup): string {
       ? `
       <div class="risk-col">
         <h3 class="h-small">Sector mix (mapped)</h3>
-        <table><thead><tr><th>Sector</th><th>Weight</th></tr></thead><tbody>${sectors}</tbody></table>
+        <table class="briefing-data-table"><thead><tr><th>Sector</th><th>Weight</th></tr></thead><tbody>${sectors}</tbody></table>
       </div>`
       : '';
 
   return `
     <div class="portfolio-risk-rollup">
       <h3 class="h-small">Portfolio risk snapshot</h3>
-      <div class="grid grid-3">
-        <div class="risk-col">
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout portfolio-risk-cols"><tr>
+        <td width="33%" valign="top" style="padding:4px;"><div class="risk-col">
           <h3 class="h-small">Top weights</h3>
-          <table><thead><tr><th>Symbol</th><th>Wt%</th><th>Value</th></tr></thead><tbody>${tw}</tbody></table>
-        </div>
-        <div class="risk-col">
+          <table class="briefing-data-table"><thead><tr><th>Symbol</th><th>Wt%</th><th>Value</th></tr></thead><tbody>${tw}</tbody></table>
+        </div></td>
+        <td width="33%" valign="top" style="padding:4px;"><div class="risk-col">
           <h3 class="h-small">Largest unrealised losers (%)</h3>
-          <table><thead><tr><th>Symbol</th><th>P&amp;L%</th><th>P&amp;L</th></tr></thead><tbody>${losers || `<tr><td colspan="3" class="muted">None</td></tr>`}</tbody></table>
-        </div>
-        <div class="risk-col">
+          <table class="briefing-data-table"><thead><tr><th>Symbol</th><th>P&amp;L%</th><th>P&amp;L</th></tr></thead><tbody>${losers || `<tr><td colspan="3" class="muted">None</td></tr>`}</tbody></table>
+        </div></td>
+        <td width="34%" valign="top" style="padding:4px;"><div class="risk-col">
           <h3 class="h-small">P&amp;L distribution</h3>
           <ul class="muted tight-list">
             <li>&gt; 0%: <strong>${b.gt0}</strong> positions</li>
@@ -456,10 +510,23 @@ function renderPortfolioRiskRollup(r: PortfolioRiskRollup): string {
             <li>−10% to −20%: <strong>${b.neg10ToNeg20}</strong></li>
             <li>&lt; −20%: <strong>${b.ltNeg20}</strong></li>
           </ul>
-        </div>
-      </div>
+        </div></td>
+      </tr></table>
       ${sectorBlock}
     </div>`;
+}
+
+function renderPointColumn(points: string[], mark: string, tone: 'bull' | 'bear'): string {
+  if (points.length === 0) return '';
+  const color = tone === 'bull' ? THEME.positive : THEME.negative;
+  const items = points.map((b) => `<li>${esc(b)}</li>`).join('');
+  return `
+    <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout point-list-table">
+      <tr>
+        <td width="16" valign="top" style="color:${color};font-weight:800;font-size:14px;line-height:1.2;padding-top:2px;">${mark}</td>
+        <td valign="top"><ul class="point-ul">${items}</ul></td>
+      </tr>
+    </table>`;
 }
 
 function renderPositionCard(c: PortfolioPositionCard): string {
@@ -471,23 +538,15 @@ function renderPositionCard(c: PortfolioPositionCard): string {
   const dayChip =
     c.dayChangePct == null
       ? ''
-      : `<span class="day-chip ${c.dayChangePct >= 0 ? 'positive' : 'negative'}">${signedPct(c.dayChangePct)} today</span>`;
+      : ` <span class="day-chip ${c.dayChangePct >= 0 ? 'positive' : 'negative'}">${signedPct(c.dayChangePct)} today</span>`;
   const actionChip = c.action
-    ? `<span class="action-chip ${c.action.toLowerCase()}">${c.action}</span>`
+    ? `<span class="action-chip ${c.action.toLowerCase()}">${c.action}</span> `
     : '';
 
-  const headline = `
-    <div class="position-header">
-      <div>
-        <strong>${esc(c.symbol)}</strong>
-        <span class="muted"> · ${c.qty.toFixed(0)} qty @ ₹${c.avgPrice.toFixed(2)}</span>
-      </div>
-      <div class="position-prices">
-        ${actionChip}
-        <span class="${pnlClass}">${pnl}</span>
-        ${dayChip}
-      </div>
-    </div>`;
+  const headline = `<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout position-header-table"><tr>
+      <td valign="top" style="width:50%;padding:0 8px 0 0;"><strong>${esc(c.symbol)}</strong><span class="muted"> · ${c.qty.toFixed(0)} qty @ ₹${c.avgPrice.toFixed(2)}</span></td>
+      <td valign="top" align="right" style="width:50%;padding:0 0 0 8px;">${actionChip}<span class="${pnlClass}">${pnl}</span>${dayChip}</td>
+    </tr></table>`;
 
   const tech =
     c.technicalSummary != null && c.technicalSummary !== ''
@@ -498,21 +557,25 @@ function renderPositionCard(c: PortfolioPositionCard): string {
   const trigger = c.triggerReason
     ? `<p class="position-trigger"><span class="muted">Review:</span> ${esc(c.triggerReason)}</p>`
     : '';
-  const bull = c.bullPoints.length
-    ? `<div class="point-list bull"><div class="point-label">+</div><ul>${c.bullPoints.map((b) => `<li>${esc(b)}</li>`).join('')}</ul></div>`
-    : '';
-  const bear = c.bearPoints.length
-    ? `<div class="point-list bear"><div class="point-label">−</div><ul>${c.bearPoints.map((b) => `<li>${esc(b)}</li>`).join('')}</ul></div>`
-    : '';
+  const bullBlock = renderPointColumn(c.bullPoints, '+', 'bull');
+  const bearBlock = renderPointColumn(c.bearPoints, '−', 'bear');
+  const pointsTable =
+    bullBlock || bearBlock
+      ? `<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout position-points-table" style="margin-top:8px;"><tr>
+      <td width="50%" valign="top" style="padding:0 8px 0 0;">${bullBlock || '&nbsp;'}</td>
+      <td width="50%" valign="top" style="padding:0 0 0 8px;">${bearBlock || '&nbsp;'}</td>
+    </tr></table>`
+      : '';
   const levels = formatLevels(c.suggestedStop, c.suggestedTarget, c.lastPrice);
 
+  const t = THEME;
   return `
-    <div class="position-card">
+    <div class="position-card" style="display:block;width:100%;max-width:100%;box-sizing:border-box;margin:0;border:1px solid ${t.border};border-radius:8px;background:#fafbfd;padding:14px;">
       ${headline}
       ${tech}
       ${thesis}
       ${trigger}
-      ${bull || bear ? `<div class="point-grid">${bull}${bear}</div>` : ''}
+      ${pointsTable}
       ${levels}
     </div>`;
 }
@@ -557,7 +620,10 @@ function renderScreenMatches(matches?: ScreenMatch[]): string {
       const chips = m.symbols.map((s) => `<span class="symbol-chip">${esc(s)}</span>`).join(' ');
       return `
         <div class="screen-block">
-          <h3>${esc(m.screenLabel)} ${tag}</h3>
+          <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout screen-block-title"><tr>
+            <td valign="middle"><h3 style="margin:0 0 4px;font-size:14px;color:${THEME.accent};">${esc(m.screenLabel)}</h3></td>
+            <td valign="middle" align="right" style="white-space:nowrap;">${tag}</td>
+          </tr></table>
           ${desc}
           <div class="symbol-chips">${chips}</div>
         </div>`;
@@ -584,18 +650,18 @@ function renderMovers(gainers: MoverRow[], losers: MoverRow[]): string {
     <section class="card">
       <h2>Top Movers (Watchlist)</h2>
       <p class="section-lede muted">Largest % moves vs prior session close among watchlist names.</p>
-      <div class="grid grid-2">
-        <div>
+      <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout movers-two-col"><tr>
+        <td width="50%" valign="top" style="padding:0 8px 0 0;">
           <h3>Gainers</h3>
-          <table><thead><tr><th>Symbol</th><th>Δ%</th><th>Close</th></tr></thead>
+          <table class="briefing-data-table"><thead><tr><th>Symbol</th><th>Δ%</th><th>Close</th></tr></thead>
             <tbody>${gainerRows}</tbody></table>
-        </div>
-        <div>
+        </td>
+        <td width="50%" valign="top" style="padding:0 0 0 8px;">
           <h3>Losers</h3>
-          <table><thead><tr><th>Symbol</th><th>Δ%</th><th>Close</th></tr></thead>
+          <table class="briefing-data-table"><thead><tr><th>Symbol</th><th>Δ%</th><th>Close</th></tr></thead>
             <tbody>${loserRows}</tbody></table>
-        </div>
-      </div>
+        </td>
+      </tr></table>
     </section>`;
 }
 
@@ -667,14 +733,12 @@ function renderAiPicks(theses: ThesisCard[] | undefined, status: AiPicksSectionS
 
       return `
       <div class="thesis-card">
-        <div class="thesis-header">
-          <span class="thesis-symbol">${esc(t.symbol)}</span>
-          <span class="thesis-horizon tag">${esc(horizonLabel)}</span>
-          <span class="thesis-confidence" title="Confidence: ${t.confidence}/10">
-            <span class="conf-bar" style="width:${confidencePct}%"></span>
-            ${t.confidence}/10
-          </span>
-        </div>
+        <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout thesis-header-table" style="margin-bottom:8px;"><tr>
+          <td valign="middle"><span class="thesis-symbol">${esc(t.symbol)}</span> <span class="thesis-horizon tag">${esc(horizonLabel)}</span></td>
+          <td valign="middle" align="right" style="font-size:12px;color:${THEME.muted};white-space:nowrap;">
+            <span class="conf-bar" style="display:inline-block;height:6px;background:${THEME.accent};border-radius:3px;min-width:4px;width:${confidencePct}%;max-width:120px;vertical-align:middle;margin-right:4px;"></span>${t.confidence}/10
+          </td>
+        </tr></table>
         ${
           t.rank != null
             ? `<div class="thesis-rank muted">#${t.rank} by signal score · ${esc(t.rankBlurb ?? '')}</div>`
@@ -682,21 +746,21 @@ function renderAiPicks(theses: ThesisCard[] | undefined, status: AiPicksSectionS
         }
         <div class="thesis-why-now"><strong>Why now:</strong> ${esc(t.triggerReason)}</div>
         <p class="thesis-body">${esc(t.thesis)}</p>
-        <div class="thesis-levels">
-          <span class="level positive">Entry: ${esc(t.entryZone)}</span>
-          <span class="level negative">SL: ${esc(t.stopLoss)}</span>
-          <span class="level accent">Target: ${esc(t.target)}</span>
-        </div>
-        <div class="grid grid-2">
-          <div>
+        <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout thesis-levels-table" style="margin-bottom:10px;font-size:13px;font-weight:600;"><tr>
+          <td class="level positive" valign="top" style="padding-right:10px;">Entry: ${esc(t.entryZone)}</td>
+          <td class="level negative" valign="top" style="padding-right:10px;">SL: ${esc(t.stopLoss)}</td>
+          <td class="level accent" valign="top">Target: ${esc(t.target)}</td>
+        </tr></table>
+        <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout thesis-cases-table"><tr>
+          <td width="50%" valign="top" style="padding:0 8px 0 0;">
             <h4 class="bull-header">Bull Case</h4>
             <ul class="thesis-list">${bullItems}</ul>
-          </div>
-          <div>
+          </td>
+          <td width="50%" valign="top" style="padding:0 0 0 8px;">
             <h4 class="bear-header">Bear Case</h4>
             <ul class="thesis-list">${bearItems}</ul>
-          </div>
-        </div>
+          </td>
+        </tr></table>
       </div>`;
     })
     .join('');
@@ -792,69 +856,68 @@ function formatTime(iso: string): string {
   }
 }
 
-// Inline styles. Keep small, avoid JS, optimised for both Gmail and saved
-// HTML viewing in a desktop browser.
+// Styles for the briefing `<style>` block. `composeBriefing` runs the final HTML
+// through `juice` to inline rules; `preserveMediaQueries` keeps these @media blocks.
+// Colours come from {@link THEME} (no CSS custom properties — safe when `<style>` is stripped).
 function baseStyles(): string {
+  const c = THEME;
   return `
-    :root {
-      color-scheme: light dark;
-      --bg: #f7f8fa;
-      --card: #ffffff;
-      --text: #1a1f2c;
-      --muted: #6b7280;
-      --border: #e5e7eb;
-      --accent: #2e86ab;
-      --positive: #1a7f37;
-      --negative: #cf222e;
-    }
     * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--text);
+    body { margin: 0; background: ${c.bg}; color: ${c.text};
       font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; }
-    .wrap { max-width: 760px; margin: 24px auto; padding: 0 16px; }
-    .hero { padding: 24px 0; border-bottom: 2px solid var(--accent); margin-bottom: 16px; }
-    .hero .brand { font-size: 12px; letter-spacing: 0.12em; color: var(--accent);
+    .email-master-cell { padding: 0; vertical-align: top; }
+    table.email-layout { border-collapse: collapse; width: 100%; }
+    table.email-layout > tbody > tr > td,
+    table.email-layout > tr > td { border-bottom: none !important; }
+    .briefing-data-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    .briefing-data-table th,
+    .briefing-data-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid ${c.border}; }
+    .briefing-data-table th { color: ${c.muted}; font-weight: 600; font-size: 12px; text-transform: uppercase;
+      letter-spacing: 0.04em; }
+    .briefing-data-table td.positive { color: ${c.positive}; font-weight: 600; }
+    .briefing-data-table td.negative { color: ${c.negative}; font-weight: 600; }
+    .hero { padding: 24px 0; border-bottom: 2px solid ${c.accent}; margin-bottom: 16px; }
+    .hero .brand { font-size: 12px; letter-spacing: 0.12em; color: ${c.accent};
       text-transform: uppercase; font-weight: 700; }
     .hero h1 { font-size: 26px; margin: 4px 0 6px; }
-    .hero .subtitle { color: var(--muted); margin: 0; font-size: 13px; }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    .hero .subtitle { color: ${c.muted}; margin: 0; font-size: 13px; }
+    .card { background: ${c.card}; border: 1px solid ${c.border}; border-radius: 10px;
       padding: 16px 18px; margin-bottom: 14px; }
     .closure-banner { margin-bottom: 12px; padding: 10px 12px; background: #fff8e6;
-      border: 1px solid #f0e0a8; border-radius: 8px; font-size: 13px; line-height: 1.45; color: var(--text); }
-    .card h2 { margin: 0 0 12px; font-size: 16px; color: var(--accent); }
+      border: 1px solid #f0e0a8; border-radius: 8px; font-size: 13px; line-height: 1.45; color: ${c.text}; }
+    .card h2 { margin: 0 0 12px; font-size: 16px; color: ${c.accent}; }
     .card h3 { margin: 0 0 8px; font-size: 14px; }
-    .grid { display: grid; gap: 12px; }
-    .grid-2 { grid-template-columns: 1fr 1fr; }
-    .grid-3 { grid-template-columns: repeat(3, 1fr); }
-    .grid-4 { grid-template-columns: repeat(4, 1fr); }
-    .signal-performance-grid .stat { padding: 10px 12px; border: 1px solid var(--border);
+    @media (max-width: 600px) {
+      table.mood-cells-table > tr > td,
+      table.portfolio-summary-table > tr > td { display: block !important; width: 100% !important; }
+    }
+    .signal-performance-grid .stat { padding: 10px 12px; border: 1px solid ${c.border};
       border-radius: 8px; background: #fafbfd; }
-    .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase;
+    .stat-label { font-size: 11px; color: ${c.muted}; text-transform: uppercase;
       letter-spacing: 0.06em; }
     .stat-value { font-size: 17px; font-weight: 600; margin-top: 4px; }
-    .stat-value.positive { color: var(--positive); }
-    .stat-value.negative { color: var(--negative); }
-    @media (max-width: 600px) {
-      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; }
-    }
-    .mood { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+    .stat-value.positive { color: ${c.positive}; }
+    .stat-value.negative { color: ${c.negative}; }
+    .mood { padding: 10px 12px; border: 1px solid ${c.border}; border-radius: 8px;
       background: #fafbfd; }
-    .mood-label { font-size: 11px; color: var(--muted); text-transform: uppercase;
+    .mood-label { font-size: 11px; color: ${c.muted}; text-transform: uppercase;
       letter-spacing: 0.06em; }
     .mood-value { font-size: 18px; font-weight: 600; margin-top: 4px; }
-    .mood.positive .mood-value { color: var(--positive); }
-    .mood.negative .mood-value { color: var(--negative); }
-    .global-cue { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+    .mood.positive .mood-value { color: ${c.positive}; }
+    .mood.negative .mood-value { color: ${c.negative}; }
+    .global-cue { padding: 10px 12px; border: 1px solid ${c.border}; border-radius: 8px;
       background: #fafbfd; }
     .global-cue-note { font-size: 11px; margin-top: 4px; line-height: 1.35; }
-    .global-cue.positive .mood-value { color: var(--positive); }
-    .global-cue.negative .mood-value { color: var(--negative); }
-    /* Regime card (spec §7.1) */
+    .global-cue.positive .mood-value { color: ${c.positive}; }
+    .global-cue.negative .mood-value { color: ${c.negative}; }
     .trailing-stop-card {
-      border-left: 4px solid var(--accent);
+      border-left: 4px solid ${c.accent};
       background: linear-gradient(180deg, #f8fafc 0%, #ffffff 55%);
     }
-    .trailing-stop-sub { margin: 14px 0 8px; font-size: 13px; color: var(--accent); }
-    .trailing-stop-table { font-size: 13px; margin-top: 6px; }
+    .trailing-stop-sub { margin: 14px 0 8px; font-size: 13px; color: ${c.accent}; }
+    .trailing-stop-table { font-size: 13px; margin-top: 6px; width: 100%; border-collapse: collapse; }
+    .trailing-stop-table th,
+    .trailing-stop-table td { padding: 6px 8px; border-bottom: 1px solid ${c.border}; text-align: left; }
     .trailing-badge {
       display: inline-block;
       padding: 2px 8px;
@@ -864,10 +927,10 @@ function baseStyles(): string {
       letter-spacing: 0.03em;
       white-space: nowrap;
     }
-    .trailing-badge--stop { background: #fde7e7; color: var(--negative); }
+    .trailing-badge--stop { background: #fde7e7; color: ${c.negative}; }
     .trailing-badge--tight { background: #fff8e6; color: #b7791f; }
-    .trailing-badge--raise { background: #e6f4ea; color: var(--positive); }
-    .trailing-badge--near { background: #eef4f8; color: var(--accent); }
+    .trailing-badge--raise { background: #e6f4ea; color: ${c.positive}; }
+    .trailing-badge--near { background: #eef4f8; color: ${c.accent}; }
     .regime-change-banner {
       margin-bottom: 12px;
       padding: 12px 14px;
@@ -876,145 +939,94 @@ function baseStyles(): string {
       border-radius: 8px;
       font-size: 14px;
       line-height: 1.45;
-      color: var(--text);
+      color: ${c.text};
     }
     .regime-card {
       margin-bottom: 14px;
       padding: 16px 18px;
       border-radius: 10px;
-      border: 2px solid var(--regime-border, var(--border));
-      background: var(--regime-bg, var(--card));
-    }
-    .regime-card-header {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 10px;
     }
     .regime-badge {
       font-size: 18px;
       font-weight: 800;
       letter-spacing: 0.02em;
     }
-    .regime-meta { font-size: 13px; color: var(--muted); }
     .regime-scorebar-wrap { margin-bottom: 12px; }
     .regime-scorebar-track {
       height: 8px;
       border-radius: 4px;
-      background: linear-gradient(90deg, var(--negative) 0%, #e5e7eb 50%, var(--positive) 100%);
-      position: relative;
+      background: linear-gradient(90deg, ${c.negative} 0%, ${c.border} 50%, ${c.positive} 100%);
       overflow: hidden;
     }
     .regime-scorebar-fill {
       height: 100%;
       background: rgba(255,255,255,0.35);
-      border-right: 2px solid #1a1f2c;
+      border-right: 2px solid ${c.text};
       box-sizing: border-box;
     }
-    .regime-scorebar-labels {
-      display: flex;
-      justify-content: space-between;
-      font-size: 10px;
-      color: var(--muted);
-      margin-top: 2px;
-    }
-    .regime-tiles {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    @media (max-width: 600px) { .regime-tiles { grid-template-columns: repeat(2, 1fr); } }
     .regime-tile {
       padding: 8px 10px;
-      border: 1px solid var(--border);
+      border: 1px solid ${c.border};
       border-radius: 8px;
       background: rgba(255,255,255,0.55);
       font-size: 12px;
     }
-    .regime-tile-label { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; }
+    .regime-tile-label { color: ${c.muted}; text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; }
     .regime-tile-value { font-weight: 700; margin-top: 2px; }
     .regime-narrative { margin: 0 0 8px; font-size: 14px; line-height: 1.55; }
     .regime-gate-summary { margin: 0; font-size: 12px; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase;
-      letter-spacing: 0.04em; }
-    td.positive { color: var(--positive); font-weight: 600; }
-    td.negative { color: var(--negative); font-weight: 600; }
-    .muted { color: var(--muted); font-size: 13px; }
+    .muted { color: ${c.muted}; font-size: 13px; }
     .section-lede { margin: 0 0 12px; max-width: 42rem; line-height: 1.45; }
     .news { list-style: none; padding: 0; margin: 0; }
-    .news li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+    .news li { padding: 8px 0; border-bottom: 1px solid ${c.border}; }
     .news li:last-child { border-bottom: none; }
-    .news a { color: var(--text); text-decoration: none; font-weight: 500; }
-    .news a:hover { color: var(--accent); }
-    .news .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
-    .tag { background: #eef4f8; color: var(--accent); padding: 1px 6px; border-radius: 4px;
+    .news a { color: ${c.text}; text-decoration: none; font-weight: 500; }
+    .news a:hover { color: ${c.accent}; }
+    .news .meta { color: ${c.muted}; font-size: 12px; margin-top: 2px; }
+    .tag { background: #eef4f8; color: ${c.accent}; padding: 1px 6px; border-radius: 4px;
       font-weight: 600; font-size: 11px; }
     .ai-placeholder { background: #fbf7e9; border-color: #f0e0a8; }
     .mood-narrative { margin-top: 12px; padding: 10px 14px; background: #f8fafc;
-      border-left: 3px solid var(--accent); border-radius: 4px; font-size: 14px;
-      line-height: 1.6; color: var(--text); }
-    .thesis-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px;
+      border-left: 3px solid ${c.accent}; border-radius: 4px; font-size: 14px;
+      line-height: 1.6; color: ${c.text}; }
+    .thesis-card { border: 1px solid ${c.border}; border-radius: 8px; padding: 14px;
       margin-bottom: 12px; background: #fafbfd; }
-    .thesis-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-    .thesis-why-now { font-size: 13px; line-height: 1.45; margin: 0 0 8px; color: var(--text); }
+    .thesis-why-now { font-size: 13px; line-height: 1.45; margin: 0 0 8px; color: ${c.text}; }
     .thesis-rank { font-size: 12px; margin: 0 0 6px; line-height: 1.35; }
-    .thesis-symbol { font-size: 18px; font-weight: 700; color: var(--accent); }
+    .thesis-symbol { font-size: 18px; font-weight: 700; color: ${c.accent}; }
     .thesis-horizon { font-size: 11px; }
-    .thesis-confidence { font-size: 12px; color: var(--muted); position: relative;
-      display: inline-flex; align-items: center; gap: 4px; }
-    .conf-bar { display: inline-block; height: 6px; background: var(--accent); border-radius: 3px;
-      min-width: 4px; }
     .thesis-body { margin: 0 0 10px; font-size: 14px; line-height: 1.5; }
-    .thesis-levels { display: flex; gap: 12px; margin-bottom: 10px; font-size: 13px;
-      font-weight: 600; }
-    .level.positive { color: var(--positive); }
-    .level.negative { color: var(--negative); }
-    .level.accent { color: var(--accent); }
-    .bull-header { color: var(--positive); font-size: 13px; margin: 0 0 4px; }
-    .bear-header { color: var(--negative); font-size: 13px; margin: 0 0 4px; }
+    .level.positive { color: ${c.positive}; }
+    .level.negative { color: ${c.negative}; }
+    .level.accent { color: ${c.accent}; }
+    .bull-header { color: ${c.positive}; font-size: 13px; margin: 0 0 4px; }
+    .bear-header { color: ${c.negative}; font-size: 13px; margin: 0 0 4px; }
     .thesis-list { margin: 0; padding-left: 18px; font-size: 13px; }
     .thesis-list li { margin-bottom: 2px; }
     .sentiment-badge { display: inline-block; padding: 1px 6px; border-radius: 4px;
       font-size: 10px; font-weight: 600; letter-spacing: 0.03em; vertical-align: middle;
       margin-left: 4px; }
-    .sentiment-badge.positive { background: #dcfce7; color: var(--positive); }
-    .sentiment-badge.negative { background: #fee2e2; color: var(--negative); }
-    .sentiment-badge.neutral { background: #f3f4f6; color: var(--muted); }
-    .screen-block { padding: 12px; border: 1px solid var(--border); border-radius: 8px;
+    .sentiment-badge.positive { background: #dcfce7; color: ${c.positive}; }
+    .sentiment-badge.negative { background: #fee2e2; color: ${c.negative}; }
+    .sentiment-badge.neutral { background: #f3f4f6; color: ${c.muted}; }
+    .screen-block { padding: 12px; border: 1px solid ${c.border}; border-radius: 8px;
       background: #fafbfd; margin-bottom: 10px; }
     .screen-block:last-child { margin-bottom: 0; }
-    .screen-block h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px;
-      font-size: 14px; color: var(--accent); }
     .screen-block .muted { margin: 0 0 8px; font-size: 12px; }
-    .symbol-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .symbol-chips { margin-top: 6px; line-height: 1.8; }
     .symbol-chip { display: inline-block; padding: 2px 8px; border-radius: 4px;
-      background: #eef4f8; color: var(--accent); font-weight: 600; font-size: 12px; }
-    .position-cards { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
-    .portfolio-risk-rollup { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
-    .portfolio-risk-rollup .h-small { font-size: 13px; margin: 0 0 8px; color: var(--accent); }
+      background: #eef4f8; color: ${c.accent}; font-weight: 600; font-size: 12px;
+      margin: 0 6px 6px 0; }
+    .position-cards-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    .portfolio-risk-rollup { margin-top: 14px; padding-top: 14px; border-top: 1px solid ${c.border}; }
+    .portfolio-risk-rollup .h-small { font-size: 13px; margin: 0 0 8px; color: ${c.accent}; }
     .portfolio-risk-rollup .risk-col table { font-size: 13px; }
     .tight-list { margin: 6px 0 0; padding-left: 18px; line-height: 1.5; }
-    .position-card { padding: 14px; border: 1px solid var(--border); border-radius: 8px;
-      background: #fafbfd; }
-    .position-header { display: flex; justify-content: space-between; align-items: center;
-      gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
-    .position-prices { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .point-ul { margin: 0; padding-left: 16px; font-size: 12px; line-height: 1.45; }
     .position-tech { margin: 4px 0 2px; font-size: 12px; color: #5a6578; line-height: 1.4; }
     .position-thesis { margin: 6px 0; font-size: 13px; line-height: 1.5; }
     .position-trigger { margin: 4px 0 8px; font-size: 12px; color: #4a5568; }
     .position-levels { margin-top: 6px; font-size: 12px; color: #4a5568; }
-    .point-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; }
-    @media (max-width: 600px) { .point-grid { grid-template-columns: 1fr; } }
-    .point-list { display: flex; gap: 6px; align-items: flex-start; }
-    .point-list ul { margin: 0; padding-left: 16px; font-size: 12px; line-height: 1.45; }
-    .point-list .point-label { font-weight: 800; font-size: 14px; line-height: 1; padding-top: 2px; }
-    .point-list.bull .point-label { color: var(--positive); }
-    .point-list.bear .point-label { color: var(--negative); }
     .action-chip { display: inline-block; padding: 2px 10px; border-radius: 999px;
       font-size: 11px; font-weight: 700; letter-spacing: 0.05em; }
     .action-chip.hold { background: #e6eaf2; color: #2c3e50; }
@@ -1023,15 +1035,15 @@ function baseStyles(): string {
     .action-chip.exit { background: #f8d7da; color: #721c24; }
     .momentum-card { border-left: 4px solid #b7791f; }
     .momentum-rebalance { margin-bottom: 12px; font-size: 13px; line-height: 1.45; }
-    .momentum-sub { margin: 14px 0 6px; font-size: 13px; color: var(--accent); }
+    .momentum-sub { margin: 14px 0 6px; font-size: 13px; color: ${c.accent}; }
     .momentum-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
-    .momentum-table th, .momentum-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+    .momentum-table th, .momentum-table td { padding: 6px 8px; border-bottom: 1px solid ${c.border}; text-align: left; }
     .momentum-row-amber { background: #fffaf0; }
     .day-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
       font-weight: 600; }
-    .day-chip.positive { background: #e6f4ea; color: var(--positive); }
-    .day-chip.negative { background: #fde7e7; color: var(--negative); }
-    footer { margin-top: 18px; padding: 14px 0; text-align: center; color: var(--muted);
+    .day-chip.positive { background: #e6f4ea; color: ${c.positive}; }
+    .day-chip.negative { background: #fde7e7; color: ${c.negative}; }
+    footer { margin-top: 18px; padding: 14px 0; text-align: center; color: ${c.muted};
       font-size: 11px; }
     .disclaimer { max-width: 600px; margin: 0 auto; font-style: italic; }
   `;

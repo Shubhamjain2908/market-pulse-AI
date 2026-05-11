@@ -364,7 +364,7 @@ describe('briefing composer (Phase 3–4)', () => {
     const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, badLlm);
     expect(result.data.moodNarrative).toBeTruthy();
     expect(result.data.moodNarrative).toContain('Watch:');
-    expect(result.html).toMatch(/<div class="mood-narrative">/);
+    expect(result.html).toMatch(/<div class="mood-narrative"[^>]*>/);
     expect(badCalls).toBeGreaterThanOrEqual(3);
   });
 
@@ -414,7 +414,7 @@ describe('briefing composer (Phase 3–4)', () => {
     const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, fallbackLlm);
     expect(genCalls).toBe(3);
     expect(result.data.moodNarrative).toContain('FII');
-    expect(result.html).toMatch(/<div class="mood-narrative">/);
+    expect(result.html).toMatch(/<div class="mood-narrative"[^>]*>/);
   });
 
   it('skips AI when skipAi=true', async () => {
