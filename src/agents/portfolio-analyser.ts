@@ -10,7 +10,7 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import pLimit from 'p-limit';
 import { z } from 'zod';
 import { config } from '../config/env.js';
-import { loadMomentumConfig } from '../config/loaders.js';
+import { loadEtfExclusions, loadMomentumConfig } from '../config/loaders.js';
 import {
   type PortfolioAnalysisRow,
   type PortfolioHoldingRow,
@@ -31,6 +31,28 @@ import {
 import { buildStockContext } from './thesis-generator.js';
 
 const log = child({ component: 'portfolio-analyser' });
+
+const RSI_SIGNAL_EXCLUDED_SYMBOLS = new Set([
+  'LIQUIDCASE',
+  'LIQUIDBEES',
+  'GOLDBEES',
+  'GOLDCASE',
+  'GOLDIETF',
+  'SILVERBEES',
+  'SILVERCASE',
+  'NIFTYBEES',
+  'JUNIORBEES',
+  'BANKBEES',
+  'ICICIB22',
+  'MOM100',
+  'SGBJUN31I',
+  'SGBDE31III',
+]);
+
+const EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS = new Set([
+  ...RSI_SIGNAL_EXCLUDED_SYMBOLS,
+  ...loadEtfExclusions(),
+]);
 
 export const PortfolioActionSchema = z.object({
   symbol: z.string(),
@@ -74,6 +96,13 @@ Rules:
    (a) state the % gain from \`Last price\` to \`Avg buy price\` (breakeven gain) in \`triggerReason\`;
    (b) ensure \`suggestedStop\` is far enough below current price that breakeven gain <= ~1.5x
    the stop's downside %. If R:R is worse than 1.5x or breakeven > 12%, default to HOLD and explain why.
+9. Do NOT recommend ADD if the current price is within 2% above the most recent paper trade
+   entry price for this symbol. An ADD signal requires either (a) a meaningful pullback of at
+   least one ATR from the prior entry, or (b) a confirmed breakout to a new high on volume > 1.5x
+   average. Adding within 2% of a prior entry price creates a cluster of stops at the same level -
+   a single adverse move closes all positions simultaneously.
+10. For liquid funds, gold ETFs, silver ETFs, index ETFs, and Sovereign Gold Bonds, RSI and
+    volume ratio are not meaningful signals - do not reference them in your analysis.
 
 Output ONLY a single JSON object matching the schema. No markdown fences.
 
@@ -148,12 +177,15 @@ export function applyPortfolioAddGuardrails(
 ): PortfolioAction {
   if (action.action !== 'ADD') return action;
 
+  const symbol = action.symbol.toUpperCase();
+  const isSignalExcluded = EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol);
   const rsi = signals.rsi_14;
   const pctHi = signals.pct_from_52w_high;
   const volRatio = signals.volume_ratio_20d;
-  const overbought = rsi != null && rsi > 70;
+  const overbought = !isSignalExcluded && rsi != null && rsi > 70;
   const near52wHigh = pctHi != null && pctHi >= -3;
-  const weakVolume = volRatio != null && Number.isFinite(volRatio) && volRatio < 0.5;
+  const weakVolume =
+    !isSignalExcluded && volRatio != null && Number.isFinite(volRatio) && volRatio < 0.5;
   if (overbought || near52wHigh || weakVolume) {
     const bits: string[] = [];
     if (overbought) bits.push(`RSI ${rsi?.toFixed(0)} > 70`);
@@ -196,6 +228,52 @@ export function applyPortfolioAddGuardrails(
   }
 
   return action;
+}
+
+function applyOpenPaperTradeAddBlock(action: PortfolioAction, openCount: number): PortfolioAction {
+  if (action.action !== 'ADD' || openCount < 1) return action;
+  const symbol = action.symbol.toUpperCase();
+  const note = `ADD blocked — existing open position(s) in paper ledger: ${openCount} open trades for ${symbol}`;
+  return {
+    ...action,
+    action: 'HOLD',
+    conviction: Math.min(action.conviction, 0.55),
+    triggerReason: truncateTriggerReason(`${action.triggerReason} [${note}]`),
+  };
+}
+
+function getOpenPaperTradeCountForSymbol(symbol: string, db: DatabaseType): number {
+  const row = db
+    .prepare(`SELECT COUNT(*) AS c FROM paper_trades WHERE symbol = ? AND status = 'OPEN'`)
+    .get(symbol.toUpperCase()) as { c: number };
+  return row.c;
+}
+
+function getMostRecentPaperTradeEntry(
+  symbol: string,
+  asOfDate: string,
+  db: DatabaseType,
+): { entryPrice: number; sourceDate: string } | null {
+  const row = db
+    .prepare(
+      `
+      SELECT entry_price AS entryPrice, source_date AS sourceDate
+      FROM paper_trades
+      WHERE symbol = ? AND source_date <= ?
+      ORDER BY source_date DESC, id DESC
+      LIMIT 1
+    `,
+    )
+    .get(symbol.toUpperCase(), asOfDate) as { entryPrice: number; sourceDate: string } | undefined;
+  return row ?? null;
+}
+
+function sanitizeStockContextForExcludedSignals(symbol: string, context: string): string {
+  if (!EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol.toUpperCase())) return context;
+  return context
+    .split('\n')
+    .filter((line) => !/^\s*(rsi_14|volume_ratio_20d)\s*:/.test(line))
+    .join('\n');
 }
 
 export interface PortfolioAnalyserOptions {
@@ -359,8 +437,12 @@ async function analyseOne(
   db: DatabaseType,
   llm: LlmProvider,
 ): Promise<PortfolioAnalysisRow> {
-  const stockContext = buildStockContext(h.symbol, date, db, 'portfolio');
+  const stockContext = sanitizeStockContextForExcludedSignals(
+    h.symbol,
+    buildStockContext(h.symbol, date, db, 'portfolio'),
+  );
   const positionContext = buildPositionContext(h, date, db);
+  const openPaperTradeCount = getOpenPaperTradeCountForSymbol(h.symbol, db);
   const deep = h.pnlPct != null && h.pnlPct <= getPortfolioDeepLossPct();
   const system = deep ? `${PORTFOLIO_SYSTEM}${portfolioDeepLossAddon()}` : PORTFOLIO_SYSTEM;
 
@@ -372,12 +454,15 @@ async function analyseOne(
     maxRetries: 1,
   });
   const signals = getLatestSignalsMap(h.symbol, date, db);
-  const a: PortfolioAction = applyMomentumPortfolioGuardrails(
-    applyPortfolioAddGuardrails(result.data, signals, {
-      pnlPct: h.pnlPct ?? null,
-      lastPrice: h.lastPrice ?? null,
-    }),
-    signals,
+  const a: PortfolioAction = applyOpenPaperTradeAddBlock(
+    applyMomentumPortfolioGuardrails(
+      applyPortfolioAddGuardrails(result.data, signals, {
+        pnlPct: h.pnlPct ?? null,
+        lastPrice: h.lastPrice ?? null,
+      }),
+      signals,
+    ),
+    openPaperTradeCount,
   );
 
   return {
@@ -398,6 +483,8 @@ async function analyseOne(
 }
 
 function buildPositionContext(h: PortfolioHoldingRow, date: string, db: DatabaseType): string {
+  const symbol = h.symbol.toUpperCase();
+  const isSignalExcluded = EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol);
   const lines: string[] = [`# Position: ${h.symbol} (${h.exchange})`];
   lines.push(`Quantity: ${h.qty}`);
   lines.push(`Avg buy price: ₹${h.avgPrice.toFixed(2)}`);
@@ -407,6 +494,21 @@ function buildPositionContext(h: PortfolioHoldingRow, date: string, db: Database
   if (h.dayChangePct != null) lines.push(`Day change %: ${h.dayChangePct.toFixed(2)}%`);
   if (h.product) lines.push(`Product: ${h.product}`);
   lines.push(`Source: ${h.source}`);
+  if (isSignalExcluded) {
+    lines.push('Signal treatment: RSI and volume ratio are excluded for this ETF/SGB symbol.');
+  }
+
+  const openPaperTradeCount = getOpenPaperTradeCountForSymbol(symbol, db);
+  const latestPaperEntry = getMostRecentPaperTradeEntry(symbol, date, db);
+  lines.push('\n## Paper Trade Ledger Context');
+  lines.push(`Open paper trades: ${openPaperTradeCount}`);
+  if (latestPaperEntry) {
+    lines.push(
+      `Most recent paper trade entry: ₹${latestPaperEntry.entryPrice.toFixed(2)} (${latestPaperEntry.sourceDate})`,
+    );
+  } else {
+    lines.push('Most recent paper trade entry: none');
+  }
 
   const screens = db
     .prepare(`
@@ -429,7 +531,15 @@ function buildPositionContext(h: PortfolioHoldingRow, date: string, db: Database
     .all(h.symbol, date) as Array<{ date: string; kind: string; message: string }>;
   if (alerts.length > 0) {
     lines.push('\n## Recent alerts');
-    for (const a of alerts) lines.push(`- ${a.date} ${a.kind}: ${a.message}`);
+    for (const a of alerts) {
+      if (
+        isSignalExcluded &&
+        (a.kind === 'rsi_overbought' || a.kind === 'rsi_oversold' || a.kind === 'volume_spike')
+      ) {
+        continue;
+      }
+      lines.push(`- ${a.date} ${a.kind}: ${a.message}`);
+    }
   }
 
   return lines.join('\n');
