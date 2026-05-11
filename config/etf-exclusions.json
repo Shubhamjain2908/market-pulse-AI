@@ -1,0 +1,19 @@
+{
+  "description": "Symbols where RSI/volume-ratio guardrails are ignored in portfolio analysis.",
+  "symbols": [
+    "LIQUIDCASE",
+    "LIQUIDBEES",
+    "GOLDBEES",
+    "GOLDCASE",
+    "GOLDIETF",
+    "SILVERBEES",
+    "SILVERCASE",
+    "NIFTYBEES",
+    "JUNIORBEES",
+    "BANKBEES",
+    "ICICIB22",
+    "MOM100",
+    "SGBJUN31I",
+    "SGBDE31III"
+  ]
+}
