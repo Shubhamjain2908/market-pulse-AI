@@ -26,10 +26,13 @@ export class OpenAIProvider implements LlmProvider {
       );
     }
     this.model = config.OPENAI_MODEL;
-    this.client = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+    this.client = new OpenAI({
+      baseURL: config.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
+      apiKey: config.OPENAI_API_KEY
+    });
   }
 
-  async generateText(opts: GenerateTextOptions): Promise<LlmTextResult> {
+  async generateText(opts: GenerateTextOptions & { forceJson?: boolean }): Promise<LlmTextResult> {
     const started = Date.now();
     const response = await this.client.chat.completions.create(
       {
@@ -40,6 +43,7 @@ export class OpenAIProvider implements LlmProvider {
           { role: 'system', content: opts.system },
           { role: 'user', content: opts.user },
         ],
+        ...(opts.forceJson && { response_format: { type: 'json_object' } }),
       },
       { signal: opts.signal ?? undefined },
     );
@@ -64,6 +68,7 @@ export class OpenAIProvider implements LlmProvider {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const text = await this.generateText({
         ...opts,
+        forceJson: true,
         user:
           attempt === 0
             ? opts.user
