@@ -29,8 +29,8 @@ module.exports = {
       // Merge stdout/stderr so HEALTHCHECK_PIPELINE_LOG can point at one file.
       merge_logs: true,
       combine_logs: true,
-      out_file: path.join(logDir, 'pm2-combined.log'),
-      error_file: path.join(logDir, 'pm2-combined.log'),
+      out_file: path.join(logDir, 'pm2-pulse.log'),
+      error_file: path.join(logDir, 'pm2-pulse.log'),
       time: true,
     },
     {
@@ -47,8 +47,8 @@ module.exports = {
       },
       merge_logs: true,
       combine_logs: true,
-      out_file: path.join(logDir, 'pm2-combined.log'),
-      error_file: path.join(logDir, 'pm2-combined.log'),
+      out_file: path.join(logDir, 'pm2-auth.log'),
+      error_file: path.join(logDir, 'pm2-auth.log'),
       time: true,
     },
   ],

@@ -50,7 +50,8 @@
     "healthcheck": "tsx deploy/healthcheck.ts",
     "llm:smoke:google-studio": "LLM_PROVIDER=google-studio tsx scripts/smoke-google-studio.mts",
     "llm:smoke:google-studio:flash": "LLM_PROVIDER=google-studio VERTEX_MODEL=gemini-2.5-flash tsx scripts/smoke-google-studio.mts",
-    "prepare": "echo 'skip husky setup until added'"
+    "prepare": "echo 'skip husky setup until added'",
+    "deploy": "pnpm build && pm2 reload deploy/ecosystem.config.cjs"
   },
   "keywords": [
     "stock-market",
