@@ -42,11 +42,13 @@ describe('db/migrate', () => {
     expect(tables).toContain('_migrations');
     expect(tables).toContain('earnings_calendar');
     expect(tables).toContain('momentum_rebalance_briefing');
+    expect(tables).toContain('corporate_actions');
     expect(result.applied).toContain('0007_adaptive_trailing_stop');
     expect(result.applied).toContain('0009_momentum_indexes_and_earnings');
     expect(result.applied).toContain('0008_trailing_stop_log_notes');
     expect(result.applied).toContain('0010_momentum_rebalance_briefing');
     expect(result.applied).toContain('0011_momentum_rebalance_briefing_extended');
+    expect(result.applied).toContain('0013_corporate_actions');
     db.close();
   });
 
