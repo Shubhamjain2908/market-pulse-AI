@@ -202,7 +202,7 @@ const {
     bullet("Backtesting first — every screen/signal must be backtested before watching live"),
     spacer(),
     h2("1.2 What It Delivers Daily"),
-    p("Every morning at 9:15 AM IST (at market open), the system emails/Slacks you a briefing containing:"),
+    p("Every morning at 8:45 AM IST (pre-market), the system emails/Slacks you a briefing containing:"),
     spacer(),
     new Table({
       width: { size: 9360, type: WidthType.DXA },
@@ -484,9 +484,9 @@ const {
       columnWidths: [2400, 2600, 4360],
       rows: [
         tableHeader(["Job", "Cron Schedule", "What It Runs"]),
-        tableRow(["Pre-market Briefing", "0 15 9 * * 1-5  (9:15 AM IST, weekdays)", "Full pipeline: ingest + enrich + analyse + brief"], false),
+        tableRow(["Pre-market Briefing", "0 45 8 * * 1-5  (8:45 AM IST, weekdays)", "Full pipeline: ingest + enrich + analyse + brief"], false),
         tableRow(["Intraday Alert Check", "0 */30 9-15 * * 1-5  (every 30 min)", "Watchlist alert scan only (no AI, fast)"], true),
-        tableRow(["EOD Summary", "30 15 * * 1-5  (3:30 PM IST)", "Portfolio P&L, what moved today, why"], false),
+        tableRow(["EOD Summary", "0 16 * * 1-5  (4:00 PM IST)", "Portfolio P&L, what moved today, why"], false),
         tableRow(["Weekly Deep Dive", "0 8 * * 6  (8 AM Saturday)", "Full fundamental re-scan of watchlist"], true),
       ]
     }),
@@ -626,7 +626,7 @@ const {
     h2("Phase 4 — Delivery & Polish (Week 5)"),
     note("Goal: Fully automated morning briefing delivered to your inbox.", COLORS.lightGray),
     spacer(),
-    bullet("Wire up cron schedule (9:15 AM pipeline + 3:30 PM EOD)"),
+    bullet("Wire up cron schedule (8:45 AM pipeline + 4:00 PM EOD)"),
     bullet("Set up Gmail delivery via Nodemailer"),
     bullet("Add portfolio tracker: manually enter holdings in config, system computes P&L"),
     bullet("Add stop-loss breach alerts (intraday check every 30 min if using real-time data)"),
