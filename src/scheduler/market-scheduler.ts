@@ -2,8 +2,8 @@
  * Croner-based scheduler for recurring workflows.
  *
  * Required schedules (Asia/Kolkata):
- *  - Weekdays 09:15
- *  - Weekdays 15:30
+ *  - Weekdays 08:45
+ *  - Weekdays 16:00
  *  - Saturday 08:00
  *  - Sunday 06:00 — Yahoo momentum earnings calendar refresh (weekly)
  *  - Sunday 08:00 — momentum rank + rebalance (paper_trades), then skip-AI briefing with rebalance summary (delivered per BRIEFING_DELIVERY)
@@ -34,12 +34,12 @@ export interface SchedulerHandle {
 
 export function startScheduler(): SchedulerHandle {
   const weekdayMorning = new Cron(
-    '15 9 * * 1-5',
+    '45 8 * * 1-5',
     { timezone: MARKET_TIMEZONE, protect: true },
-    () => runScheduledJob('weekday-0915'),
+    () => runScheduledJob('weekday-0845'),
   );
-  const weekdayClose = new Cron('30 15 * * 1-5', { timezone: MARKET_TIMEZONE, protect: true }, () =>
-    runScheduledJob('weekday-1530'),
+  const weekdayClose = new Cron('0 16 * * 1-5', { timezone: MARKET_TIMEZONE, protect: true }, () =>
+    runScheduledJob('weekday-1600'),
   );
   const saturdayMorning = new Cron('0 8 * * 6', { timezone: MARKET_TIMEZONE, protect: true }, () =>
     runScheduledJob('sat-0800'),
@@ -58,7 +58,7 @@ export function startScheduler(): SchedulerHandle {
   log.info(
     {
       timezone: MARKET_TIMEZONE,
-      schedules: ['15 9 * * 1-5', '30 15 * * 1-5', '0 8 * * 6', '0 6 * * 0', '0 8 * * 0'],
+      schedules: ['45 8 * * 1-5', '0 16 * * 1-5', '0 8 * * 6', '0 6 * * 0', '0 8 * * 0'],
       delivery: config.BRIEFING_DELIVERY,
     },
     'scheduler started',
