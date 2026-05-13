@@ -4,7 +4,7 @@
 ## 1. Core Stack & Philosophy
 **Runtime:** Node.js 22 + TypeScript (ESM), `better-sqlite3`, `node-cron`, PM2 for process management
 
-**Broker:** Zerodha Kite Connect API — portfolio sync, GTT orders (manual trigger only). Daily OAuth token expires 6 AM IST — refreshed manually via `/auth/kite` endpoint before 9:15 AM pipeline run.
+**Broker:** Zerodha Kite Connect API — portfolio sync, GTT orders (manual trigger only). Daily OAuth token expires 6 AM IST — refreshed manually via `/auth/kite` endpoint before 8:45 AM pipeline run.
 
 **LLM:** Currently DeepSeek-V3 via OpenAI-compatible SDK (`baseURL: https://api.deepseek.com`). Provider abstraction in `src/llm/provider.ts` — switchable via `LLM_PROVIDER` env var (`anthropic` | `deepseek` | `gemini` | `openai`). All LLM calls go through `generateJson()` with Zod schema validation + 1 retry on parse failure.
 
@@ -13,7 +13,7 @@
 **Deployment:** Oracle Cloud Always Free VM (`VM.Standard.E2.1.Micro`, 1 OCPU, ap-hyderabad-1). SQLite file on persistent disk. Nginx reverse proxy for Kite auth endpoint. DuckDNS free subdomain for HTTPS.
 
 **Pipeline schedule:**
-- `9:15 AM IST Mon–Fri` — full daily pipeline (PM2 managed)
+- `8:45 AM IST Mon–Fri` — full daily pipeline (PM2 managed)
 - `8:00 AM IST Sunday` — momentum rebalance job
 - `10:15 AM IST Mon–Fri` — healthcheck cron (email alert on failure)
 
@@ -27,7 +27,7 @@
 
 ---
 
-## 2. Pipeline Flow (Sequential, EOD, Daily 9:15 AM IST)
+## 2. Pipeline Flow (Sequential, EOD, Daily 8:45 AM IST)
 
 ```
 Ingest → Enrich → Regime Classify → Screen → AI Thesis → Portfolio Evaluate → Briefing
@@ -251,13 +251,13 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 
 **Process manager:** PM2. Two processes: `market-pulse` (main app, `dist/cli.js schedule`) and `kite-auth` (Express auth server, port 3001).
 
-**Kite token flow:** Daily manual refresh. User opens `https://[duckdns-subdomain].duckdns.org/auth/kite` on phone before 9:15 AM, completes OAuth, token written to SQLite `config` table. If token missing at pipeline start: Kite sync skipped gracefully, rest of pipeline runs.
+**Kite token flow:** Daily manual refresh. User opens `https://[duckdns-subdomain].duckdns.org/auth/kite` on phone before 8:45 AM, completes OAuth, token written to SQLite `config` table. If token missing at pipeline start: Kite sync skipped gracefully, rest of pipeline runs.
 
 **Nginx:** Reverse proxy on port 443 (Let's Encrypt via Certbot + DuckDNS). Only `/auth/` routes exposed publicly. Everything else returns 403.
 
 **Cron:**
 ```
-15 9 * * 1-5   full daily pipeline (via PM2 schedule, not raw cron)
+45 8 * * 1-5   full daily pipeline (via PM2 schedule, not raw cron)
 0  8 * * 0     momentum rebalance
 15 10 * * 1-5  healthcheck → email alert on failure
 ```
