@@ -11,6 +11,7 @@ import { getMomentumUniverseSymbols } from '../config/loaders.js';
 import { getDb } from '../db/index.js';
 import { enrichSentiment } from '../enrichers/sentiment/enricher.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
+import { applyCorporateActionsFromYahooSplits } from '../ingestors/corporate-actions.js';
 import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { child } from '../logger.js';
 import { getMarketClosure, isSundayIst } from '../market/nse-calendar.js';
@@ -134,6 +135,14 @@ export async function runDailyWorkflow(
   }
 
   await runDailyIngestor({ date });
+  try {
+    await applyCorporateActionsFromYahooSplits(getDb(), { refDate: date });
+  } catch (err) {
+    log.warn(
+      { err: (err as Error).message },
+      'corporate actions from Yahoo splits failed; continuing workflow',
+    );
+  }
   await runSignalEnricher({ date });
   const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
   const momRegimeExits = applyMomentumRegimeGateExits({
@@ -190,15 +199,15 @@ export async function runDailyWorkflow(
     }
   }
 
+  const paperEval = runEvaluatePaperTrades(date, getDb(), { skipAi: opts.skipAi });
+  log.info(paperEval, 'paper trade evaluation');
+
   const briefing = await runBriefingComposer({
     date,
     skipAi: opts.skipAi,
     thesisRun: opts.skipAi ? undefined : thesisRun,
     delivery: config.BRIEFING_DELIVERY,
   });
-
-  const paperEval = runEvaluatePaperTrades(briefing.date, getDb(), { skipAi: opts.skipAi });
-  log.info(paperEval, 'paper trade evaluation');
 
   maybeWriteDailyRunSummary({
     schemaVersion: 1,

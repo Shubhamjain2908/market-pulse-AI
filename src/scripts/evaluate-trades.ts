@@ -18,10 +18,20 @@ import {
   patchPaperTradeTrailing,
   resetStopRaisedTodayForOpenTrades,
 } from '../db/trailing-stop-queries.js';
+import { isoDateIst, parseIsoDate } from '../ingestors/base/dates.js';
+import { child } from '../logger.js';
 import { NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
 import type { ExitReason } from '../types/trailing-stop.js';
 import { GAP_DOWN_THROUGH_STOP_NOTE } from '../types/trailing-stop.js';
 import { applyDay1InitialStop, computeNewStop } from './trailing-stop-engine.js';
+
+const log = child({ component: 'evaluate-trades' });
+
+function lowerExclusiveIsoFromBarDate(barDate: string): string {
+  const ref = parseIsoDate(barDate);
+  const t = ref.getTime() - 5 * 24 * 60 * 60 * 1000;
+  return isoDateIst(new Date(t));
+}
 
 export interface EvaluatePaperTradesOptions {
   /** When true, skip fire-and-forget LLM post-mortem on STOPPED_OUT (writes no narrative). */
@@ -202,6 +212,36 @@ export function evaluateOnePaperTrade(
 
     stopLoss = Math.max(stopLoss, hardFloor);
 
+    const prevCloseRow = db
+      .prepare(
+        `SELECT close FROM quotes WHERE symbol = ? AND exchange = 'NSE' AND date < ? ORDER BY date DESC LIMIT 1`,
+      )
+      .get(trade.symbol, bar.date) as { close: number } | undefined;
+    const prevClose = prevCloseRow?.close;
+
+    let skipStopTargetThisBar = false;
+    if (prevClose != null && Number.isFinite(prevClose) && bar.open < prevClose * 0.7) {
+      skipStopTargetThisBar = true;
+      const lowerEx = lowerExclusiveIsoFromBarDate(bar.date);
+      const caRecent = db
+        .prepare(
+          'SELECT 1 AS x FROM corporate_actions WHERE symbol = ? AND ex_date > ? AND ex_date <= ? LIMIT 1',
+        )
+        .get(trade.symbol, lowerEx, bar.date) as { x: number } | undefined;
+      const caAppliedRecent = caRecent != null ? 'Yes' : 'No';
+      log.warn(
+        {
+          symbol: trade.symbol,
+          barDate: bar.date,
+          prevClose,
+          todayOpen: bar.open,
+          caAppliedRecent,
+          currentStop: stopLoss,
+        },
+        `CIRCUIT BREAKER: ${trade.symbol} gapped down >30%. Trailing stop evaluation bypassed. CA_Applied_Recent: ${caAppliedRecent}. Current_Stop: ${stopLoss}.`,
+      );
+    }
+
     const hitSl = bar.low <= stopLoss;
     const hitTg = bar.high >= trade.target;
     const elapsed = dayIndex.get(bar.date) ?? 0;
@@ -251,7 +291,7 @@ export function evaluateOnePaperTrade(
       if (logId !== null && !opts?.skipAi) scheduleTrailingStopPostMortem(logId);
     };
 
-    if (hitSl && hitTg) {
+    if (!skipStopTargetThisBar && hitSl && hitTg) {
       const exitPx = exitPriceWhenStopHit(bar, stopLoss);
       const gap = bar.open < stopLoss ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
       const logId = insertStopLog(
@@ -287,14 +327,14 @@ export function evaluateOnePaperTrade(
       return 'CLOSED_LOSS';
     }
 
-    if (hitSl) {
+    if (!skipStopTargetThisBar && hitSl) {
       const exitReasonStop: ExitReason = skipTrailThisBar ? 'INITIAL_STOP' : 'TRAILING_STOP';
       logStoppedOut(bar.date, null, exitReasonStop);
       const exitPx = exitPriceWhenStopHit(bar, stopLoss);
       return pnlPctLong(trade.entryPrice, exitPx) >= 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
     }
 
-    if (hitTg) {
+    if (!skipStopTargetThisBar && hitTg) {
       closePaperTrade(
         trade.id,
         'CLOSED_WIN',

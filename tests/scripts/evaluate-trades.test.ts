@@ -447,6 +447,43 @@ describe('evaluate paper trades', () => {
     });
   });
 
+  it('circuit breaker: >30% gap down skips stop-out; trade stays OPEN', () => {
+    const src = '2026-03-01';
+    const dPrev = '2026-03-02';
+    const dGap = '2026-03-03';
+    seedNifty(dPrev, dGap);
+    upsertQuotes(
+      [{ ...q('CBRK', dPrev, 100, 100, 100, 100) }, { ...q('CBRK', dGap, 60, 100, 75, 80) }],
+      db,
+    );
+    insertPaperTradeIfAbsent(
+      {
+        symbol: 'CBRK',
+        signalType: 'AI_PICK',
+        sourceDate: src,
+        entryPrice: 100,
+        stopLoss: 85,
+        target: 200,
+        timeHorizon: 'medium',
+        maxHoldDays: 90,
+      },
+      db,
+    );
+    const rowId = (
+      db.prepare('SELECT id FROM paper_trades WHERE symbol = ?').get('CBRK') as {
+        id: number;
+      }
+    ).id;
+    db.prepare(
+      'UPDATE paper_trades SET highest_close_since_entry = 100, atr14_at_entry = 3 WHERE id = ?',
+    ).run(rowId);
+    seedAtr14('CBRK', [src, dPrev, dGap], 3);
+    const t = getOpenPaperTrades(db)[0];
+    if (t === undefined) throw new Error('missing trade');
+    expect(evaluateOnePaperTrade(t, db, dGap, { skipAi: true })).toBe('still_open');
+    expect(getOpenPaperTrades(db)).toHaveLength(1);
+  });
+
   it('runEvaluatePaperTrades returns counts', () => {
     seedNifty('2026-02-02');
     upsertQuotes([q('R1', '2026-02-02', 100, 130, 95, 125)], db);

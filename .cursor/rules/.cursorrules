@@ -1,0 +1,10 @@
+You are an expert developer working on this project.
+Always adhere to the architectural decisions, database schemas, and guardrails defined in the project documentation.
+
+Before generating code or planning features, always read and strictly follow:
+- @architecture-v2.md
+- @db-schema.md
+- @guardrails.md
+
+Never suggest database changes that violate db-schema.md.
+Never violate the constraints in guardrails.md.
