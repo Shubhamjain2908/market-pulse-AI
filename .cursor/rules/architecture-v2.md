@@ -265,6 +265,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 45 8 * * 1-5   full daily pipeline (via PM2 schedule, not raw cron)
 0  8 * * 0     momentum rebalance
 15 10 * * 1-5  healthcheck → email alert on failure
+30 16 * * 1-5  EOD summary job
 ```
 
 **Deploy scripts:** `deploy/sync-env-to-vm.sh`, `deploy/sync-db-to-vm.sh` (rsync with WAL checkpoint), `deploy/setup.sh` (Node 22 + pnpm + PM2 bootstrap), `deploy/ecosystem.config.cjs`.

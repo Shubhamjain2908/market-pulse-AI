@@ -22,7 +22,7 @@
  *   mp portfolio-sync    Pull holdings from Kite (or manual) into the DB
  *   mp portfolio-analyse Run LLM-driven HOLD/ADD/TRIM/EXIT analysis per holding
  *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
- *   mp schedule          Start croner jobs (08:45 / 16:00 weekdays, Sat 08:00, Sun 06:00 earnings)
+ *   mp schedule          Start croner jobs (08:45 / 16:30 weekdays, Sat 08:00, Sun 06:00 earnings)
  *   mp llm-smoke         Quick live LLM text+JSON sanity check for current provider
  *   mp doctor            Print runtime/config diagnostics
  *   mp regime            Full regime agent (classify + LLM narrative → regime_daily)
@@ -625,7 +625,7 @@ program
 
 program
   .command('schedule')
-  .description('start croner schedule (08:45 / 16:00 weekdays, Sat 08:00 IST)')
+  .description('start croner schedule (08:45 / 16:30 weekdays, Sat 08:00 IST)')
   .option('--run-now', 'run one cycle immediately on startup')
   .action(async (opts: { runNow?: boolean }) => {
     ensureDb();
