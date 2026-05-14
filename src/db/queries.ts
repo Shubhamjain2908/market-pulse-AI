@@ -533,6 +533,21 @@ export function getOpenPaperTrades(db: DatabaseType = getDb()): PaperTradeRow[] 
   return rows;
 }
 
+/** Distinct symbols with at least one OPEN `paper_trades` row (any `signal_type`). */
+export function getDistinctOpenPaperTradeSymbols(db: DatabaseType = getDb()): string[] {
+  const rows = db
+    .prepare(
+      `
+      SELECT DISTINCT symbol
+      FROM paper_trades
+      WHERE status = 'OPEN'
+      ORDER BY symbol
+    `,
+    )
+    .all() as Array<{ symbol: string }>;
+  return rows.map((r) => r.symbol.toUpperCase());
+}
+
 /** Open rows for a single strategy (`signal_type`). */
 export function getOpenPaperTradesForSignal(
   signalType: PaperTradeSignalType,

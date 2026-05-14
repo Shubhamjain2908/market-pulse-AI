@@ -108,6 +108,26 @@ describe('thesis generator', () => {
     expect(stored[0]?.model).toBe('mock-model');
   });
 
+  it('does not generate AI picks for symbols with an OPEN paper trade (any signal_type)', async () => {
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status
+      ) VALUES ('RELIANCE', 'momentum_mf', '2026-04-01', 2900, 2800, 3100, 'medium', 30, 'OPEN')
+    `,
+    ).run();
+    const result = await generateTheses(
+      { date: today, watchlist: ['RELIANCE'], maxTheses: 3 },
+      db,
+      llm,
+    );
+    expect(result.generated).toBe(0);
+    expect(result.eligibleUniverseSize).toBe(0);
+    expect(result.watchlistSize).toBe(1);
+    expect(llm.calls).toHaveLength(0);
+  });
+
   it('does not generate AI picks for symbols already in the portfolio', async () => {
     upsertHoldings(
       [

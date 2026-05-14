@@ -13,6 +13,7 @@ import { getDb, getLatestHoldings, isStrategyAllowed } from '../db/index.js';
 import {
   type StoredThesis,
   type UpsertThesisRow,
+  getDistinctOpenPaperTradeSymbols,
   getThesesForDate,
   upsertThesis,
 } from '../db/queries.js';
@@ -134,7 +135,7 @@ export interface ThesisGeneratorResult {
   failed: number;
   /** Candidates with score > 0 after ranking (before max-thesis cap). */
   candidateCount: number;
-  /** Watchlist symbols excluding current holdings — thesis eligibility universe. */
+  /** Watchlist symbols excluding current holdings and symbols with any OPEN paper trade. */
   eligibleUniverseSize: number;
   /** Raw watchlist symbol count for messaging when AI Picks is empty. */
   watchlistSize: number;
@@ -150,9 +151,18 @@ export async function generateTheses(
   const date = opts.date ?? isoDateIst();
   const watchlist = (opts.watchlist ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
   const holdingsUpper = getLatestHoldings(db).map((h) => h.symbol.toUpperCase());
+  const openPaperSymbolsUpper = getDistinctOpenPaperTradeSymbols(db);
   const holdingSet = new Set(holdingsUpper);
-  /** AI Picks: watchlist names not already in the portfolio. */
-  const universe = watchlist.filter((s) => !holdingSet.has(s));
+  const openPaperSet = new Set(openPaperSymbolsUpper);
+  /** AI Picks: watchlist names not in live portfolio and not already tracked as an OPEN paper trade. */
+  const universe = watchlist.filter((s) => {
+    if (holdingSet.has(s)) return false;
+    if (openPaperSet.has(s)) {
+      log.debug({ symbol: s }, 'Skipping AI Thesis: Symbol already has an OPEN paper trade.');
+      return false;
+    }
+    return true;
+  });
   const maxTheses = opts.maxTheses ?? config.THESIS_MAX_PER_RUN;
 
   if (opts.regime != null && !isStrategyAllowed('ai_picks_generation', opts.regime, db)) {
