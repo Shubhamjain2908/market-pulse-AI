@@ -64,19 +64,21 @@ export async function runPortfolioSync(opts: { date?: string } = {}): Promise<Po
 }
 
 async function fetchKiteHoldings(date: string): Promise<PortfolioHoldingRow[]> {
-  if (!config.KITE_ACCESS_TOKEN) {
+  const db = getDb();
+  const token = resolveKiteAccessToken(db, config.KITE_ACCESS_TOKEN);
+  if (!token) {
     throw new Error(
-      'PORTFOLIO_SOURCE=kite but KITE_ACCESS_TOKEN is not set. Run `pnpm cli kite-login` first.',
+      'PORTFOLIO_SOURCE=kite but no access token found. Save config.kite_access_token via auth server or set KITE_ACCESS_TOKEN.',
     );
   }
-  const client = new KiteClient();
+  const client = new KiteClient({ accessToken: token });
   let holdings: Awaited<ReturnType<KiteClient['getHoldings']>>;
   try {
     holdings = await client.getHoldings();
   } catch (err) {
     if (err instanceof KiteApiError && err.isTokenExpired()) {
       throw new Error(
-        'Kite access_token has expired. Refresh with `pnpm cli kite-login` (tokens expire ~6 AM IST daily).',
+        'Kite access_token has expired. Refresh via /auth/kite or `pnpm cli kite-login` (tokens expire ~6 AM IST daily).',
       );
     }
     throw err;
@@ -103,6 +105,15 @@ async function fetchKiteHoldings(date: string): Promise<PortfolioHoldingRow[]> {
         raw: JSON.stringify(h),
       };
     });
+}
+
+export function resolveKiteAccessToken(db: DatabaseType, envToken?: string): string {
+  const row = db
+    .prepare("SELECT value FROM config WHERE key = 'kite_access_token' LIMIT 1")
+    .get() as { value: string | null } | undefined;
+  const fromDb = row?.value?.trim() ?? '';
+  if (fromDb) return fromDb;
+  return envToken?.trim() ?? '';
 }
 
 function readManualHoldings(date: string, db: DatabaseType): PortfolioHoldingRow[] {
