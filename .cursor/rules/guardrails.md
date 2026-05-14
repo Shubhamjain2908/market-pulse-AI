@@ -14,3 +14,5 @@
 | **ETF/SGB RSI exclusion** | LIQUIDCASE, GOLDBEES, GOLDCASE, SILVERBEES, NIFTYBEES, JUNIORBEES, SGBs — skip RSI/volume signals entirely | `config/etf-exclusions.json` + portfolio analyser (newly added) |
 | **Regime gate absolute** | momentum_mf: no entries if regime ≠ BULL_TRENDING. No exception. | `momentum-rebalance.ts` pre-check |
 | **alreadyOwned filter** | Skip symbol in AI Picks if currently held in Kite portfolio | Thesis generator input preprocessing |
+| **Corporate action nominal adjust** | OPEN `paper_trades` only; Yahoo split events in last 5 IST days; `INSERT OR IGNORE` + `run().changes` — never double-divide notionals | `src/ingestors/corporate-actions.ts` |
+| **Gap-down circuit breaker** | If session `open < 70%` of prior NSE EOD `close`, skip stop-out + target for **that bar** only (time-stop still applies) | `src/scripts/evaluate-trades.ts` |

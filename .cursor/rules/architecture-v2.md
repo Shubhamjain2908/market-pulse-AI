@@ -30,17 +30,20 @@
 ## 2. Pipeline Flow (Sequential, EOD, Daily 8:45 AM IST)
 
 ```
-Ingest → Enrich → Regime Classify → Screen → AI Thesis → Portfolio Evaluate → Briefing
+Ingest → Corporate actions → Enrich → Regime Classify → Screen → AI Thesis → Portfolio Evaluate → Briefing
 ```
+
+Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evaluation runs **before** the briefing composer so closed trades appear in the brief.
 
 | Stage | File | What it does |
 |---|---|---|
-| **Ingest** | `src/ingestors/nse-eod.ts` | OHLCV for momentum universe (~150 symbols), FII/DII flows, India VIX, AD ratio, news RSS. Rate-limited 2 req/sec. Earnings calendar refresh (Yahoo `quoteSummary`). |
+| **Ingest** | `src/agents/daily-ingestor.ts` | Quote batch (often Yahoo), NSE FII/DII, RSS news, optional Yahoo sector metadata on symbols; failures per capability are logged and do not abort the run. |
+| **Corporate actions** | `src/ingestors/corporate-actions.ts` | After ingest, before enrich: for symbols with OPEN `paper_trades`, pull Yahoo split events (`chart`, `events: 'split'` — same ratios as bonus-as-split). Last 5 IST calendar days → `corporate_actions` row + divide OPEN notionals (`entry_price`, `stop_loss`, `target`, `highest_close_since_entry`, `atr14_at_entry`); append one-time SPLIT audit to `trailing_stop_log.notes` per trade. Idempotent via `INSERT OR IGNORE` + `run().changes`. |
 | **Enrich** | `src/enrichers/technical.ts` + `momentum-signals.ts` | SMA20/50/200, EMA9/21, RSI14, ATR14, Volume Ratio, 52W High/Low%. Plus daily momentum factors: `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`. |
 | **Regime Classify** | `src/agents/regime-agent.ts` | 8 signals scored −2 to +2. 3-day persistence. CRISIS fires immediately. Writes to `regime_daily`. Runs before all strategies. |
 | **Screen** | `src/analysers/stock-screener.ts` | Loads `config/screens.json`. Checks `regime_strategy_gate`. Writes passing symbols to `screens`. |
 | **AI Thesis** | `src/agents/thesis-generator.ts` | Per screen pass: sends technicals + fundamentals + news + regime context to LLM. Returns structured JSON. Skips `alreadyOwned` symbols. |
-| **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs 7-step trailing stop algorithm on all OPEN paper_trades. Then portfolio analyser on Kite holdings. |
+| **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs trailing-stop + SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). **Circuit breaker:** if `bar.open < 0.7 ×` prior session’s NSE `close` (`date < bar.date`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag. Kite portfolio analysis is a separate stage (thesis block when AI enabled). |
 | **Briefing** | `src/briefing/composer.ts` | Assembles HTML email + browser HTML. Two render paths: `renderEmailHtml()` (table-based, inline CSS, 600px, Gmail-safe) and `renderBrowserHtml()` (full CSS variables, beautiful UI). Delivered via Nodemailer → Gmail SMTP. |
 
 ---
@@ -90,15 +93,17 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 2. Fetch today's OHLCV + ATR14
 3. Update `highest_close_since_entry = MAX(prev, today_close)`
 4. Run `computeNewStop()` → golden rule → persist if raised
-5. Stop-out check: `today_low ≤ updated_stop` → close trade
-6. Target check: `today_close ≥ target` → close as `TARGET_HIT`
+5. Stop-out check: `today_low ≤ updated_stop` → close trade *(skipped for the bar when the gap-down circuit breaker fires — see below)*
+6. Target check: `today_close ≥ target` → close as `TARGET_HIT` *(same skip)*
 7. Persist all changes
+
+**Gap-down circuit breaker (code, per bar):** After hard floor, before SL/TP: if prior NSE `close` exists and `open < 0.7 × that close`, do not run stop-out or target for that bar; max-hold and persistence still run. Mitigates false stop-outs on extreme opens (e.g. around corporate events).
 
 **Hard stop for momentum_mf:** −8% floor from entry. `effectiveStop = MAX(computedNewStop, entry × 0.92)`. Trailing stop cannot trail below this floor.
 
 **Exit reasons:** `TRAILING_STOP | INITIAL_STOP | TARGET_HIT | TIME_EXIT | MANUAL`
 
-**Audit table:** `trailing_stop_log` — append-only, `UNIQUE(trade_id, log_date, action)`.
+**Audit table:** `trailing_stop_log` — append-only, `UNIQUE(trade_id, log_date, action)`. Split/bonus adjustments append a one-time `SPLIT …` note (guarded by `notes NOT LIKE '%SPLIT%'`). **`corporate_actions`** — one row per applied `(symbol, ex_date, type)`; source of truth for “CA applied recently” in circuit-breaker logs.
 
 ### 3.3 Paper Trades Ledger
 

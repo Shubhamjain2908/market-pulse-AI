@@ -30,6 +30,7 @@
 - If changing schedules in `src/scheduler/market-scheduler.ts`, mirror timing/docs updates in `README.md`.
 - If changing persistence, add an append-only SQL migration in `src/db/migrations` (do not edit historical migration files).
 - Before handoff: run `pnpm typecheck && pnpm test && pnpm lint`.
+- Make sure to update architecture-v2.md, db-schema.md & guardrails.md file in case we make changes in those areas.
 
 ## High-Value Workflows
 - Bootstrap: `pnpm install`, `pnpm migrate`, `pnpm cli doctor`.

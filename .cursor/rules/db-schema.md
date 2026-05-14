@@ -320,6 +320,16 @@ CREATE UNIQUE INDEX uq_trailing_log_trade_day_action
   ON trailing_stop_log(trade_id, log_date, action);
 CREATE INDEX idx_paper_trades_signal_type ON paper_trades(signal_type);
 CREATE INDEX idx_paper_trades_signal_status ON paper_trades(signal_type, status);
+CREATE TABLE corporate_actions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol      TEXT    NOT NULL,
+  ex_date     TEXT    NOT NULL,
+  type        TEXT    NOT NULL,
+  factor      REAL    NOT NULL,
+  source      TEXT    NOT NULL,
+  applied_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(symbol, ex_date, type)
+);
 CREATE TABLE earnings_calendar (
   symbol        TEXT NOT NULL,
   expected_date TEXT NOT NULL, -- YYYY-MM-DD
