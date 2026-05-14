@@ -51,5 +51,16 @@ module.exports = {
       error_file: path.join(logDir, 'pm2-auth.log'),
       time: true,
     },
+    {
+      name: 'datasette',
+      script: '/home/ubuntu/datasette-config/datasette.sh',
+      interpreter: 'bash',
+      restart_delay: 5000,
+      max_restarts: 10,
+      autorestart: true,
+      watch: false,
+      error_file: '/home/ubuntu/.pm2/logs/datasette-error.log',
+      out_file: '/home/ubuntu/.pm2/logs/datasette-out.log',
+    }
   ],
 };
