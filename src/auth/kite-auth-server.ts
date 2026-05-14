@@ -3,6 +3,8 @@ import { config } from '../config/env.js';
 import { closeDb, getDb, migrate } from '../db/index.js';
 import { child } from '../logger.js';
 import { KiteClient } from '../ingestors/kite/client.js';
+import { upsertEnvVar } from "../ingestors/kite/auth.js";
+import { PROJECT_DOTENV_PATH } from "../config/project-paths.js";
 
 const log = child({ component: 'kite-auth-server' });
 const app = express();
@@ -25,6 +27,7 @@ app.get('/auth/callback', async (req, res) => {
   try {
     const session = await kite.generateSession(requestToken);
     upsertKiteAccessToken(session.access_token);
+    upsertEnvVar(process.env.MP_DOTENV_PATH ?? PROJECT_DOTENV_PATH, 'KITE_ACCESS_TOKEN', session.access_token);
 
     const nowLabel = formatIstNow();
     const expiry = getTokenExpiryFromIssuedAt(new Date());
