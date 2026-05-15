@@ -2,8 +2,9 @@
  * Croner-based scheduler for recurring workflows.
  *
  * Required schedules (Asia/Kolkata):
- *  - Weekdays 08:45
- *  - Weekdays 16:30
+ *  - Weekdays 08:45 — full daily pipeline + briefing delivery
+ *  - Weekdays 16:30 — paper trade evaluation + EOD health report (email when BRIEFING_DELIVERY=email)
+ *  - Friday 17:00 — weekly DB cleanup (signals retention; extend in weekly-cleanup agent)
  *  - Saturday 08:00
  *  - Sunday 06:00 — Yahoo momentum earnings calendar refresh (weekly)
  *  - Sunday 08:00 — momentum rank + rebalance (paper_trades), then skip-AI briefing with rebalance summary (delivered per BRIEFING_DELIVERY)
@@ -12,6 +13,8 @@
 import { Cron } from 'croner';
 import { runBriefingComposer } from '../agents/briefing-composer.js';
 import { runDailyWorkflow } from '../agents/daily-workflow.js';
+import { runEodEvaluate } from '../agents/eod-evaluate.js';
+import { runWeeklyCleanup } from '../agents/weekly-cleanup.js';
 import { deliverBriefing } from '../briefing/dispatch.js';
 import { config } from '../config/env.js';
 import { getMomentumUniverseSymbols } from '../config/loaders.js';
@@ -28,6 +31,13 @@ import {
 
 const log = child({ component: 'market-scheduler' });
 
+/** Keys dispatched by `runScheduledJob` (string literals only; keep exhaustive). */
+export type ScheduledCronJobKey =
+  | 'weekday-0845'
+  | 'weekday-1630-evaluate'
+  | 'sat-0800'
+  | 'friday-1700-cleanup';
+
 export interface SchedulerHandle {
   stop: () => void;
 }
@@ -36,13 +46,22 @@ export function startScheduler(): SchedulerHandle {
   const weekdayMorning = new Cron(
     '45 8 * * 1-5',
     { timezone: MARKET_TIMEZONE, protect: true },
-    () => runScheduledJob('weekday-0845'),
+    () => void runScheduledJob('weekday-0845'),
   );
-  const weekdayClose = new Cron('30 16 * * 1-5', { timezone: MARKET_TIMEZONE, protect: true }, () =>
-    runScheduledJob('weekday-1630'),
+  const weekdayEodEvaluate = new Cron(
+    '30 16 * * 1-5',
+    { timezone: MARKET_TIMEZONE, protect: true },
+    () => void runScheduledJob('weekday-1630-evaluate'),
   );
-  const saturdayMorning = new Cron('0 8 * * 6', { timezone: MARKET_TIMEZONE, protect: true }, () =>
-    runScheduledJob('sat-0800'),
+  const fridayCleanup = new Cron(
+    '0 17 * * 5',
+    { timezone: MARKET_TIMEZONE, protect: true },
+    () => void runScheduledJob('friday-1700-cleanup'),
+  );
+  const saturdayMorning = new Cron(
+    '0 8 * * 6',
+    { timezone: MARKET_TIMEZONE, protect: true },
+    () => void runScheduledJob('sat-0800'),
   );
   const sundayEarnings = new Cron(
     '0 6 * * 0',
@@ -58,7 +77,14 @@ export function startScheduler(): SchedulerHandle {
   log.info(
     {
       timezone: MARKET_TIMEZONE,
-      schedules: ['45 8 * * 1-5', '30 16 * * 1-5', '0 8 * * 6', '0 6 * * 0', '0 8 * * 0'],
+      schedules: [
+        '45 8 * * 1-5',
+        '30 16 * * 1-5',
+        '0 17 * * 5',
+        '0 8 * * 6',
+        '0 6 * * 0',
+        '0 8 * * 0',
+      ],
       delivery: config.BRIEFING_DELIVERY,
     },
     'scheduler started',
@@ -67,7 +93,8 @@ export function startScheduler(): SchedulerHandle {
   return {
     stop: () => {
       weekdayMorning.stop();
-      weekdayClose.stop();
+      weekdayEodEvaluate.stop();
+      fridayCleanup.stop();
       saturdayMorning.stop();
       sundayEarnings.stop();
       sundayMomentumRebalance.stop();
@@ -147,26 +174,47 @@ async function runSundayEarningsRefresh(): Promise<void> {
   }
 }
 
-async function runScheduledJob(tag: string): Promise<void> {
+async function runScheduledJob(tag: ScheduledCronJobKey): Promise<void> {
   const t0 = Date.now();
   log.info({ tag, health: 'started' }, 'scheduled job started');
   try {
-    const result = await runDailyWorkflow();
-    await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
-    log.info(
-      {
-        tag,
-        health: 'ok',
-        durationMs: Date.now() - t0,
-        date: result.date,
-        delivery: result.delivery,
-        alerts: result.alertCount,
-        screens: result.screenMatchesCount,
-        news: result.newsCount,
-        theses: result.thesesCount,
-      },
-      'scheduled job finished',
-    );
+    migrate();
+    switch (tag) {
+      case 'weekday-0845':
+      case 'sat-0800': {
+        const result = await runDailyWorkflow();
+        await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
+        log.info(
+          {
+            tag,
+            health: 'ok',
+            durationMs: Date.now() - t0,
+            date: result.date,
+            delivery: result.delivery,
+            alerts: result.alertCount,
+            screens: result.screenMatchesCount,
+            news: result.newsCount,
+            theses: result.thesesCount,
+          },
+          'scheduled job finished',
+        );
+        break;
+      }
+      case 'weekday-1630-evaluate': {
+        await runEodEvaluate();
+        log.info({ tag, health: 'ok', durationMs: Date.now() - t0 }, 'scheduled job finished');
+        break;
+      }
+      case 'friday-1700-cleanup': {
+        await runWeeklyCleanup();
+        log.info({ tag, health: 'ok', durationMs: Date.now() - t0 }, 'scheduled job finished');
+        break;
+      }
+      default: {
+        const _exhaustive: never = tag;
+        throw new Error(`unhandled scheduled job key: ${_exhaustive as string}`);
+      }
+    }
   } catch (err) {
     log.error({ tag, health: 'error', durationMs: Date.now() - t0, err }, 'scheduled job failed');
   } finally {
