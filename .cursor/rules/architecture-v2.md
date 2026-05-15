@@ -65,7 +65,7 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 
 **3-day persistence:** Regime change requires 3 consecutive days at new band. CRISIS exception: fires immediately, requires 5 days to clear.
 
-**Current state (May 11):** BEAR_TRENDING Day 1. Score −7.0. FII −3.0, Breadth −4.0. 5 of 11 strategies active.
+**Current state (May 14):** BEAR_TRENDING Day 4. Score −7.0. FII −3.0, Breadth −4.0. 5 of 11 strategies active.
 
 **Strategy gate table:** `regime_strategy_gate(strategy_id, regime, allowed, size_multiplier)`. Momentum_mf: BULL_TRENDING only.
 
@@ -114,20 +114,21 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 
 **Unique constraint:** `UNIQUE INDEX uq_paper_trades_signal_day ON paper_trades(symbol, signal_type, source_date)`
 
-**Current performance (May 11, 30-day window, 41 closed trades):**
+**Current performance (May 14, deduplicated baseline, 65 closed trades):**
 
 | signal_type | Trades | Win Rate | Avg Outcome | Avg Win | Avg Loss |
 |---|---|---|---|---|---|
-| AI_PICK | 18 | 50% | **+1.13%** | +5.52% | −3.25% |
-| PORTFOLIO_ADD | 13 | 15.4% | **−3.07%** | +1.0% | −3.81% |
-| momentum_mf | 10 | 30% | **−8.07%** | +1.84% | −12.32% |
+| AI_PICK | 33 | 30.3% | **−0.37%** | +3.18% | −1.92% |
+| PORTFOLIO_ADD | 22 | 9.1% | **−3.27%** | +1.02% | −3.70% |
+| momentum_mf | 10 | 40% | **−0.59%** | +2.16% | −2.42% |
 
-**Phase gate:** GTT execution activates only when overall expectancy > 0 over 30+ closed trades. Currently NOT met — PORTFOLIO_ADD and momentum_mf dragging overall negative. Observe mode only.
+**Phase gate:** GTT execution activates only when overall expectancy > 0 over 30+ closed trades. Currently NOT met — expectancy remains negative (AI_PICK is near breakeven after dedup). Observe mode only.
 
-**Known issues being fixed:**
-- PORTFOLIO_ADD: ADD blocked if symbol already has ≥1 open paper trade (Fix 1 — in progress)
-- PORTFOLIO_ADD: ADD requires ≥1 ATR pullback from prior entry price (Fix 2 — in progress)
-- momentum_mf poor performance: 10 trades all opened Apr 29 (BULL) and stopped out in BEAR transition — not representative; observe next full BULL cycle
+**Fix status and caveats (May 14):**
+- PORTFOLIO_ADD duplicate block (symbol with ≥1 OPEN paper trade) — **fixed (May 12)**.
+- AI_PICK `alreadyOwned` exclusion now merges live Kite holdings + `SELECT DISTINCT symbol FROM paper_trades WHERE status = 'OPEN'` (all signal types) — **fixed (May 14)**.
+- ADD pullback requirement (>= 1 ATR pullback from prior entry, else explicit high-volume breakout) — **deployed**.
+- Performance caveat: all currently CLOSED trades are pre-fix cohorts; no post-fix CLOSED trades yet. Clean baseline starts from the next full `BULL_TRENDING` cycle.
 
 ### 3.4 Multi-Factor Momentum Screener
 
@@ -162,15 +163,15 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 | **Deep loss full review** | Unrealised loss > 20% → mandatory full LLM review, never lite path | `evaluate-trades.ts` threshold check |
 | **RSI overbought ADD block** | RSI_14 > 70 OR price within 3% of 52W high → block ADD, output HOLD | Portfolio analyser system prompt Rule 6 + code guard |
 | **Low volume ADD block** | `volume_ratio` < 0.5 → block ADD | Portfolio analyser system prompt Rule 7 |
-| **No duplicate ADD** | Symbol has ≥1 open paper trade → block ADD, output HOLD with note | `portfolio-analyser.ts` pre-check (newly added) |
-| **ADD pullback requirement** | ADD requires ≥1 ATR pullback from prior entry OR confirmed breakout on vol > 1.5× | Portfolio analyser system prompt Rule 9 (newly added) |
+| **No duplicate ADD** | Symbol has ≥1 open paper trade → block ADD, output HOLD with note | `portfolio-analyser.ts` pre-check (**fixed May 12**) |
+| **ADD pullback requirement** | ADD requires ≥1 ATR pullback from prior entry OR confirmed breakout on vol > 1.5× | Portfolio analyser system prompt Rule 9 (**deployed**) |
 | **Averaging-down disclosure** | If position at loss: state (a) % gain to breakeven, (b) whether stop allows recovery room | Portfolio analyser system prompt Rule 8 |
 | **No macro hallucination** | No FII/DII/USD/crude in stock-specific thesis unless directly tied to that stock's economics | All agent prompts |
 | **No financial hallucination** | Never invoke data not present in provided context | All agent prompts |
 | **Confidence range** | Full 1–10 scale. Strong tech + fundamentals = 7–8. Pure tech, weak fundamentals = 3–4. False momentum flag = max 5 | Thesis generator system prompt |
 | **ETF/SGB RSI exclusion** | LIQUIDCASE, GOLDBEES, GOLDCASE, SILVERBEES, NIFTYBEES, JUNIORBEES, SGBs — skip RSI/volume signals entirely | `config/etf-exclusions.json` + portfolio analyser (newly added) |
 | **Regime gate absolute** | momentum_mf: no entries if regime ≠ BULL_TRENDING. No exception. | `momentum-rebalance.ts` pre-check |
-| **alreadyOwned filter** | Skip symbol in AI Picks if currently held in Kite portfolio | Thesis generator input preprocessing |
+| **alreadyOwned filter** | Skip symbol in AI Picks if currently held in Kite portfolio **or** symbol has any OPEN `paper_trades` row (any `signal_type`) | Thesis generator input preprocessing (**extended May 14**) |
 
 ---
 
@@ -296,15 +297,15 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 ## 8. Known Issues & Next Priorities
 
 **Observation items (do not build, just watch):**
-- PORTFOLIO_ADD win rate 15.4% — monitor post-fixes to see if quality improves
-- momentum_mf cohort (Apr 29) — not representative; next BULL_TRENDING cycle is the real test
-- Overall expectancy still negative — GTT execution remains gated until 30+ trades confirm positive
+- Paper trade expectancy still negative on deduplicated baseline: AI_PICK −0.37%, PORTFOLIO_ADD −3.27%, momentum_mf −0.59%
+- All closed outcomes so far are pre-fix cohorts; evaluate quality only after post-fix trades complete
+- Overall expectancy still negative — GTT execution remains gated until 30+ post-fix closed trades confirm positive
 
 **Deferred to v2:**
 - Quarterly EPS scraper (true Factor 2 vs current `profit_growth_yoy` proxy)
 - Expanding universe from ~150 to NSE 500
 - Backtest infrastructure (walk-forward, transaction cost model, survivorship bias handling)
-- Concall Intelligence Engine (BSE PDF scraper + transcript analysis)
 - GTT Execution Module (activates when expectancy > 0 over 30+ trades — not yet met)
+- Strategy backlog (6 unbuilt, prioritised): see strategy-backlog.md
 
 **Liquidity filter:** Deferred to v1.1. Stub slot exists in `momentum-ranker.ts` Step 2 with log line. Not yet implemented.

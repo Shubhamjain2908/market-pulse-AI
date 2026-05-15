@@ -324,7 +324,7 @@ CREATE TABLE corporate_actions (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   symbol      TEXT    NOT NULL,
   ex_date     TEXT    NOT NULL,
-  type        TEXT    NOT NULL,
+  type        TEXT    NOT NULL,  -- 'split' | 'bonus'
   factor      REAL    NOT NULL,
   source      TEXT    NOT NULL,
   applied_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,

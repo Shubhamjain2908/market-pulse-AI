@@ -9,4 +9,4 @@ Before generating code or planning features, always read and strictly follow:
 Never suggest database changes that violate db-schema.md.
 Never violate the constraints in guardrails.md.
 
-If there required a change in the current architecture or db-schema or guardrails or a new feature gets added, make sure to update these files accordignly.
+If a change is required in architecture, db schema, guardrails, or overall system state, update these files accordingly in the same change.

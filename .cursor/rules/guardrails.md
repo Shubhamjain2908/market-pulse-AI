@@ -13,6 +13,6 @@
 | **Confidence range** | Full 1–10 scale. Strong tech + fundamentals = 7–8. Pure tech, weak fundamentals = 3–4. False momentum flag = max 5 | Thesis generator system prompt |
 | **ETF/SGB RSI exclusion** | LIQUIDCASE, GOLDBEES, GOLDCASE, SILVERBEES, NIFTYBEES, JUNIORBEES, SGBs — skip RSI/volume signals entirely | `config/etf-exclusions.json` + portfolio analyser (newly added) |
 | **Regime gate absolute** | momentum_mf: no entries if regime ≠ BULL_TRENDING. No exception. | `momentum-rebalance.ts` pre-check |
-| **alreadyOwned filter** | Skip symbol in AI Picks if currently held in Kite portfolio | Thesis generator input preprocessing |
-| **Corporate action nominal adjust** | OPEN `paper_trades` only; Yahoo split events in last 5 IST days; `INSERT OR IGNORE` + `run().changes` — never double-divide notionals | `src/ingestors/corporate-actions.ts` |
-| **Gap-down circuit breaker** | If session `open < 70%` of prior NSE EOD `close`, skip stop-out + target for **that bar** only (time-stop still applies) | `src/scripts/evaluate-trades.ts` |
+| **alreadyOwned filter** | Skip symbol in AI Picks if currently held in Kite portfolio **or** symbol has any OPEN `paper_trades` row (any signal type) | Thesis generator input preprocessing |
+| **Corporate action nominal adjust** | Daily automated stage runs after ingest and before enrich; for OPEN `paper_trades` pulls Yahoo `splitHistory` over last 5 IST days and applies nominal divide exactly once via `INSERT OR IGNORE` + `run().changes` | `src/ingestors/corporate-actions.ts` |
+| **Gap-down circuit breaker** | If session `open < (prior NSE EOD close × 0.70)`, skip stop-out + target checks for **that bar only**; still run persistence/time-stop and log with recent corporate-action context | `src/scripts/evaluate-trades.ts` |
