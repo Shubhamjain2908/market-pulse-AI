@@ -14,7 +14,11 @@
 
 **Pipeline schedule:**
 - `8:45 AM IST Mon–Fri` — full daily pipeline (PM2 managed)
-- `8:00 AM IST Sunday` — momentum rebalance job
+- `8:00 AM IST Saturday` — full daily pipeline (PM2 managed)
+- `4:30 PM IST Mon–Fri` — run **`pnpm evaluate`** for EOD paper-trade evaluate + health report (not on PM2 cron)
+- `5:00 PM IST Friday` — weekly DB cleanup including `signals` retention (`friday-1700-cleanup`)
+- `6:00 AM IST Sunday` — Yahoo momentum earnings calendar refresh
+- `8:00 AM IST Sunday` — momentum rebalance + skip-AI briefing delivery
 - `10:15 AM IST Mon–Fri` — healthcheck cron (email alert on failure)
 
 **Philosophy:**
@@ -269,9 +273,11 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 **Cron:**
 ```
 45 8 * * 1-5   full daily pipeline (via PM2 schedule, not raw cron)
-0  8 * * 0     momentum rebalance
+0  6 * * 0     Sunday Yahoo momentum earnings calendar refresh
+0  8 * * 0     Sunday momentum rebalance + skip-AI briefing deliver
+0  8 * * 6     Saturday morning pipeline
+0  17 * * 5    Friday weekly cleanup (signals retention >365d; extend in weekly-cleanup agent)
 15 10 * * 1-5  healthcheck → email alert on failure
-30 16 * * 1-5  EOD summary job
 ```
 
 **Deploy scripts:** `deploy/sync-env-to-vm.sh`, `deploy/sync-db-to-vm.sh` (rsync with WAL checkpoint), `deploy/setup.sh` (Node 22 + pnpm + PM2 bootstrap), `deploy/ecosystem.config.cjs`.

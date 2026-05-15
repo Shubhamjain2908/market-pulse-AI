@@ -484,6 +484,31 @@ describe('evaluate paper trades', () => {
     expect(getOpenPaperTrades(db)).toHaveLength(1);
   });
 
+  it('postMortemLogIdsOut collects STOPPED_OUT log ids when skipAi is false', () => {
+    seedNifty('2026-02-02');
+    upsertQuotes([q('PMOUT', '2026-02-02', 100, 105, 85, 90)], db);
+    insertPaperTradeIfAbsent(
+      {
+        symbol: 'PMOUT',
+        signalType: 'AI_PICK',
+        sourceDate: '2026-02-01',
+        entryPrice: 100,
+        stopLoss: 90,
+        target: 120,
+        timeHorizon: 'medium',
+        maxHoldDays: 90,
+      },
+      db,
+    );
+    const ids: number[] = [];
+    runEvaluatePaperTrades('2026-02-02', db, { skipAi: false, postMortemLogIdsOut: ids });
+    expect(ids.length).toBeGreaterThanOrEqual(1);
+    const logRow = db
+      .prepare(`SELECT action FROM trailing_stop_log WHERE id = ?`)
+      .get(ids[0]) as { action: string };
+    expect(logRow.action).toBe('STOPPED_OUT');
+  });
+
   it('runEvaluatePaperTrades returns counts', () => {
     seedNifty('2026-02-02');
     upsertQuotes([q('R1', '2026-02-02', 100, 130, 95, 125)], db);

@@ -38,7 +38,7 @@ short, actionable briefing before market open.
 > single-command `pnpm daily` that runs the entire pipeline end-to-end and
 > produces a briefing with a "My Portfolio" section showing each
 > position's recommended action. Phase 4 adds croner scheduling
-> (08:45 / 16:30 weekdays, Sat 08:00 IST), Gmail SMTP delivery via
+> (08:45 weekdays, Fri 17:00 weekly cleanup, Sat 08:00 IST; EOD evaluate via `pnpm evaluate`), Gmail SMTP delivery via
 > nodemailer, and stop-loss breach detection alerts. Earlier phases provide: a JSON-driven
 > screen engine, first-class watchlist alerts, a backtest harness, LLM
 > sentiment scoring, AI thesis generation, and an AI-composed HTML
@@ -173,7 +173,7 @@ pnpm cli backtest -s 2025-10-01 -e 2026-04-30 -n momentum_breakout
 pnpm cli sentiment         # score news headlines via LLM
 pnpm cli thesis            # generate AI theses for top-signal stocks
 pnpm cli brief             # stage 4 - compose + deliver briefing
-pnpm cli evaluate          # paper-trade trailing evaluation (bar-by-bar; --skip-ai skips STOPPED_OUT post-mortems)
+pnpm cli evaluate          # EOD bar-by-bar paper-trade eval + full health report email when BRIEFING_DELIVERY=email; `--skip-ai` skips STOPPED_OUT LLM post-mortems
 
 # Momentum screener (multi-factor rank + paper portfolio)
 pnpm cli momentum-rank              # Phase 4.1: write mom_* signals (composite z-score, rank, false-flag, …)
@@ -196,7 +196,7 @@ pnpm cli portfolio-analyse -j 12    # override parallel calls for speed/tuning
 pnpm cli scan              # one-shot intraday LTP refresh + live alerts
                            # (cron every 5-15 min during market hours)
 pnpm cli schedule          # start built-in croner schedule (Asia/Kolkata):
-                           # weekdays 08:45 + 16:30, Saturday 08:00,
+                           # weekdays 08:45 + Friday 17:00 cleanup, Saturday 08:00 (EOD: `pnpm evaluate`)
                            # Sunday 06:00 (Yahoo momentum earnings calendar),
                            # Sunday 08:00 (momentum rank + rebalance + skip-AI briefing w/ rebalance summary + deliver)
 pnpm cli schedule --run-now
@@ -352,8 +352,7 @@ To enable it:
    ```
    pnpm schedule
    ```
-   Starts recurring jobs at 08:45 / 16:30 on weekdays and 08:00 on
-   Saturdays (IST), using your configured delivery channel.
+   Starts recurring jobs at 08:45 on weekdays, Friday 17:00 signals cleanup, and 08:00 on Saturdays (IST), using your configured delivery channel. After the cash session, run **`pnpm evaluate`** for EOD paper-trade evaluation and the structured health report (email when `BRIEFING_DELIVERY=email`).
 
 If you'd rather skip Kite entirely, leave `PORTFOLIO_SOURCE=manual` (the
 default) and edit `config/portfolio.json`. Same downstream output —
@@ -491,7 +490,7 @@ End-to-end feature for **paper** positions created from AI picks / portfolio add
 
 **Evaluation**
 
-- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) — bar-by-bar walk from `source_date` to `asOf`; idempotent log inserts; **`pnpm cli evaluate`** / **`pnpm evaluate`** with **`--skip-ai`** to skip fire-and-forget LLM post-mortems on `STOPPED_OUT`
+- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) — bar-by-bar walk from `source_date` to `asOf`; idempotent log inserts; core of **`pnpm cli evaluate`** / **`pnpm evaluate`** (orchestrated by [`src/agents/eod-evaluate.ts`](src/agents/eod-evaluate.ts): health SQL + optional SMTP + awaits STOPPED_OUT post-mortems unless **`--skip-ai`**)
 - [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` after the briefing is composed (same ordering as before)
 
 **Briefing**
@@ -591,7 +590,7 @@ Holiday dates live in [`src/market/nse-calendar.ts`](src/market/nse-calendar.ts)
 | 1     | Ingest + enrich      | ✅ shipped    | NSE/Yahoo/Screener/RSS ingestors; SMA/EMA/RSI/ATR/volume/52W signals; HTML briefing |
 | 2     | Screening + backtest | ✅ shipped    | JSON screen DSL; momentum / value / FII screens; first-class watchlist alerts; backtest harness with hit-rate / drawdown |
 | 3     | AI layer             | ✅ shipped    | Anthropic/OpenAI/Cursor providers; sentiment enricher; thesis generator; LLM briefing narrative |
-| 4     | Delivery             | ✅ shipped    | Croner schedule (08:45 / 16:30 weekdays, Sat 08:00 IST; Sun 06:00 momentum earnings, Sun 08:00 momentum rebalance + skip-AI briefing deliver), Gmail SMTP delivery via nodemailer, stop-loss breach detector |
+| 4     | Delivery             | ✅ shipped    | Croner schedule (08:45 weekdays, Fri 17:00 cleanup, Sat 08:00 IST; Sun 06:00 momentum earnings, Sun 08:00 momentum rebalance + skip-AI briefing deliver); EOD evaluate + health mail via **`pnpm evaluate`**; Gmail SMTP via nodemailer, stop-loss breach detector |
 | 5     | Real-time + Kite     | ✅ shipped    | Kite Connect HTTP client + interactive login; portfolio sync + per-holding LLM HOLD/ADD/TRIM/EXIT analyser; intraday LTP scanner; 4 new screens; single-command `pnpm daily` |
 | 6     | Market regime filter | ✅ shipped    | `regime_daily` + `regime_strategy_gate`; signal enricher + deterministic classifier; regime agent + briefing card; gated screens + gated AI thesis; seed/config via `strategy-gates.json` |
 | —     | Momentum screener (multi-factor) | ✅ shipped | `momentum-config.json` / `momentum-universe.json`; `mom_*` signals + ranker + rebalance → `paper_trades` (`momentum_mf`); merged latest-per-name signal map; thesis snapshot + confidence cap when false-flag; portfolio guardrails; **`momentum-card`** + Sunday **`--brief`** / scheduler delivery |

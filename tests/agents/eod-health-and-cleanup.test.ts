@@ -35,7 +35,14 @@ describe('eod-evaluate health SQL', () => {
     expect(Array.isArray(snap.openTradesSummary)).toBe(true);
     expect(Array.isArray(snap.expectancyBySignalType)).toBe(true);
     expect(Array.isArray(snap.tradesNearTimeStop)).toBe(true);
-    expect(Array.isArray(snap.currentRegime)).toBe(true);
+    expect(Array.isArray(snap.signalPerformance30d)).toBe(true);
+    expect(Array.isArray(snap.signalPerformance30dDeduped)).toBe(true);
+    expect(Array.isArray(snap.openPositions)).toBe(true);
+    expect(Array.isArray(snap.openPositionDuplicates)).toBe(true);
+    expect(Array.isArray(snap.regimeRecent3)).toBe(true);
+    expect(Array.isArray(snap.recentClosures)).toBe(true);
+    expect(snap.postFixAiPick).toBeDefined();
+    expect(Array.isArray(snap.corporateActions7d)).toBe(true);
     expect(Array.isArray(snap.guardrailHitsToday)).toBe(true);
   });
 });

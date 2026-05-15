@@ -13,7 +13,7 @@
  *   mp backtest          Replay screens against historical EOD data
  *   mp sentiment         Score news headlines via LLM
  *   mp thesis            Generate AI theses for top-signal stocks
- *   mp evaluate           Mark outcomes for open paper trades vs EOD quotes
+ *   mp evaluate          EOD paper-trade evaluate + health report (emails when BRIEFING_DELIVERY=email)
  *   mp run-all           Full pipeline (ingest → enrich → regime → screen → thesis → brief)
  *   mp daily             One-shot: full pipeline + portfolio analysis (recommended)
  *   mp sync-sectors      Cache Yahoo sector/industry in `symbols` (for portfolio sector rollup)
@@ -22,7 +22,7 @@
  *   mp portfolio-sync    Pull holdings from Kite (or manual) into the DB
  *   mp portfolio-analyse Run LLM-driven HOLD/ADD/TRIM/EXIT analysis per holding
  *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
- *   mp schedule          Start croner jobs (08:45 / 16:30 weekdays, Sat 08:00, Sun 06:00 earnings)
+ *   mp schedule          Start croner jobs (08:45 weekdays, Fri 17:00 cleanup, Sat 08:00, Sun 06:00 earnings)
  *   mp llm-smoke         Quick live LLM text+JSON sanity check for current provider
  *   mp doctor            Print runtime/config diagnostics
  *   mp regime            Full regime agent (classify + LLM narrative → regime_daily)
@@ -38,6 +38,7 @@ import { runBacktester } from './agents/backtester.js';
 import { runBriefingComposer } from './agents/briefing-composer.js';
 import { runDailyIngestor } from './agents/daily-ingestor.js';
 import { runDailyWorkflow } from './agents/daily-workflow.js';
+import { runEodEvaluate } from './agents/eod-evaluate.js';
 import { runLiveScan } from './agents/live-scanner.js';
 import { analysePortfolio } from './agents/portfolio-analyser.js';
 import { runPortfolioSync } from './agents/portfolio-sync.js';
@@ -62,14 +63,13 @@ import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
 import { KiteApiError, KiteClient } from './ingestors/kite/client.js';
-import { logger } from './logger.js';
 import { getLlmProvider } from './llm/index.js';
+import { logger } from './logger.js';
 import { defaultIngestSymbolUniverse } from './market/ingest-symbols.js';
 import { getMarketClosure } from './market/nse-calendar.js';
 import { syncSymbolSectorsFromYahoo } from './market/yahoo-sectors.js';
 import { runMomentumRanker } from './rankers/momentum-ranker.js';
 import { startScheduler } from './scheduler/market-scheduler.js';
-import { runEvaluatePaperTrades } from './scripts/evaluate-trades.js';
 import {
   runMomentumRebalance,
   toMomentumRebalanceBriefingSummary,
@@ -405,13 +405,15 @@ program
 
 program
   .command('evaluate')
-  .description('evaluate open paper trades against EOD quotes (SL / target / time-stop)')
+  .description(
+    'EOD paper-trade evaluate (SL / target / time-stop) + full health report; awaits STOPPED_OUT LLM post-mortems unless --skip-ai',
+  )
   .option('--skip-ai', 'skip LLM post-mortem narratives for STOPPED_OUT rows')
   .action(async (opts: { skipAi?: boolean }) => {
     ensureDb();
     const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
-    const result = runEvaluatePaperTrades(date, getDb(), { skipAi: Boolean(opts.skipAi) });
-    logger.info(result, 'paper trade evaluation complete');
+    await runEodEvaluate(getDb(), { asOf: date, skipAi: Boolean(opts.skipAi) });
+    logger.info({ date, skipAi: Boolean(opts.skipAi) }, 'evaluate (EOD report) complete');
     closeDb();
   });
 
@@ -625,7 +627,9 @@ program
 
 program
   .command('schedule')
-  .description('start croner schedule (08:45 / 16:30 weekdays, Sat 08:00 IST)')
+  .description(
+    'start croner schedule (08:45 weekdays, Fri 17:00 cleanup, Sat 08:00 IST; EOD evaluate via pnpm evaluate)',
+  )
   .option('--run-now', 'run one cycle immediately on startup')
   .action(async (opts: { runNow?: boolean }) => {
     ensureDb();

@@ -27,6 +27,18 @@ import { applyDay1InitialStop, computeNewStop } from './trailing-stop-engine.js'
 
 const log = child({ component: 'evaluate-trades' });
 
+function scheduleOrQueueStopOutPostMortem(
+  logId: number | null,
+  opts?: EvaluatePaperTradesOptions,
+): void {
+  if (logId === null || opts?.skipAi) return;
+  if (opts?.postMortemLogIdsOut) {
+    opts.postMortemLogIdsOut.push(logId);
+  } else {
+    scheduleTrailingStopPostMortem(logId);
+  }
+}
+
 function lowerExclusiveIsoFromBarDate(barDate: string): string {
   const ref = parseIsoDate(barDate);
   const t = ref.getTime() - 5 * 24 * 60 * 60 * 1000;
@@ -36,6 +48,11 @@ function lowerExclusiveIsoFromBarDate(barDate: string): string {
 export interface EvaluatePaperTradesOptions {
   /** When true, skip fire-and-forget LLM post-mortem on STOPPED_OUT (writes no narrative). */
   skipAi?: boolean;
+  /**
+   * When set, STOPPED_OUT log ids are appended here instead of scheduling async post-mortems.
+   * Caller should `await runTrailingStopPostMortem(id, db)` for each (e.g. `pnpm evaluate`).
+   */
+  postMortemLogIdsOut?: number[];
 }
 
 export interface EvaluateTradesResult {
@@ -288,7 +305,7 @@ export function evaluateOnePaperTrade(
       const pnl = pnlPctLong(trade.entryPrice, exitPx);
       const status = pnl >= 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
       closePaperTrade(trade.id, status, logDate, exitPx, pnl, db, notes ?? null, exitReason);
-      if (logId !== null && !opts?.skipAi) scheduleTrailingStopPostMortem(logId);
+      scheduleOrQueueStopOutPostMortem(logId, opts);
     };
 
     if (!skipStopTargetThisBar && hitSl && hitTg) {
@@ -323,7 +340,7 @@ export function evaluateOnePaperTrade(
         'same-day SL+TP: counted as loss (conservative)',
         'TRAILING_STOP',
       );
-      if (logId !== null && !opts?.skipAi) scheduleTrailingStopPostMortem(logId);
+      scheduleOrQueueStopOutPostMortem(logId, opts);
       return 'CLOSED_LOSS';
     }
 
