@@ -90,10 +90,12 @@ export class DbSignalProvider implements SignalProvider {
       .prepare(`
         SELECT name, value FROM signals
         WHERE symbol = ? AND date <= ?
-          AND date = (SELECT MAX(date) FROM signals s2
-                      WHERE s2.symbol = signals.symbol AND s2.date <= ?)
+          AND date >= date(?, '-90 days')
+          AND date = (SELECT MAX(s2.date) FROM signals s2
+                      WHERE s2.symbol = signals.symbol AND s2.date <= ?
+                        AND s2.date >= date(?, '-90 days'))
       `)
-      .all(symbol, date, date) as Array<{ name: string; value: number }>;
+      .all(symbol, date, date, date, date) as Array<{ name: string; value: number }>;
 
     const map = new Map<string, number>();
     for (const r of rows) map.set(r.name, r.value);

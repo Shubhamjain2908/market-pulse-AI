@@ -45,11 +45,12 @@ export function getLatestSignalsMap(
           ROW_NUMBER() OVER (PARTITION BY name ORDER BY date DESC) AS rn
         FROM signals
         WHERE symbol = ? AND date <= ?
+          AND date >= date(?, '-90 days')
       )
       WHERE rn = 1
     `,
     )
-    .all(sym, asOfDate) as Array<{ name: string; value: number }>;
+    .all(sym, asOfDate, asOfDate) as Array<{ name: string; value: number }>;
   return Object.fromEntries(rows.map((r) => [r.name, r.value]));
 }
 
@@ -71,12 +72,12 @@ export function getLatestSignalsMapsForSymbols(
         SELECT symbol, name, value,
           ROW_NUMBER() OVER (PARTITION BY symbol, name ORDER BY date DESC) AS rn
         FROM signals
-        WHERE date <= ? AND symbol IN (${placeholders})
+        WHERE date <= ? AND date >= date(?, '-90 days') AND symbol IN (${placeholders})
       )
       WHERE rn = 1
     `,
     )
-    .all(asOfDate, ...upper) as Array<{ symbol: string; name: string; value: number }>;
+    .all(asOfDate, asOfDate, ...upper) as Array<{ symbol: string; name: string; value: number }>;
 
   const bySym = new Map<string, Record<string, number>>();
   for (const r of rows) {

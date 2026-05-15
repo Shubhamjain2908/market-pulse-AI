@@ -9,6 +9,7 @@ import {
   needsPortfolioLlmReview,
   signalExtremesWarrantReview,
 } from '../../src/agents/portfolio-trigger.js';
+import { DbSignalProvider } from '../../src/analysers/signal-provider.js';
 import { closeDb, getDb, migrate, upsertHoldings, upsertSignals } from '../../src/db/index.js';
 import type { PortfolioHoldingRow } from '../../src/db/portfolio-queries.js';
 
@@ -147,5 +148,23 @@ describe('portfolio-trigger', () => {
     const m = getLatestSignalsMap('MERGE', date, db);
     expect(m.mom_rank).toBe(17);
     expect(m.rsi_14).toBe(44);
+  });
+
+  it('getLatestSignalsMap returns empty when only signals fall outside the 90-day window', () => {
+    upsertSignals(
+      [{ symbol: 'OLD', date: '2026-01-01', name: 'rsi_14', value: 99, source: 'technical' }],
+      db,
+    );
+    const m = getLatestSignalsMap('OLD', date, db);
+    expect(Object.keys(m)).toHaveLength(0);
+  });
+
+  it('DbSignalProvider technical lookup ignores signals older than 90 days', () => {
+    upsertSignals(
+      [{ symbol: 'OLD2', date: '2026-01-01', name: 'rsi_14', value: 88, source: 'technical' }],
+      db,
+    );
+    const p = new DbSignalProvider(db);
+    expect(p.get('OLD2', date, 'rsi_14')).toBeNull();
   });
 });
