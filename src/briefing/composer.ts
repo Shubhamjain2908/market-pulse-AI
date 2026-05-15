@@ -36,7 +36,7 @@ import { child } from '../logger.js';
 import { INDIA_VIX_BENCHMARK_SYMBOL, NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
 import { gatherGlobalCues } from '../market/global-cues.js';
 import { latestQuoteClose, sessionChangeVsPriorClose } from '../market/quote-change.js';
-import { previousOpenTradingDay } from '../market/trading-days.js';
+import { lastOpenOnOrBefore, previousOpenTradingDay } from '../market/trading-days.js';
 import type { ScreenDefinition } from '../types/domain.js';
 import { type MomentumRebalanceSummary, renderMomentumBriefingBlock } from './momentum-card.js';
 import { recordPaperTrades } from './paper-trade-writer.js';
@@ -542,6 +542,14 @@ function gatherPortfolio(date: string, db: DatabaseType): PortfolioSummary | und
   const dayChangePct =
     hasDayChange && previousValue > 0 ? (dayChangeAbs / previousValue) * 100 : null;
 
+  const expectedSession = lastOpenOnOrBefore(date) ?? date;
+  const snapAsOf = holdings[0]?.asOf;
+  const hasKiteHolding = holdings.some((h) => h.source === 'kite');
+  const staleHoldingsWarning =
+    hasKiteHolding && snapAsOf && snapAsOf < expectedSession
+      ? `Holdings snapshot as_of ${snapAsOf} is before the expected session ${expectedSession} (IST). Refresh your Kite token and portfolio sync — AI per-name review was skipped.`
+      : undefined;
+
   return {
     totalValue,
     totalPnl,
@@ -551,6 +559,7 @@ function gatherPortfolio(date: string, db: DatabaseType): PortfolioSummary | und
     source: (holdings[0]?.source as 'kite' | 'manual') ?? 'manual',
     positions,
     riskRollup,
+    staleHoldingsWarning,
   };
 }
 
