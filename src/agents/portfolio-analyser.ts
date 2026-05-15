@@ -22,6 +22,7 @@ import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
+import { lastOpenOnOrBefore } from '../market/trading-days.js';
 import {
   buildLiteSnapshotCopy,
   getLatestSignalsMap,
@@ -320,6 +321,36 @@ export async function analysePortfolio(
     };
   }
 
+  const holdingsAsOf = filtered[0]?.asOf;
+  const expectedSession = expectedPortfolioSessionDate(date);
+  const hasKiteHolding = filtered.some((h) => h.source === 'kite');
+  if (hasKiteHolding && holdingsAsOf && holdingsAsOf < expectedSession) {
+    const rows = buildStaleKiteHoldingsRows(filtered, date, holdingsAsOf);
+    upsertPortfolioAnalysis(rows, db);
+    log.warn(
+      {
+        staleHoldings: true,
+        briefingPortfolio: true,
+        holdingsAsOf,
+        expectedSession,
+        analysisDate: date,
+        symbolCount: filtered.length,
+      },
+      'STALE_HOLDINGS: Kite portfolio snapshot is older than the expected NSE session; skipped LLM portfolio review',
+    );
+    const byAction = empty();
+    for (const r of rows) byAction[r.action]++;
+    return {
+      date,
+      analysed: rows.length,
+      failed: 0,
+      fullLlmCount: 0,
+      liteCount: 0,
+      byAction,
+      rows,
+    };
+  }
+
   const fullQueue: PortfolioHoldingRow[] = [];
   const liteQueue: PortfolioHoldingRow[] = [];
   for (const h of filtered) {
@@ -547,4 +578,32 @@ function buildPositionContext(h: PortfolioHoldingRow, date: string, db: Database
 
 function empty(): Record<'HOLD' | 'ADD' | 'TRIM' | 'EXIT', number> {
   return { HOLD: 0, ADD: 0, TRIM: 0, EXIT: 0 };
+}
+
+/** Last NSE cash session on or before the briefing/analysis calendar day (IST). */
+function expectedPortfolioSessionDate(briefingDate: string): string {
+  return lastOpenOnOrBefore(briefingDate) ?? briefingDate;
+}
+
+function buildStaleKiteHoldingsRows(
+  holdings: PortfolioHoldingRow[],
+  analysisDate: string,
+  asOf: string,
+): PortfolioAnalysisRow[] {
+  const triggerReason = `STALE_HOLDINGS — Kite token not refreshed. as_of: ${asOf}`;
+  return holdings.map((h) => ({
+    symbol: h.symbol,
+    date: analysisDate,
+    action: 'HOLD' as const,
+    conviction: 0,
+    thesis: 'Skipped: stale portfolio holdings',
+    bullPoints: [],
+    bearPoints: [],
+    triggerReason,
+    suggestedStop: null,
+    suggestedTarget: null,
+    pnlPct: h.pnlPct ?? null,
+    model: 'none',
+    raw: null,
+  }));
 }
