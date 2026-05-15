@@ -77,6 +77,9 @@ CREATE TABLE signals (
 );
 CREATE INDEX idx_signals_date_name ON signals(date, name);
 CREATE INDEX idx_signals_symbol    ON signals(symbol);
+-- App read contract (not enforced by SQLite): DbSignalProvider technical branch and
+-- getLatestSignalsMap / getLatestSignalsMapsForSymbols only consider rows where
+-- date <= as_of AND date >= date(as_of, '-90 days'); no silent use of older rows.
 CREATE TABLE screens (
   symbol            TEXT NOT NULL,
   date              TEXT NOT NULL,

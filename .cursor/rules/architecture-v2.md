@@ -43,7 +43,8 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 | **Regime Classify** | `src/agents/regime-agent.ts` | 8 signals scored −2 to +2. 3-day persistence. CRISIS fires immediately. Writes to `regime_daily`. Runs before all strategies. |
 | **Screen** | `src/analysers/stock-screener.ts` | Loads `config/screens.json`. Checks `regime_strategy_gate`. Writes passing symbols to `screens`. |
 | **AI Thesis** | `src/agents/thesis-generator.ts` | Per screen pass: sends technicals + fundamentals + news + regime context to LLM. Returns structured JSON. Skips symbols in live portfolio (`alreadyOwned`) and any symbol with an OPEN `paper_trades` row (any `signal_type`). |
-| **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs trailing-stop + SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). **Circuit breaker:** if `bar.open < 0.7 ×` prior session’s NSE `close` (`date < bar.date`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag. Kite portfolio analysis is a separate stage (thesis block when AI enabled). |
+| **Portfolio review** | `src/agents/portfolio-sync.ts` + `portfolio-analyser.ts` | When AI is enabled and portfolio is not skipped: after thesis, optional Kite sync (earlier in the same run) feeds `portfolio_holdings`; analyser writes `portfolio_analysis` (full LLM, lite snapshot, or **stale-holdings placeholders** — see §4). |
+| **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs trailing-stop + SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). **Circuit breaker:** if `bar.open < 0.7 ×` prior session’s NSE `close` (`date < bar.date`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag. |
 | **Briefing** | `src/briefing/composer.ts` | Assembles HTML email + browser HTML. Two render paths: `renderEmailHtml()` (table-based, inline CSS, 600px, Gmail-safe) and `renderBrowserHtml()` (full CSS variables, beautiful UI). Delivered via Nodemailer → Gmail SMTP. |
 
 ---
@@ -172,6 +173,8 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 | **ETF/SGB RSI exclusion** | LIQUIDCASE, GOLDBEES, GOLDCASE, SILVERBEES, NIFTYBEES, JUNIORBEES, SGBs — skip RSI/volume signals entirely | `config/etf-exclusions.json` + portfolio analyser (newly added) |
 | **Regime gate absolute** | momentum_mf: no entries if regime ≠ BULL_TRENDING. No exception. | `momentum-rebalance.ts` pre-check |
 | **alreadyOwned filter** | Skip symbol in AI Picks if currently held in Kite portfolio **or** symbol has any OPEN `paper_trades` row (any `signal_type`) | Thesis generator input preprocessing (**extended May 14**) |
+| **Stale Kite holdings** | If any analysed row is `source=kite` and `portfolio_holdings.as_of` is **before** the last open NSE session on or before the run date (`lastOpenOnOrBefore`), skip **all** portfolio LLM + lite paths; upsert per-symbol `HOLD` rows (`model=none`, `trigger_reason` prefix `STALE_HOLDINGS — …`); structured `log.warn` with `briefingPortfolio: true`; briefing **My Portfolio** shows a yellow banner (`staleHoldingsWarning`). Manual-only portfolios skip this gate. | `portfolio-analyser.ts`, `briefing/composer.ts` + `template.ts` |
+| **Signals read window (90d)** | Technical lookups from `signals` only consider rows with `date >= date(as_of, '-90 days')` (anchored on the evaluation / screen date). If nothing falls in the window, callers see **empty** maps / nulls — **no** silent fallback to older history. Same window on the `MAX(date)` subquery in `DbSignalProvider` so “latest session” cannot be outside the window. | `analysers/signal-provider.ts`, `agents/portfolio-trigger.ts` (`getLatestSignalsMap`, `getLatestSignalsMapsForSymbols`) |
 
 ---
 
@@ -182,6 +185,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
   Indexes: `date`, `symbol`.
 - **`signals`** — `(symbol, date, name)` PK. All technical + momentum signals,
   long format. `source` = `'technical' | 'momentum_ranker' | etc`.
+  **Read contract:** screen evaluation (`DbSignalProvider` technical branch) and portfolio/thesis merges (`getLatestSignalsMap` / `getLatestSignalsMapsForSymbols`) only load rows on or before the as-of date **and** on or after `date(as_of, '-90 days')`; empty window → empty map / null (no deep-history fallback). Latest row **per `name`** still wins inside that window (mixed daily technical + weekly `mom_*` dates).
   Key signal names: `sma_20, sma_50, sma_200, ema_9, ema_21, rsi_14, atr_14, 
   volume_ratio_20d, mom_12_1_return, mom_relative_strength_ba, 
   mom_volume_breakout_flag, mom_composite_score, mom_rank, mom_false_flag,
@@ -209,6 +213,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 - **`portfolio_analysis`** — `(symbol, date)` PK. Per-holding LLM output:
   `action (HOLD|ADD|TRIM|EXIT), conviction (0..1), thesis, bull_points JSON, 
   bear_points JSON, trigger_reason, suggested_stop, suggested_target, pnl_pct, model`.
+  When stale Kite holdings fire, rows are deterministic placeholders (`model=none`, `conviction=0`, `STALE_HOLDINGS` trigger text) — not LLM output.
 - **`alerts`** — `(symbol, date, kind)` PK. Kinds: `rsi_overbought | rsi_oversold | 
   volume_spike | near_52w_high | near_52w_low`. Feeds briefing watchlist section.
 
