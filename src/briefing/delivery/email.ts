@@ -79,6 +79,40 @@ function ensureEmailConfig(): void {
   }
 }
 
+export interface SendHtmlEmailOptions {
+  subject: string;
+  html: string;
+  /** Optional plain-text part (Gmail message clipped fallback). */
+  text?: string;
+}
+
+export async function sendHtmlEmail(opts: SendHtmlEmailOptions): Promise<{ messageId: string }> {
+  ensureEmailConfig();
+
+  const transporter = nodemailer.createTransport({
+    host: config.SMTP_HOST,
+    port: config.SMTP_PORT,
+    secure: config.SMTP_PORT === 465,
+    auth: {
+      user: config.SMTP_USER,
+      pass: config.SMTP_PASS,
+    },
+  });
+
+  const to = splitCsv(config.SMTP_TO);
+  const info = await transporter.sendMail({
+    from: config.SMTP_FROM,
+    to,
+    subject: opts.subject,
+    html: opts.html,
+    text: opts.text ?? '',
+  });
+
+  const messageId = info.messageId ?? 'unknown';
+  log.info({ messageId, to }, 'html email sent');
+  return { messageId };
+}
+
 function splitCsv(v: string | undefined): string[] {
   if (!v) return [];
   return v
