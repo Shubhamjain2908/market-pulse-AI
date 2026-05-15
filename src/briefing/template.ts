@@ -119,6 +119,8 @@ export interface PortfolioSummary {
   positions: PortfolioPositionCard[];
   /** Concentration / drawdown distribution — optional when totals are computable. */
   riskRollup?: PortfolioRiskRollup;
+  /** Kite holdings `as_of` predates the expected session — AI review was skipped. */
+  staleHoldingsWarning?: string;
 }
 
 export interface ScreenMatch {
@@ -279,10 +281,7 @@ function renderMood(
       briefingDate,
     ),
   ]
-    .map(
-      (cell) =>
-        `<td width="25%" valign="top" style="padding:4px;">${cell}</td>`,
-    )
+    .map((cell) => `<td width="25%" valign="top" style="padding:4px;">${cell}</td>`)
     .join('');
   const moodTable = `<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout mood-cells-table"><tr>${moodCells}</tr></table>`;
 
@@ -452,10 +451,15 @@ function renderPortfolio(p?: PortfolioSummary): string {
     .join('');
   const positionTable = `<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout position-cards-table">${cardRows}</table>`;
 
+  const staleBanner = p.staleHoldingsWarning
+    ? `<div class="closure-banner"><strong>Stale Kite holdings</strong> — ${esc(p.staleHoldingsWarning)}</div>`
+    : '';
+
   return `
     <section class="card">
       <h2>My Portfolio <span class="muted">· source: ${esc(p.source)}</span></h2>
       <p class="section-lede muted">Recommendations come from today&apos;s saved analysis — align with your risk limits.</p>
+      ${staleBanner}
       ${summary}
       ${risk}
       ${positionTable}

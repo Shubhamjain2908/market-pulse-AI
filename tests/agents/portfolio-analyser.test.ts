@@ -12,8 +12,8 @@ import {
 import {
   closeDb,
   getDb,
-  insertPaperTradeIfAbsent,
   getPortfolioAnalysisForDate,
+  insertPaperTradeIfAbsent,
   migrate,
   upsertHoldings,
   upsertQuotes,
@@ -175,6 +175,102 @@ describe('portfolio analyser', () => {
     expect(result.analysed).toBe(0);
     expect(result.byAction.HOLD).toBe(0);
     expect(llm.calls).toHaveLength(0);
+  });
+
+  it('skips LLM and writes stale placeholder rows when Kite as_of is before the expected session', async () => {
+    const runDate = '2026-05-04';
+    const staleAsOf = '2026-04-30';
+    const quoteRun: RawQuote = {
+      symbol: 'INFY',
+      exchange: 'NSE',
+      date: runDate,
+      open: 1500,
+      high: 1640,
+      low: 1490,
+      close: 1620,
+      adjClose: 1620,
+      volume: 5_000_000,
+      source: 'test',
+    };
+    upsertQuotes([quoteRun], db);
+    upsertHoldings(
+      [
+        {
+          symbol: 'INFY',
+          exchange: 'NSE',
+          asOf: staleAsOf,
+          qty: 50,
+          avgPrice: 1500,
+          lastPrice: 1620,
+          pnl: 6000,
+          pnlPct: 8,
+          dayChange: 200,
+          dayChangePct: 0.5,
+          product: 'CNC',
+          source: 'kite',
+        },
+        {
+          symbol: 'HDFCBANK',
+          exchange: 'NSE',
+          asOf: staleAsOf,
+          qty: 30,
+          avgPrice: 1700,
+          lastPrice: 1640,
+          pnl: -1800,
+          pnlPct: -3.5,
+          dayChange: -90,
+          dayChangePct: -0.5,
+          product: 'CNC',
+          source: 'kite',
+        },
+      ],
+      db,
+    );
+    const llm = new MockLlmProvider();
+    const result = await analysePortfolio({ date: runDate }, db, llm);
+    expect(llm.calls).toHaveLength(0);
+    expect(result.fullLlmCount).toBe(0);
+    expect(result.liteCount).toBe(0);
+    expect(result.analysed).toBe(2);
+    expect(result.byAction.HOLD).toBe(2);
+    const infy = result.rows.find((r) => r.symbol === 'INFY');
+    expect(infy?.model).toBe('none');
+    expect(infy?.conviction).toBe(0);
+    expect(infy?.thesis).toBe('Skipped: stale portfolio holdings');
+    expect(infy?.triggerReason).toContain('STALE_HOLDINGS');
+    expect(infy?.triggerReason).toContain(staleAsOf);
+    expect(infy?.bullPoints).toEqual([]);
+    expect(infy?.bearPoints).toEqual([]);
+
+    const persisted = getPortfolioAnalysisForDate(runDate, db);
+    expect(persisted).toHaveLength(2);
+  });
+
+  it('does not apply stale guard when all holdings are manual', async () => {
+    const runDate = '2026-05-04';
+    db.prepare('DELETE FROM portfolio_holdings').run();
+    upsertHoldings(
+      [
+        {
+          symbol: 'INFY',
+          exchange: 'NSE',
+          asOf: '2026-04-30',
+          qty: 50,
+          avgPrice: 1500,
+          lastPrice: 1620,
+          pnl: 6000,
+          pnlPct: 8,
+          dayChange: 200,
+          dayChangePct: 0.5,
+          product: 'CNC',
+          source: 'manual',
+        },
+      ],
+      db,
+    );
+    const llm = new MockLlmProvider();
+    await analysePortfolio({ date: runDate, symbols: ['INFY'] }, db, llm);
+    expect(llm.calls.length).toBeGreaterThan(0);
   });
 
   const baseAction = (): PortfolioAction => ({
