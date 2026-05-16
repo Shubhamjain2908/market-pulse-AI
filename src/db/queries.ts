@@ -614,7 +614,7 @@ export function closePaperTrade(
         outcome_date = @outcomeDate,
         exit_price = @exitPrice,
         pnl_pct = @pnlPct,
-        notes = COALESCE(@notes, notes),
+        notes = CASE WHEN @notes IS NOT NULL THEN @notes ELSE notes END,
         stop_raised_today = 0,
         exit_reason = CASE WHEN @applyExitReason = 1 THEN @exitReason ELSE exit_reason END
     WHERE id = @id AND status = 'OPEN'

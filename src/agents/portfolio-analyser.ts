@@ -175,6 +175,7 @@ export function applyPortfolioAddGuardrails(
   action: PortfolioAction,
   signals: Record<string, number>,
   position: { pnlPct: number | null; lastPrice: number | null },
+  latestPaperEntry: { entryPrice: number; sourceDate: string } | null,
 ): PortfolioAction {
   if (action.action !== 'ADD') return action;
 
@@ -224,6 +225,27 @@ export function applyPortfolioAddGuardrails(
         action: 'HOLD',
         conviction: Math.min(action.conviction, 0.55),
         triggerReason,
+      };
+    }
+  }
+
+  // Rule 9: Clustering guard — block ADD within 2% of prior paper entry unless breakout/pullback
+  if (latestPaperEntry && lastPrice != null) {
+    const entryPrice = latestPaperEntry.entryPrice;
+    const proximityPct = ((lastPrice - entryPrice) / entryPrice) * 100;
+    const atr = signals.atr_14;
+    const volRatio = signals.volume_ratio_20d;
+
+    const isPullback = atr != null && lastPrice <= entryPrice - atr;
+    const isBreakout = volRatio != null && volRatio > 1.5;
+
+    if (proximityPct > 0 && proximityPct <= 2 && !isPullback && !isBreakout) {
+      const suffix = `[Guardrail: ADD blocked — price within 2% of prior entry (₹${entryPrice.toFixed(2)}) without ATR pullback or 1.5x vol breakout.]`;
+      return {
+        ...action,
+        action: 'HOLD',
+        conviction: Math.min(action.conviction, 0.55),
+        triggerReason: truncateTriggerReason(`${action.triggerReason} ${suffix}`),
       };
     }
   }
@@ -432,9 +454,10 @@ function buildLitePortfolioRow(
 ): PortfolioAnalysisRow {
   const copy = buildLiteSnapshotCopy(h, date, db);
   const signals = getLatestSignalsMap(h.symbol, date, db);
+  const latestPaperEntry = getMostRecentPaperTradeEntry(h.symbol, date, db);
   const baseAction: PortfolioAction = {
     symbol: h.symbol,
-    action: 'HOLD',
+    action: 'HOLD' as const,
     conviction: 0.35,
     thesis: copy.thesis,
     bullPoints: copy.bullPoints,
@@ -443,7 +466,15 @@ function buildLitePortfolioRow(
     suggestedStop: null,
     suggestedTarget: null,
   };
-  const g = applyMomentumPortfolioGuardrails(baseAction, signals);
+  const g = applyMomentumPortfolioGuardrails(
+    applyPortfolioAddGuardrails(
+      baseAction,
+      signals,
+      { pnlPct: h.pnlPct ?? null, lastPrice: h.lastPrice ?? null },
+      latestPaperEntry,
+    ),
+    signals,
+  );
 
   return {
     symbol: h.symbol,
@@ -485,15 +516,18 @@ async function analyseOne(
     maxRetries: 1,
   });
   const signals = getLatestSignalsMap(h.symbol, date, db);
-  const a: PortfolioAction = applyOpenPaperTradeAddBlock(
-    applyMomentumPortfolioGuardrails(
-      applyPortfolioAddGuardrails(result.data, signals, {
+  const latestPaperEntry = getMostRecentPaperTradeEntry(h.symbol, date, db);
+  const a: PortfolioAction = applyMomentumPortfolioGuardrails(
+    applyPortfolioAddGuardrails(
+      applyOpenPaperTradeAddBlock(result.data, openPaperTradeCount),
+      signals,
+      {
         pnlPct: h.pnlPct ?? null,
         lastPrice: h.lastPrice ?? null,
-      }),
-      signals,
+      },
+      latestPaperEntry,
     ),
-    openPaperTradeCount,
+    signals,
   );
 
   return {
