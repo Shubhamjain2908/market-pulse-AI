@@ -5,7 +5,7 @@
  * Subcommands map 1:1 to pipeline stages so each can be run in isolation:
  *
  *   mp migrate           Apply DB migrations
- *   mp ingest            Stage 1 - pull data from configured sources
+ *   mp ingest            Stage 1 - pull data from configured sources (`-s all` = watchlist ∪ momentum ∪ portfolio)
  *   mp enrich            Stage 2 - compute signals from raw data
  *   mp momentum-rank      Phase 4.1 - momentum composite + ranks (signals)
  *   mp momentum-rebalance Phase 4.2 - regime gate, rank exits, entries (paper_trades)
@@ -62,9 +62,12 @@ import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
 import { KiteApiError, KiteClient } from './ingestors/kite/client.js';
-import { logger } from './logger.js';
 import { getLlmProvider } from './llm/index.js';
-import { defaultIngestSymbolUniverse } from './market/ingest-symbols.js';
+import { logger } from './logger.js';
+import {
+  defaultIngestSymbolUniverse,
+  getIngestAllEquitySymbolsUnion,
+} from './market/ingest-symbols.js';
 import { getMarketClosure } from './market/nse-calendar.js';
 import { syncSymbolSectorsFromYahoo } from './market/yahoo-sectors.js';
 import { runMomentumRanker } from './rankers/momentum-ranker.js';
@@ -175,13 +178,24 @@ program
 program
   .command('ingest')
   .description('stage 1: pull market data from configured sources')
-  .option('-s, --symbols <list>', 'comma-separated list of symbols')
+  .option(
+    '-s, --symbols <list>',
+    'comma-separated symbols, or the keyword `all` for watchlist ∪ momentum-universe ∪ portfolio (config + latest DB holdings), deduped',
+  )
   .action(async (opts: { symbols?: string }) => {
     ensureDb();
-    const symbols = opts.symbols
+    const raw = opts.symbols
       ?.split(',')
       .map((s) => s.trim())
       .filter(Boolean);
+    let symbols: string[] | undefined;
+    const token = raw?.[0];
+    if (raw?.length === 1 && token !== undefined && token.toLowerCase() === 'all') {
+      symbols = getIngestAllEquitySymbolsUnion(getDb());
+      logger.info({ count: symbols.length, mode: 'all' }, 'ingest symbol universe');
+    } else if (raw?.length) {
+      symbols = raw.map((s) => s.toUpperCase());
+    }
     const date = optionalCliIsoDate(program.opts().date);
     const result = await runDailyIngestor({ date, symbols });
     logger.info(result, 'ingest complete');
