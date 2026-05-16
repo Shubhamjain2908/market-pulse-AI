@@ -243,7 +243,7 @@ export function evaluateOnePaperTrade(
     }
 
     const hitSl = bar.low <= stopLoss;
-    const hitTg = bar.high >= trade.target;
+    const hitTg = bar.close >= trade.target;
     const elapsed = dayIndex.get(bar.date) ?? 0;
 
     const raisedForBriefingLatch =
@@ -313,6 +313,7 @@ export function evaluateOnePaperTrade(
         db,
       );
       const pnl = pnlPctLong(trade.entryPrice, exitPx);
+      const exitReasonStop: ExitReason = skipTrailThisBar ? 'INITIAL_STOP' : 'TRAILING_STOP';
       closePaperTrade(
         trade.id,
         'CLOSED_LOSS',
@@ -321,7 +322,7 @@ export function evaluateOnePaperTrade(
         pnl,
         db,
         'same-day SL+TP: counted as loss (conservative)',
-        'TRAILING_STOP',
+        exitReasonStop,
       );
       if (logId !== null && !opts?.skipAi) scheduleTrailingStopPostMortem(logId);
       return 'CLOSED_LOSS';

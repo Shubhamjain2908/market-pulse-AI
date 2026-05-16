@@ -144,7 +144,7 @@ describe('evaluate paper trades', () => {
 
   it('same-day SL+TP counts as LOSS', () => {
     seedNifty('2026-02-02');
-    upsertQuotes([q('BOTH', '2026-02-02', 100, 125, 85, 100)], db);
+    upsertQuotes([q('BOTH', '2026-02-02', 100, 130, 85, 125)], db);
     insertPaperTradeIfAbsent(
       {
         symbol: 'BOTH',
@@ -166,8 +166,8 @@ describe('evaluate paper trades', () => {
     const row = db
       .prepare('SELECT exit_reason, notes FROM paper_trades WHERE id = ?')
       .get(t.id) as { exit_reason: string | null; notes: string | null };
-    expect(row.exit_reason).toBe('TRAILING_STOP');
-    expect(row.notes).toContain('same-day SL+TP');
+    expect(row.exit_reason).toBe('INITIAL_STOP');
+    expect(row.notes ?? '').toContain('same-day SL+TP');
   });
 
   it('time-stops after max_hold_days on Nifty calendar', () => {

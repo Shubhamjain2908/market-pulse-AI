@@ -12,9 +12,9 @@ import type { PortfolioHoldingRow } from '../db/index.js';
  */
 export function getPortfolioDeepLossPct(): number {
   const raw = process.env.PORTFOLIO_FULL_REVIEW_LOSS_PCT;
-  if (raw === undefined || raw === '') return -15;
+  if (raw === undefined || raw === '') return -20;
   const n = Number(raw);
-  return Number.isFinite(n) ? n : -15;
+  return Number.isFinite(n) ? n : -20;
 }
 
 export interface SignalSnapshot {
