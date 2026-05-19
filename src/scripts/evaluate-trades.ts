@@ -14,6 +14,7 @@ import { loadMomentumConfig } from '../config/loaders.js';
 import { type PaperTradeRow, closePaperTrade, getOpenPaperTrades } from '../db/queries.js';
 import {
   getAtr14,
+  getLastEvaluatedBarDate,
   insertStopLog,
   patchPaperTradeTrailing,
   resetStopRaisedTodayForOpenTrades,
@@ -130,15 +131,20 @@ export function evaluateOnePaperTrade(
   asOf: string,
   opts?: EvaluatePaperTradesOptions,
 ): 'CLOSED_WIN' | 'CLOSED_LOSS' | 'CLOSED_TIME' | 'no_data' | 'still_open' {
-  const bars = getSymbolBars(db, trade.symbol, trade.sourceDate, asOf);
-  if (bars.length === 0) return 'no_data';
+  const lastEvaluated = getLastEvaluatedBarDate(trade.id, db);
+  const walkFrom = lastEvaluated ?? trade.sourceDate;
+  const bars = getSymbolBars(db, trade.symbol, walkFrom, asOf);
+  if (bars.length === 0) {
+    // Caught up through `asOf` (idempotent re-eval) vs never had quotes in the entry window.
+    return lastEvaluated !== null ? 'still_open' : 'no_data';
+  }
 
   const hardFloor = hardStopFloorFromPct(trade.entryPrice, loadMomentumConfig().hard_stop_pct);
 
   const dayIndex = buildTradingDayIndex(db, trade.sourceDate, asOf);
   const initialLlmStop = trade.stopLoss;
-
-  let stopLoss = initialLlmStop;
+  const isResume = lastEvaluated !== null;
+  let stopLoss = isResume ? trade.stopLoss : initialLlmStop;
   let highestClose = trade.highestCloseSinceEntry == null ? null : trade.highestCloseSinceEntry;
   let atr14AtEntryStored: number | null = trade.atr14AtEntry ?? null;
   let trailingMult = normalizeTrailingMult(trade);
