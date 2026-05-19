@@ -484,6 +484,53 @@ describe('evaluate paper trades', () => {
     expect(getOpenPaperTrades(db)).toHaveLength(1);
   });
 
+  it('incremental resume: inflated persisted stop does not replay prior bars (no false stop-out)', () => {
+    const src = '2026-04-01';
+    const d1 = '2026-04-02';
+    const d2 = '2026-04-03';
+    seedNifty(d1, d2);
+    upsertQuotes(
+      [
+        q('RESUME1', d1, 100, 105, 95, 100),
+        q('RESUME1', d2, 100, 105, 99, 100),
+      ],
+      db,
+    );
+    seedAtr14('RESUME1', [src, d1, d2], 3);
+
+    insertPaperTradeIfAbsent(
+      {
+        symbol: 'RESUME1',
+        signalType: 'AI_PICK',
+        sourceDate: src,
+        entryPrice: 100,
+        stopLoss: 85,
+        target: 220,
+        timeHorizon: 'medium',
+        maxHoldDays: 90,
+      },
+      db,
+    );
+    const rowId = (
+      db.prepare('SELECT id FROM paper_trades WHERE symbol = ?').get('RESUME1') as { id: number }
+    ).id;
+    db.prepare(
+      'UPDATE paper_trades SET highest_close_since_entry = 100, atr14_at_entry = 3 WHERE id = ?',
+    ).run(rowId);
+
+    let t = getOpenPaperTrades(db)[0];
+    if (t === undefined) throw new Error('missing trade');
+    expect(evaluateOnePaperTrade(t, db, d1, { skipAi: true })).toBe('still_open');
+
+    // Simulates a stop raised in a later pipeline run: replaying day1 with this level would hit low 95.
+    db.prepare('UPDATE paper_trades SET stop_loss = ? WHERE id = ?').run(97, rowId);
+
+    t = getOpenPaperTrades(db)[0];
+    if (t === undefined) throw new Error('missing trade');
+    expect(evaluateOnePaperTrade(t, db, d2, { skipAi: true })).toBe('still_open');
+    expect(getOpenPaperTrades(db)).toHaveLength(1);
+  });
+
   it('runEvaluatePaperTrades returns counts', () => {
     seedNifty('2026-02-02');
     upsertQuotes([q('R1', '2026-02-02', 100, 130, 95, 125)], db);

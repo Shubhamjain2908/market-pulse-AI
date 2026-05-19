@@ -179,6 +179,23 @@ export function insertStopLog(row: TrailingStopLogInsert, db: DatabaseType = get
   return Number(result.lastInsertRowid);
 }
 
+/**
+ * Most recent `log_date` for `trade_id` across non-`STOPPED_OUT` actions (RAISED / HELD /
+ * TIGHTENED). Used as the exclusive lower bound for incremental bar evaluation: bars on or before
+ * this date were already processed; the walk continues from the next session only.
+ * Excluding `STOPPED_OUT` avoids treating the exit bar as a résumé cursor after a close.
+ */
+export function getLastEvaluatedBarDate(tradeId: number, db: DatabaseType = getDb()): string | null {
+  const row = db
+    .prepare(
+      `SELECT log_date FROM trailing_stop_log
+       WHERE trade_id = ? AND action != 'STOPPED_OUT'
+       ORDER BY log_date DESC LIMIT 1`,
+    )
+    .get(tradeId) as { log_date: string } | undefined;
+  return row?.log_date ?? null;
+}
+
 /** Single log row by primary key (post-mortem agent). */
 export function getStopLogById(id: number, db: DatabaseType = getDb()): TrailingStopLogRow | undefined {
   const row = db.prepare(`SELECT * FROM trailing_stop_log WHERE id = ?`).get(id) as

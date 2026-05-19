@@ -491,7 +491,7 @@ End-to-end feature for **paper** positions created from AI picks / portfolio add
 
 **Evaluation**
 
-- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) — bar-by-bar walk from `source_date` to `asOf`; idempotent log inserts; **`pnpm cli evaluate`** / **`pnpm evaluate`** with **`--skip-ai`** to skip fire-and-forget LLM post-mortems on `STOPPED_OUT`
+- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) — bar walk from `source_date` to `asOf` on first evaluation; **incremental resume** from the last `trailing_stop_log` bar (non-`STOPPED_OUT`) so prior sessions are not re-checked against a raised stop; idempotent log inserts; **`pnpm cli evaluate`** / **`pnpm evaluate`** with **`--skip-ai`** to skip fire-and-forget LLM post-mortems on `STOPPED_OUT`
 - [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` after the briefing is composed (same ordering as before)
 
 **Briefing**
