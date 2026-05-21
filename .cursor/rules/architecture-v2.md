@@ -312,3 +312,30 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 - Strategy backlog (6 unbuilt, prioritised): see strategy-backlog.md
 
 **Liquidity filter:** Deferred to v1.1. Stub slot exists in `momentum-ranker.ts` Step 2 with log line. Not yet implemented.
+
+## 9. Backtest Infrastructure
+
+### Option A — Signal Replay Backtest
+Walk-forward simulation from `quotes` only. Does NOT read `signals` table.
+Runner: `pnpm backtest:option-a`
+Default window: 2023-01-01 → 2026-03-31. Min history: 504 days. Costs: 20bps RT.
+
+**Regime source:** quotes-only 3-signal proxy (see `src/backtest/regime-proxy.ts`).
+Historical `regime_daily` is unusable for pre-2025 dates — signals table had no 
+history when backfill ran, producing 99.6% CHOPPY. Proxy uses: Nifty vs SMA200, 
+SMA200 slope, % universe above SMA200.
+
+**adj_close vs close:** mom_12_1_return uses adj_close (split-consistent). 
+RSI/SMA/ATR use close (matches live enricher). Production loadStockClosesAsc 
+uses COALESCE(adj_close, close) — alignment TODO before GTT activation.
+
+**Survivorship bias:** active. Delisted symbols absent from quotes are excluded.
+Results are optimistic by ~0.3–0.5% avg return.
+
+**Results (2023-01-01 to 2026-05-21):**
+- momentum_mf: 689 trades, 52.8% hit rate, +1.62% avg net, PF 1.79
+- ai_pick (rule proxy): 313 trades, 56.5% hit rate, +1.98% avg net, PF 1.76
+
+**Option B (not yet built):** Parameter sensitivity / walk-forward windows.
+Priority trigger: if Option A expectancy < target after survivorship adjustment,
+or ATR multiplier sensitivity on trailing stop is needed.
