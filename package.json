@@ -31,10 +31,12 @@
     "regime:classify": "tsx src/cli.ts regime:classify",
     "regime:gate-summary": "tsx src/cli.ts regime:gate-summary",
     "regime:seed-gates": "tsx scripts/seed-regime-gates.mts",
+    "regime:audit-history": "tsx scripts/audit-regime-history.mts",
     "momentum:backfill-universe": "tsx scripts/backfill-momentum-universe.mts",
     "momentum:refresh-earnings": "tsx scripts/refresh-earnings-calendar.mts",
     "momentum:rank": "tsx src/cli.ts momentum-rank",
     "momentum:rebalance": "tsx src/cli.ts momentum-rebalance",
+    "backtest:option-a": "tsx src/backtest/runner.ts",
     "ingest": "tsx src/cli.ts ingest",
     "enrich": "tsx src/cli.ts enrich",
     "screen": "tsx src/cli.ts screen",
@@ -99,10 +101,6 @@
     "vitest": "^2.1.8"
   },
   "pnpm": {
-    "onlyBuiltDependencies": [
-      "@biomejs/biome",
-      "better-sqlite3",
-      "esbuild"
-    ]
+    "onlyBuiltDependencies": ["@biomejs/biome", "better-sqlite3", "esbuild"]
   }
 }
