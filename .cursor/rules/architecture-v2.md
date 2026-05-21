@@ -250,9 +250,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
   delivery_method, delivered_at`. Delivery methods: `file | email | slack | telegram`.
 - **`config`** — `(key)` PK. Key-value store. Currently holds: `kite_access_token`.
 - **`kite_instruments`** — `(exchange, tradingsymbol)` PK. Kite instrument master.
-- **`backtest_runs`** + **`backtest_trades`** — Schema exists, not yet populated.
-  `backtest_runs` stores aggregate stats per screen + date range.
-  `backtest_trades` stores individual trade records with FK to `backtest_runs`.
+- **`backtest_runs`** + **`backtest_trades`** — Screen harness (`src/backtest/harness.ts`) persists screen-replay runs. **Option A** (`src/backtest/runner.ts`, `mp backtest-option-a`) adds walk-forward `momentum_mf` / `ai_pick` simulations using **quotes-only** on-the-fly signals; extended columns on `backtest_runs` (migration `0014_backtest_runs_option_a.sql`) store `strategy_id`, expectancy, profit factor, etc. Runner enforces **≥80%** `regime_daily` coverage over the benchmark trading-day window, logs a structured **`option-a:start`** payload (incl. regime label histogram for that window), and persists a run row per strategy even when `totalTrades` is 0. For persisted vs score-only regime labels use `scripts/audit-regime-history.mts`.
 
 ---
 

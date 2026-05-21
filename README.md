@@ -170,6 +170,9 @@ pnpm cli screen            # stage 3 - run screens + alert scan
 pnpm cli screen -n momentum_breakout
 pnpm cli backtest -s 2025-10-01 -e 2026-04-30 -h 10  # historical replay
 pnpm cli backtest -s 2025-10-01 -e 2026-04-30 -n momentum_breakout
+pnpm cli backtest-option-a --strategy all --from 2023-01-01 --to 2026-03-31  # Option A: momentum_mf + ai_pick (regime_daily ≥80% coverage); add --verbose for timings
+pnpm exec tsx scripts/audit-regime-history.mts --from 2023-01-01 --to 2026-03-31  # persisted vs raw score regime (why no BULL?)
+pnpm backtest:option-a -- --strategy momentum-mf --dry-run
 pnpm cli sentiment         # score news headlines via LLM
 pnpm cli thesis            # generate AI theses for top-signal stocks
 pnpm cli brief             # stage 4 - compose + deliver briefing
@@ -293,7 +296,7 @@ Edit [`config/screens.json`](config/screens.json) and re-run
 
 ### Backtest
 
-`pnpm cli backtest -s 2025-10-01 -e 2026-04-30 -h 10` replays every
+**Screen replay** — `pnpm cli backtest -s 2025-10-01 -e 2026-04-30 -h 10` replays every
 configured screen against historical EOD data:
 
 - Each session in the window where a screen matches becomes a trade.
@@ -302,6 +305,11 @@ configured screen against historical EOD data:
   return, max return, min return, and worst single-trade drawdown.
 - Results land in `backtest_runs` and `backtest_trades` tables for ad-hoc
   SQL analysis (`sqlite3 data/market-pulse.db`).
+
+**Option A walk-forward** — `pnpm cli backtest-option-a --strategy all --from 2023-01-01 --to 2026-03-31`
+(or `pnpm backtest:option-a -- ...`) runs `momentum_mf` and/or `ai_pick` rules with indicators computed **from `quotes` only** (no `signals` table). Momentum price factors use **`adj_close`** (aligned with live enrich). The runner **aborts** unless `regime_daily` covers ≥80% of benchmark trading days in the window (run `scripts/backfill-regime.mts` first if needed). Extended aggregates (`expectancy`, `profit_factor`, …) are stored on `backtest_runs` (migration `0014`). `--dry-run` skips DB writes but still enforces the regime gate. Each run prints a JSON **`option-a:start`** block (benchmark day count, **regime label histogram inside the window**, universe size, survivorship note) and one **`result` JSON per strategy** even when `totalTrades` is 0; use **`--verbose`** for engine wall time.
+
+**Regime labels** — `runRegimeClassifier` / `computeRegimeSignals` need NIFTY/VIX **quotes**, **`fii_dii` cash** rows, and **`signals`** `close`+`sma_200` pairs for breadth (`pct_above_sma200`). Backfilling `regime_daily` without historical enrich/FII often yields **CHOPPY**/`BEAR`-heavy `score_total` and **no** raw `BULL_TRENDING`; persisted labels also require **3-session** score-regime agreement (see `applyPersistence` in `src/analysers/regime-classifier.ts`). To compare persisted `regime` vs score-only raw labels: `pnpm exec tsx scripts/audit-regime-history.mts --from … --to …`.
 
 ### Switching the market data provider
 
