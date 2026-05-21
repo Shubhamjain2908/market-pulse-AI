@@ -168,7 +168,14 @@ CREATE TABLE backtest_runs (
   max_return_pct  REAL    NOT NULL,
   min_return_pct  REAL    NOT NULL,
   max_drawdown_pct REAL   NOT NULL, -- worst trade DD across the run
-  created_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  strategy_id     TEXT,    -- Option A: e.g. momentum_mf, ai_pick (migration 0014)
+  expectancy      REAL,
+  avg_hold_days   REAL,
+  profit_factor   REAL,
+  universe_json   TEXT,
+  cost_bps_round_trip INTEGER,
+  notes           TEXT
 );
 CREATE INDEX idx_backtest_runs_screen ON backtest_runs(screen_name, created_at DESC);
 CREATE TABLE backtest_trades (
