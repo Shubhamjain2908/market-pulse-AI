@@ -11,6 +11,7 @@ import {
   loadMomentumConfig,
   loadSectorMap,
 } from '../../config/loaders.js';
+import { trailingStopSizingFromMomentumConfig } from '../../config/trailing-stop-sizing.js';
 import { isInEarningsBlackoutCalendarWindow } from '../../db/momentum-queries.js';
 import { getTodayRegime } from '../../db/regime-queries.js';
 import {
@@ -222,9 +223,10 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
   const closed: ClosedSimTrade[] = [];
   let open: OpenPosition[] = [];
 
-  const initialMultiplier = opts.initialMultiplier ?? cfg.position_sizing.atr_multiplier;
-  const tightenedMultiplier = opts.tightenedMultiplier;
-  const lockInThresholdPct = opts.lockInThresholdPct;
+  const trailSizing = trailingStopSizingFromMomentumConfig(cfg);
+  const initialMultiplier = opts.initialMultiplier ?? trailSizing.initialMultiplier;
+  const tightenedMultiplier = opts.tightenedMultiplier ?? trailSizing.tightenedMultiplier;
+  const lockInThresholdPct = opts.lockInThresholdPct ?? trailSizing.lockInThresholdPct;
 
   const closePositionAt = (
     p: OpenPosition,
