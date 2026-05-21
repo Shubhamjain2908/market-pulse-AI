@@ -100,3 +100,83 @@ export function formatPhase1SweepTable(rows: Phase1SweepRow[]): Record<string, s
     bearSubWindowPf: Number(r.bearSubWindowPf.toFixed(2)),
   }));
 }
+
+/** Phase 2: initial ATR locked at 2.5×; sweep tightened mult × lock-in threshold. */
+export const PHASE2_FIXED_INITIAL_MULTIPLIER = 2.5;
+export const PHASE2_TIGHTENED_MULTIPLIERS = [1.25, 1.5, 1.75] as const;
+export const PHASE2_LOCK_IN_THRESHOLDS_PCT = [12.0, 15.0, 18.0] as const;
+
+export interface Phase2SweepRow {
+  initialMultiplier: number;
+  tightenedMultiplier: number;
+  lockInThresholdPct: number;
+  totalTrades: number;
+  hitRate: number;
+  netReturn: number;
+  profitFactor: number;
+  stopOutRate: number;
+  bearSubWindowPf: number;
+  avgReturnOnTailWinners: number;
+  tailWinnerCount: number;
+}
+
+export function computePhase2SweepRow(
+  tightenedMultiplier: number,
+  lockInThresholdPct: number,
+  trades: ClosedSimTrade[],
+): Phase2SweepRow {
+  const total = trades.length;
+  const empty: Phase2SweepRow = {
+    initialMultiplier: PHASE2_FIXED_INITIAL_MULTIPLIER,
+    tightenedMultiplier,
+    lockInThresholdPct,
+    totalTrades: 0,
+    hitRate: 0,
+    netReturn: 0,
+    profitFactor: 0,
+    stopOutRate: 0,
+    bearSubWindowPf: 0,
+    avgReturnOnTailWinners: 0,
+    tailWinnerCount: 0,
+  };
+  if (total === 0) return empty;
+
+  const wins = trades.filter((t) => t.returnPct > 0);
+  const stopOuts = trades.filter(
+    (t) => t.exitReason === 'TRAILING_STOP' || t.exitReason === 'INITIAL_STOP',
+  );
+  const tailWinners = trades.filter((t) => t.wasTailWinner === true);
+
+  return {
+    initialMultiplier: PHASE2_FIXED_INITIAL_MULTIPLIER,
+    tightenedMultiplier,
+    lockInThresholdPct,
+    totalTrades: total,
+    hitRate: (wins.length / total) * 100,
+    netReturn: trades.reduce((s, t) => s + t.returnPct, 0) / total,
+    profitFactor: netProfitFactor(trades),
+    stopOutRate: (stopOuts.length / total) * 100,
+    bearSubWindowPf: netProfitFactor(trades.filter(isBearSubWindow)),
+    tailWinnerCount: tailWinners.length,
+    avgReturnOnTailWinners: tailWinners.length
+      ? tailWinners.reduce((s, t) => s + t.returnPct, 0) / tailWinners.length
+      : 0,
+  };
+}
+
+export function formatPhase2SweepTable(rows: Phase2SweepRow[]): Record<string, string | number>[] {
+  return rows.map((r) => ({
+    initialMult: r.initialMultiplier,
+    tightenedMult: r.tightenedMultiplier,
+    lockInPct: `${r.lockInThresholdPct}%`,
+    totalTrades: r.totalTrades,
+    hitRate: `${r.hitRate.toFixed(1)}%`,
+    netReturn: `${r.netReturn.toFixed(2)}%`,
+    profitFactor: Number(r.profitFactor.toFixed(2)),
+    stopOutRate: `${r.stopOutRate.toFixed(1)}%`,
+    bearSubWindowPf: Number(r.bearSubWindowPf.toFixed(2)),
+    tailWinners: r.tailWinnerCount,
+    avgReturnOnTailWinners:
+      r.tailWinnerCount > 0 ? `${r.avgReturnOnTailWinners.toFixed(2)}%` : 'n/a',
+  }));
+}
