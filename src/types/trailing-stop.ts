@@ -29,10 +29,10 @@ export const TRAILING_STOP_ANALYSIS_PENDING = 'Analysis pending...';
 export interface TrailingStopResult {
   newStop: number;
   candidateStop: number;
-  multiplier: 1.5 | 2;
+  multiplier: number;
   unrealisedPct: number;
   wasRaised: boolean;
-  /** True when DB had mult 2.0 but this bar applies 1.5 rule (gain ≥15%); may coexist with HELD. */
+  /** True when DB was on initial band but this bar applies tightened mult; may coexist with HELD. */
   wasTightened: boolean;
   action: 'RAISED' | 'HELD' | 'TIGHTENED';
 }

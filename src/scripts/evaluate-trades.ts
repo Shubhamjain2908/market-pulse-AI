@@ -11,6 +11,10 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 
 import { scheduleTrailingStopPostMortem } from '../agents/trailing-stop-postmortem.js';
 import { loadMomentumConfig } from '../config/loaders.js';
+import {
+  normalizePersistedTrailingMult,
+  trailingStopSizingFromMomentumConfig,
+} from '../config/trailing-stop-sizing.js';
 import { type PaperTradeRow, closePaperTrade, getOpenPaperTrades } from '../db/queries.js';
 import {
   getAtr14,
@@ -115,12 +119,6 @@ export function exitPriceWhenStopHit(bar: OhlcBar, stopLoss: number): number {
   return stopLoss;
 }
 
-function normalizeTrailingMult(row: PaperTradeRow): number {
-  const m = row.trailingMultiplier;
-  if (m == null) return 2;
-  return m === 1.5 ? 1.5 : 2;
-}
-
 function unrealisedPctFromHigh(entryPrice: number, highestClose: number): number {
   return ((highestClose - entryPrice) / entryPrice) * 100;
 }
@@ -139,7 +137,9 @@ export function evaluateOnePaperTrade(
     return lastEvaluated !== null ? 'still_open' : 'no_data';
   }
 
-  const hardFloor = hardStopFloorFromPct(trade.entryPrice, loadMomentumConfig().hard_stop_pct);
+  const momentumCfg = loadMomentumConfig();
+  const sizing = trailingStopSizingFromMomentumConfig(momentumCfg);
+  const hardFloor = hardStopFloorFromPct(trade.entryPrice, momentumCfg.hard_stop_pct);
 
   const dayIndex = buildTradingDayIndex(db, trade.sourceDate, asOf);
   const initialLlmStop = trade.stopLoss;
@@ -147,7 +147,7 @@ export function evaluateOnePaperTrade(
   let stopLoss = isResume ? trade.stopLoss : initialLlmStop;
   let highestClose = trade.highestCloseSinceEntry == null ? null : trade.highestCloseSinceEntry;
   let atr14AtEntryStored: number | null = trade.atr14AtEntry ?? null;
-  let trailingMult = normalizeTrailingMult(trade);
+  let trailingMult = normalizePersistedTrailingMult(trade.trailingMultiplier, sizing);
   /** Last candidate from trailing math (for STOPPED_OUT audit row when available). */
   let lastTrailCandidate = stopLoss;
   let lastTrailUnrealisedPct = unrealisedPctFromHigh(
@@ -172,7 +172,12 @@ export function evaluateOnePaperTrade(
 
     if (!initialSetupComplete) {
       const atrOnSource = getAtr14(trade.symbol, trade.sourceDate, db);
-      stopLoss = applyDay1InitialStop(trade.entryPrice, initialLlmStop, atrOnSource ?? null);
+      stopLoss = applyDay1InitialStop(
+        trade.entryPrice,
+        initialLlmStop,
+        atrOnSource ?? null,
+        sizing.initialMultiplier,
+      );
       stopLoss = Math.max(stopLoss, hardFloor);
       atr14AtEntryStored = atrOnSource ?? null;
       initialSetupComplete = true;
@@ -189,6 +194,7 @@ export function evaluateOnePaperTrade(
           highestCloseSinceEntry: maxCloseSinceEntry,
           currentStopLoss: stopLoss,
           atr14Today: atrToday,
+          sizing,
           currentMultiplier: trailingMult,
         });
         lastTrailCandidate = res.candidateStop;
