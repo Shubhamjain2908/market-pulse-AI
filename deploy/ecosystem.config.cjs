@@ -61,6 +61,6 @@ module.exports = {
       watch: false,
       error_file: '/home/ubuntu/.pm2/logs/datasette-error.log',
       out_file: '/home/ubuntu/.pm2/logs/datasette-out.log',
-    }
+    },
   ],
 };

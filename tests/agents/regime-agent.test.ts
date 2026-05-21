@@ -39,9 +39,9 @@ describe('runRegimeAgent', () => {
   });
 
   it('isCompleteRegimeNarrative rejects truncated sentences', () => {
-    expect(isCompleteRegimeNarrative('The market remains choppy, with strong breadth (A/D ratio 3.7')).toBe(
-      false,
-    );
+    expect(
+      isCompleteRegimeNarrative('The market remains choppy, with strong breadth (A/D ratio 3.7'),
+    ).toBe(false);
     expect(
       isCompleteRegimeNarrative(
         'The market remains choppy, with strong breadth (A/D ratio 3.7) and steady flows.',

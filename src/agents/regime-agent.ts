@@ -16,7 +16,7 @@ import { insertRegimeRow } from '../db/regime-queries.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
-import { type Regime, type RegimeClassification } from '../types/regime.js';
+import type { Regime, RegimeClassification } from '../types/regime.js';
 
 const log = child({ component: 'regime-agent' });
 
@@ -49,7 +49,10 @@ export function sanitizeRegimeNarrativeText(raw: string): string {
   const fenced = s.match(/^```(?:\w*)?\s*\r?\n([\s\S]*?)\r?\n```\s*$/);
   if (fenced?.[1]) s = fenced[1].trim();
   else if (s.startsWith('```')) {
-    s = s.replace(/^```(?:\w*)?\s*\r?\n?/i, '').replace(/\s*```\s*$/i, '').trim();
+    s = s
+      .replace(/^```(?:\w*)?\s*\r?\n?/i, '')
+      .replace(/\s*```\s*$/i, '')
+      .trim();
   }
   if (
     s.length >= 2 &&
@@ -151,7 +154,10 @@ export async function runRegimeAgent(
         narrative = n;
         usedFallbackNarrative = false;
       } else if (n && !isCompleteRegimeNarrative(n)) {
-        log.warn({ preview: n.slice(0, 120) }, 'regime narrative incomplete — using templated fallback');
+        log.warn(
+          { preview: n.slice(0, 120) },
+          'regime narrative incomplete — using templated fallback',
+        );
       }
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));

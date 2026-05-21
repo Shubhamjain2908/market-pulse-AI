@@ -32,7 +32,7 @@ export class YahooIngestor implements Ingestor {
 
   constructor(opts: YahooIngestorOptions = {}) {
     this.lookbackDays = opts.lookbackDays ?? DEFAULT_LOOKBACK_DAYS;
-    this.client = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
+    this.client = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
   }
 
   async fetchQuotes(ctx: IngestorContext = {}): Promise<IngestResult<RawQuote>> {

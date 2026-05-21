@@ -193,19 +193,18 @@ async function main(): Promise<void> {
     const logErr = scanPipelineLogsForTodayErrors(date);
     if (logErr) reasons.push(logErr);
 
-//     const corrupt = db.prepare(`
-//   SELECT COUNT(*) AS cnt FROM paper_trades pt
-//   JOIN quotes q ON q.symbol = pt.symbol AND q.exchange = 'NSE' AND q.date = pt.outcome_date
-//   WHERE pt.status IN ('CLOSED_LOSS','CLOSED_WIN')
-//     AND pt.exit_reason IN ('TRAILING_STOP','INITIAL_STOP')
-//     AND q.low  > pt.exit_price
-//     AND q.open >= pt.exit_price
-// `).get() as { cnt: number };
-//
-//     if (corrupt.cnt > 0) {
-//       alerts.push(`CORRUPT_STOP_OUTS: ${corrupt.cnt} trades closed where low never reached stop`);
-//     }
-
+    //     const corrupt = db.prepare(`
+    //   SELECT COUNT(*) AS cnt FROM paper_trades pt
+    //   JOIN quotes q ON q.symbol = pt.symbol AND q.exchange = 'NSE' AND q.date = pt.outcome_date
+    //   WHERE pt.status IN ('CLOSED_LOSS','CLOSED_WIN')
+    //     AND pt.exit_reason IN ('TRAILING_STOP','INITIAL_STOP')
+    //     AND q.low  > pt.exit_price
+    //     AND q.open >= pt.exit_price
+    // `).get() as { cnt: number };
+    //
+    //     if (corrupt.cnt > 0) {
+    //       alerts.push(`CORRUPT_STOP_OUTS: ${corrupt.cnt} trades closed where low never reached stop`);
+    //     }
   } finally {
     closeDb();
   }
