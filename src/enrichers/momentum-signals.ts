@@ -177,7 +177,7 @@ export function computeVolumeBreakoutFlag(
   return passesPrice && passesVol ? 1 : 0;
 }
 
-/** Latest `limit` NSE closes on or before `asOf`, ascending (for lag math). */
+/** Latest `limit` NSE adjusted closes on or before `asOf`, ascending (for lag math). Falls back to raw close when adj_close is null. */
 function loadStockClosesAsc(
   symbol: string,
   asOf: string,
@@ -187,14 +187,14 @@ function loadStockClosesAsc(
   const rows = db
     .prepare(
       `
-      SELECT close FROM quotes
+      SELECT COALESCE(adj_close, close) AS px FROM quotes
       WHERE symbol = ? AND exchange = 'NSE' AND date <= ?
       ORDER BY date DESC
       LIMIT ?
     `,
     )
-    .all(symbol.toUpperCase(), asOf, limit) as Array<{ close: number }>;
-  const closes = rows.map((r) => r.close);
+    .all(symbol.toUpperCase(), asOf, limit) as Array<{ px: number }>;
+  const closes = rows.map((r) => r.px);
   closes.reverse();
   return closes;
 }
@@ -212,7 +212,9 @@ function loadAlignedStockBench(
       `
       SELECT sub.sc AS sc, sub.bc AS bc
       FROM (
-        SELECT s.date AS d, s.close AS sc, b.close AS bc
+        SELECT s.date AS d,
+          COALESCE(s.adj_close, s.close) AS sc,
+          COALESCE(b.adj_close, b.close) AS bc
         FROM quotes s
         INNER JOIN quotes b
           ON s.date = b.date AND b.symbol = ? AND b.exchange = 'NSE'
