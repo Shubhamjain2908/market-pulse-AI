@@ -10,9 +10,10 @@ import type { BacktestExitReason } from './types.js';
 
 const HARD_FLOOR_PCT = 0.92;
 
-/** Defaults when sweep opts omit Phase 2 knobs (matches pre-Phase-2 live behavior). */
+/** Defaults when sweep opts omit overrides (Phase 2 winners; aligned with momentum-config). */
+export const DEFAULT_INITIAL_MULTIPLIER = 2.5;
+export const DEFAULT_LOCK_IN_THRESHOLD_PCT = 18;
 export const DEFAULT_TIGHTENED_MULTIPLIER = 1.5;
-export const DEFAULT_LOCK_IN_THRESHOLD_PCT = 15;
 
 export interface SimOhlcBar {
   date: string;
@@ -139,7 +140,7 @@ export function initLongTrailState(opts: {
     symbol: opts.symbol,
     entryPrice: opts.entryPrice,
     sourceDate: opts.sourceDate,
-    initialMultiplier: opts.initialMultiplier,
+    initialMultiplier: opts.initialMultiplier ?? DEFAULT_INITIAL_MULTIPLIER,
     tightenedMultiplier: opts.tightenedMultiplier ?? DEFAULT_TIGHTENED_MULTIPLIER,
     lockInThresholdPct: opts.lockInThresholdPct ?? DEFAULT_LOCK_IN_THRESHOLD_PCT,
     initialStopLoss: opts.initialStopLoss,

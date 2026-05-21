@@ -32,6 +32,8 @@
   "position_sizing": {
     "risk_pct": 1,
     "atr_multiplier": 2.5,
+    "lock_in_threshold_pct": 18,
+    "tightened_multiplier": 1.5,
     "add_tranche_atr": 1,
     "add_tranche_size_pct": 50,
     "trim_rsi_threshold": 75,
