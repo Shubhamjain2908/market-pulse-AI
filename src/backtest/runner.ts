@@ -27,6 +27,11 @@ import {
   countBenchQuotesStrictlyBefore,
 } from './regime-proxy.js';
 import { buildOptionARunRow, tradesToDbRows } from './results.js';
+import {
+  PHASE1_INITIAL_MULTIPLIERS,
+  computePhase1SweepRow,
+  formatPhase1SweepTable,
+} from './sweep-metrics.js';
 
 const DEFAULT_FROM = '2023-01-01';
 const DEFAULT_TO = '2026-03-31';
@@ -43,6 +48,10 @@ export interface OptionARunnerInput {
   verbose?: boolean;
   /** `proxy` (default): quotes-only coarse regime. `daily`: require regime_daily coverage gate. */
   regimeSource?: OptionARegimeSource;
+  /** Single-run initial ATR multiplier override (momentum-mf). */
+  initialMultiplier?: number;
+  /** Phase 1 cross-sectional sweep over [1.5, 2.0, 2.5, 3.0] (momentum-mf only). */
+  sweepInitialStop?: boolean;
 }
 
 function usage(): void {
@@ -51,7 +60,10 @@ function usage(): void {
     --strategy momentum-mf|ai-pick|all \\
     [--from YYYY-MM-DD] [--to YYYY-MM-DD] \\
     [--min-history-days 504] [--cost-bps 20] [--regime-source proxy|daily] \\
-    [--dry-run] [--verbose]
+    [--initial-multiplier 2.0] [--sweep-initial-stop] [--dry-run] [--verbose]
+
+  Phase 1 trailing-stop sweep (momentum-mf):
+    pnpm exec tsx src/backtest/runner.ts --strategy momentum-mf --sweep-initial-stop --dry-run
 `);
 }
 
@@ -184,6 +196,43 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
   );
 
   const verbose = input.verbose === true;
+
+  if (input.sweepInitialStop === true) {
+    if (input.strategy !== 'momentum-mf') {
+      console.error('--sweep-initial-stop requires --strategy momentum-mf');
+      closeDb();
+      process.exitCode = 1;
+      return;
+    }
+    const sweepRows = [];
+    for (const mult of PHASE1_INITIAL_MULTIPLIERS) {
+      const t0 = performance.now();
+      const { byStrategy } = runOptionAEngine({
+        strategy: 'momentum-mf',
+        from: input.from,
+        to: input.to,
+        costBpsRoundTrip: input.costBpsRoundTrip,
+        minHistoryDays: input.minHistoryDays,
+        initialMultiplier: mult,
+        universe,
+        db,
+        regimeSource,
+      });
+      if (verbose) {
+        console.log(
+          `[option-a] sweep mult=${mult} finished in ${Math.round(performance.now() - t0)}ms`,
+        );
+      }
+      const trades = byStrategy.momentum_mf ?? [];
+      sweepRows.push(computePhase1SweepRow(mult, trades));
+    }
+    console.log('\nPhase 1 initial-ATR multiplier sweep (momentum-mf, net metrics):');
+    console.table(formatPhase1SweepTable(sweepRows));
+    console.log(JSON.stringify({ phase: 'option-a:phase1-sweep-done', dryRun: true }, null, 2));
+    closeDb();
+    return;
+  }
+
   const t0 = performance.now();
   const { byStrategy, universeUsed } = runOptionAEngine({
     strategy: input.strategy,
@@ -191,6 +240,7 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
     to: input.to,
     costBpsRoundTrip: input.costBpsRoundTrip,
     minHistoryDays: input.minHistoryDays,
+    initialMultiplier: input.initialMultiplier,
     universe,
     db,
     regimeSource,
@@ -262,6 +312,8 @@ async function main(): Promise<void> {
       'min-history-days': { type: 'string', default: '504' },
       'cost-bps': { type: 'string', default: '20' },
       'regime-source': { type: 'string', default: 'proxy' },
+      'initial-multiplier': { type: 'string' },
+      'sweep-initial-stop': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
       verbose: { type: 'boolean', default: false },
     },
@@ -279,6 +331,17 @@ async function main(): Promise<void> {
   const regimeSource = parseRegimeSource(
     typeof regimeSourceRaw === 'string' ? regimeSourceRaw : undefined,
   );
+  const sweepInitialStop = values['sweep-initial-stop'] === true;
+  const initialMultRaw = values['initial-multiplier'];
+  let initialMultiplier: number | undefined;
+  if (typeof initialMultRaw === 'string' && initialMultRaw.length > 0) {
+    initialMultiplier = Number(initialMultRaw);
+    if (!Number.isFinite(initialMultiplier) || initialMultiplier <= 0) {
+      console.error('invalid --initial-multiplier');
+      process.exitCode = 1;
+      return;
+    }
+  }
 
   if (typeof stratRaw !== 'string') {
     usage();
@@ -321,6 +384,8 @@ async function main(): Promise<void> {
     dryRun,
     verbose,
     regimeSource,
+    initialMultiplier,
+    sweepInitialStop,
   });
 }
 

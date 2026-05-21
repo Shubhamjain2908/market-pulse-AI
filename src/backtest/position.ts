@@ -6,8 +6,12 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 
 import { exitPriceWhenStopHit } from '../scripts/evaluate-trades.js';
-import { applyDay1InitialStop, computeNewStop } from '../scripts/trailing-stop-engine.js';
 import type { BacktestExitReason } from './types.js';
+
+/** Phase 2 sweep target — do not inline in step logic. */
+export const TIGHTENED_MULTIPLIER = 1.5;
+
+const HARD_FLOOR_PCT = 0.92;
 
 export interface SimOhlcBar {
   date: string;
@@ -27,21 +31,27 @@ export interface LongPositionSimResult {
   holdDays: number;
   /** Same labelling as paper `evaluate-trades` for stops (`skipTrailThisBar` → INITIAL_STOP). */
   exitReason: BacktestExitReason;
+  hardFloorOverridden: boolean;
+  /** True when structural floor was above raw ATR stop at any point during the hold. */
+  floorBinding: boolean;
 }
 
 export interface LongTrailState {
   symbol: string;
   entryPrice: number;
   sourceDate: string;
+  initialMultiplier: number;
+  /** Pre-entry stop (LLM/config); used for day-1 latch when ATR at source is missing. */
   initialStopLoss: number;
   target: number;
   maxHoldDays: number;
-  hardStopPct: number;
+  hardFloor: number;
+  hardFloorOverridden: boolean;
+  floorBinding: boolean;
   atr14AtSourceDate: number | null;
   stopLoss: number;
   highestClose: number | null;
   initialSetupComplete: boolean;
-  trailingMult: 1.5 | 2;
   /** Worst (most negative) close-based return vs entry during the hold. */
   maxDrawdownPct: number;
 }
@@ -50,49 +60,92 @@ function pnlPctLong(entry: number, exit: number): number {
   return ((exit - entry) / entry) * 100;
 }
 
-function hardStopFloorFromPct(entryPrice: number, hardStopPct: number): number {
-  return entryPrice * (1 + hardStopPct / 100);
-}
-
 /** Round-trip bps charged once on exit (plan: single multiplier on exit price). */
 function applyExitCosts(grossExit: number, costBpsRoundTrip: number): number {
   const frac = 1 - costBpsRoundTrip / 10_000;
   return grossExit * frac;
 }
 
-function normalizeTrailingMultState(m: number): 1.5 | 2 {
-  return m === 1.5 ? 1.5 : 2;
+function hardFloorFromEntry(entryPrice: number): number {
+  return entryPrice * HARD_FLOOR_PCT;
+}
+
+function candidateInitialStop(
+  entryPrice: number,
+  initialMultiplier: number,
+  atr14AtEntry: number,
+): number {
+  return entryPrice - initialMultiplier * atr14AtEntry;
+}
+
+function activeMultiplier(
+  entryPrice: number,
+  highestCloseSinceEntry: number,
+  initialMultiplier: number,
+): number {
+  const unrealisedPct = ((highestCloseSinceEntry - entryPrice) / entryPrice) * 100;
+  return unrealisedPct >= 15 ? TIGHTENED_MULTIPLIER : initialMultiplier;
 }
 
 export function initLongTrailState(opts: {
   symbol: string;
   entryPrice: number;
   sourceDate: string;
+  initialMultiplier: number;
+  /** Fallback when ATR at entry is unavailable (e.g. pre-computed LLM stop). */
   initialStopLoss: number;
   target: number;
   maxHoldDays: number;
-  hardStopPct: number;
   atr14AtSourceDate: number | null;
 }): LongTrailState {
+  const hardFloor = hardFloorFromEntry(opts.entryPrice);
+  let stopLoss = opts.initialStopLoss;
+  let hardFloorOverridden = false;
+  let floorBinding = false;
+
+  if (
+    opts.atr14AtSourceDate != null &&
+    Number.isFinite(opts.atr14AtSourceDate) &&
+    opts.atr14AtSourceDate > 0
+  ) {
+    const computed = candidateInitialStop(
+      opts.entryPrice,
+      opts.initialMultiplier,
+      opts.atr14AtSourceDate,
+    );
+    if (hardFloor > computed) floorBinding = true;
+    if (computed < hardFloor) {
+      stopLoss = hardFloor;
+      hardFloorOverridden = true;
+    } else {
+      stopLoss = computed;
+    }
+  } else if (stopLoss < hardFloor) {
+    stopLoss = hardFloor;
+    hardFloorOverridden = true;
+  }
+
   return {
     symbol: opts.symbol,
     entryPrice: opts.entryPrice,
     sourceDate: opts.sourceDate,
+    initialMultiplier: opts.initialMultiplier,
     initialStopLoss: opts.initialStopLoss,
     target: opts.target,
     maxHoldDays: opts.maxHoldDays,
-    hardStopPct: opts.hardStopPct,
+    hardFloor,
+    hardFloorOverridden,
+    floorBinding,
     atr14AtSourceDate: opts.atr14AtSourceDate,
-    stopLoss: opts.initialStopLoss,
+    stopLoss,
     highestClose: null,
     initialSetupComplete: opts.atr14AtSourceDate != null,
-    trailingMult: 2,
     maxDrawdownPct: 0,
   };
 }
 
 /**
- * One session step (same ordering as `evaluateOnePaperTrade`).
+ * One session step — strict EOD chronology for Phase 1 unconfounded sweep.
  * Returns `closed` when the position ends; otherwise updated `state`.
  */
 export function stepLongPositionOneBar(
@@ -103,43 +156,47 @@ export function stepLongPositionOneBar(
   db: DatabaseType,
   costBpsRoundTrip: number,
 ): { status: 'open'; state: LongTrailState } | { status: 'closed'; result: LongPositionSimResult } {
-  const hardFloor = hardStopFloorFromPct(state.entryPrice, state.hardStopPct);
   let stopLoss = state.stopLoss;
   let highestClose = state.highestClose;
   let initialSetupComplete = state.initialSetupComplete;
-  let trailingMult = state.trailingMult;
-  let maxDrawdownPct = state.maxDrawdownPct;
+  let hardFloorOverridden = state.hardFloorOverridden;
+  let floorBinding = state.floorBinding;
+  const { hardFloor } = state;
 
-  const maxCloseSinceEntry = highestClose === null ? bar.close : Math.max(highestClose, bar.close);
-  highestClose = maxCloseSinceEntry;
+  const highestCloseSinceEntry =
+    highestClose === null ? bar.close : Math.max(highestClose, bar.close);
+  highestClose = highestCloseSinceEntry;
 
   let skipTrailThisBar = false;
   if (!initialSetupComplete) {
-    stopLoss = applyDay1InitialStop(
-      state.entryPrice,
-      state.initialStopLoss,
-      state.atr14AtSourceDate,
-    );
-    stopLoss = Math.max(stopLoss, hardFloor);
+    stopLoss = Math.max(state.initialStopLoss, stopLoss, hardFloor);
+    if (stopLoss <= hardFloor) {
+      stopLoss = hardFloor;
+      hardFloorOverridden = true;
+    }
     initialSetupComplete = true;
     skipTrailThisBar = true;
   }
 
   if (initialSetupComplete && !skipTrailThisBar) {
     if (atr14Today !== undefined && Number.isFinite(atr14Today) && atr14Today > 0) {
-      const res = computeNewStop({
-        entryPrice: state.entryPrice,
-        highestCloseSinceEntry: maxCloseSinceEntry,
-        currentStopLoss: stopLoss,
-        atr14Today,
-        currentMultiplier: normalizeTrailingMultState(trailingMult),
-      });
-      stopLoss = Math.max(res.newStop, hardFloor);
-      trailingMult = res.multiplier;
+      const mult = activeMultiplier(
+        state.entryPrice,
+        highestCloseSinceEntry,
+        state.initialMultiplier,
+      );
+      const computedATRStop = highestCloseSinceEntry - mult * atr14Today;
+      if (hardFloor > computedATRStop) floorBinding = true;
+      stopLoss = Math.max(computedATRStop, stopLoss);
+      if (stopLoss <= hardFloor) {
+        stopLoss = hardFloor;
+        hardFloorOverridden = true;
+      }
     }
   }
 
   stopLoss = Math.max(stopLoss, hardFloor);
+  if (stopLoss <= hardFloor) hardFloorOverridden = true;
 
   const prevCloseRow = db
     .prepare(
@@ -154,6 +211,7 @@ export function stepLongPositionOneBar(
   }
 
   const unrealisedClose = ((bar.close - state.entryPrice) / state.entryPrice) * 100;
+  let maxDrawdownPct = state.maxDrawdownPct;
   if (unrealisedClose < maxDrawdownPct) maxDrawdownPct = unrealisedClose;
 
   const finish = (
@@ -171,6 +229,8 @@ export function stepLongPositionOneBar(
       maxDrawdownPct: Math.min(0, maxDrawdownPct),
       holdDays,
       exitReason,
+      hardFloorOverridden,
+      floorBinding,
     };
   };
 
@@ -213,7 +273,8 @@ export function stepLongPositionOneBar(
       stopLoss,
       highestClose,
       initialSetupComplete,
-      trailingMult,
+      hardFloorOverridden,
+      floorBinding,
       maxDrawdownPct,
     },
   };
@@ -229,10 +290,10 @@ export function simulateLongPositionUntilClose(opts: {
   symbol: string;
   entryPrice: number;
   sourceDate: string;
+  initialMultiplier: number;
   initialStopLoss: number;
   target: number;
   maxHoldDays: number;
-  hardStopPct: number;
   atr14AtSourceDate: number | null;
   bars: SimOhlcBar[];
   atr14ByDate: Map<string, number | undefined>;
@@ -244,10 +305,10 @@ export function simulateLongPositionUntilClose(opts: {
     symbol,
     entryPrice,
     sourceDate,
+    initialMultiplier,
     initialStopLoss,
     target,
     maxHoldDays,
-    hardStopPct,
     atr14AtSourceDate,
     bars,
     atr14ByDate,
@@ -262,10 +323,10 @@ export function simulateLongPositionUntilClose(opts: {
     symbol,
     entryPrice,
     sourceDate,
+    initialMultiplier,
     initialStopLoss,
     target,
     maxHoldDays,
-    hardStopPct,
     atr14AtSourceDate,
   });
 
@@ -291,5 +352,7 @@ export function simulateLongPositionUntilClose(opts: {
     maxDrawdownPct: Math.min(0, state.maxDrawdownPct),
     holdDays: elapsedLast,
     exitReason: 'WINDOW_END',
+    hardFloorOverridden: state.hardFloorOverridden,
+    floorBinding: state.floorBinding,
   };
 }

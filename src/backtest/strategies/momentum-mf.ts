@@ -38,6 +38,8 @@ export interface MomentumMfBacktestOpts {
   to: string;
   costBpsRoundTrip: number;
   minHistoryDays: number;
+  /** Initial ATR stop multiplier (Phase 1 sweep); defaults to momentum config. */
+  initialMultiplier?: number;
   /** When set, overrides momentum universe. */
   universe?: string[];
   db: DatabaseType;
@@ -216,11 +218,14 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
   const closed: ClosedSimTrade[] = [];
   let open: OpenPosition[] = [];
 
+  const initialMultiplier = opts.initialMultiplier ?? cfg.position_sizing.atr_multiplier;
+
   const closePositionAt = (
     p: OpenPosition,
     exitDate: string,
     exitPrice: number,
     exitReason: BacktestExitReason,
+    meta?: { hardFloorOverridden?: boolean; floorBinding?: boolean },
   ): void => {
     const costFrac = opts.costBpsRoundTrip / 10_000;
     const exitNet = exitPrice * (1 - costFrac);
@@ -237,6 +242,8 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
       maxDrawdownPct: Math.min(0, p.trail.maxDrawdownPct),
       holdDays,
       exitReason,
+      hardFloorOverridden: meta?.hardFloorOverridden ?? p.trail.hardFloorOverridden,
+      floorBinding: meta?.floorBinding ?? p.trail.floorBinding,
     });
   };
 
@@ -278,6 +285,8 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
           maxDrawdownPct: step.result.maxDrawdownPct,
           holdDays: step.result.holdDays,
           exitReason: step.result.exitReason,
+          hardFloorOverridden: step.result.hardFloorOverridden,
+          floorBinding: step.result.floorBinding,
         });
         open = open.filter((x) => x.symbol !== p.symbol);
       } else {
@@ -386,7 +395,7 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
       const atrEntry = atrBySymbol.get(sym)?.get(D) ?? entryPx * 0.02;
       const hardMult = 1 + cfg.hard_stop_pct / 100;
       const hardFloorStop = entryPx * hardMult;
-      const atrStop = entryPx - cfg.position_sizing.atr_multiplier * atrEntry;
+      const atrStop = entryPx - initialMultiplier * atrEntry;
       const stopLoss = Math.max(hardFloorStop, atrStop);
       const target = entryPx * (1 + cfg.position_sizing.trim_return_pct / 100);
 
@@ -394,10 +403,10 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
         symbol: sym,
         entryPrice: entryPx,
         sourceDate: D,
+        initialMultiplier,
         initialStopLoss: stopLoss,
         target,
         maxHoldDays: 90,
-        hardStopPct: cfg.hard_stop_pct,
         atr14AtSourceDate: atrEntry,
       });
 

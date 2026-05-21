@@ -39,10 +39,10 @@ describe('stepLongPositionOneBar', () => {
       symbol: 'AAA',
       entryPrice: 100,
       sourceDate: '2026-05-01',
+      initialMultiplier: 2,
       initialStopLoss: 92,
       target: 130,
       maxHoldDays: 90,
-      hardStopPct: -8,
       atr14AtSourceDate: 2,
     });
 
@@ -71,10 +71,10 @@ describe('stepLongPositionOneBar', () => {
       symbol: 'BBB',
       entryPrice: 100,
       sourceDate: '2026-05-01',
+      initialMultiplier: 2,
       initialStopLoss: 92,
       target: 130,
       maxHoldDays: 90,
-      hardStopPct: -8,
       atr14AtSourceDate: null,
     });
 

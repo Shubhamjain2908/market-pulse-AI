@@ -31,7 +31,7 @@
   "earnings_blackout_days": 3,
   "position_sizing": {
     "risk_pct": 1,
-    "atr_multiplier": 2,
+    "atr_multiplier": 2.5,
     "add_tranche_atr": 1,
     "add_tranche_size_pct": 50,
     "trim_rsi_threshold": 75,
