@@ -138,7 +138,43 @@ function checkRegimeRow(db: ReturnType<typeof getDb>, date: string): string | nu
   return null;
 }
 
-async function sendAlert(reasons: string[]): Promise<void> {
+interface GttPostFixTrancheRow {
+  signal_type: string;
+  closed_count: number;
+  avg_pnl_net: number | null;
+  hit_rate: number | null;
+}
+
+function queryGttPostFixTranche(db: ReturnType<typeof getDb>): GttPostFixTrancheRow[] {
+  return db
+    .prepare(
+      `
+      SELECT
+        signal_type,
+        COUNT(*) AS closed_count,
+        ROUND(AVG(pnl_pct), 2) AS avg_pnl_net,
+        ROUND(SUM(CASE WHEN pnl_pct > 0 THEN 1.0 ELSE 0.0 END) / COUNT(*) * 100, 1) AS hit_rate
+      FROM paper_trades
+      WHERE status IN ('CLOSED_WIN', 'CLOSED_LOSS', 'CLOSED_TIME')
+        AND source_date >= '2026-05-14'
+      GROUP BY signal_type
+    `,
+    )
+    .all() as GttPostFixTrancheRow[];
+}
+
+function formatGttPostFixTranche(rows: GttPostFixTrancheRow[]): string {
+  if (rows.length === 0) {
+    return 'gtt_post_fix_tranche: empty (no closed paper trades with source_date >= 2026-05-14)';
+  }
+  const parts = rows.map(
+    (r) =>
+      `${r.signal_type}:n=${r.closed_count},avg_pnl_net=${r.avg_pnl_net ?? 'null'}%,hit_rate=${r.hit_rate ?? 'null'}%`,
+  );
+  return `gtt_post_fix_tranche: ${parts.join('; ')}`;
+}
+
+async function sendAlert(reasons: string[], gttTrancheDetail: string): Promise<void> {
   const to = (process.env.HEALTHCHECK_ALERT_TO ?? config.SMTP_TO ?? '').trim();
   if (!to) {
     console.error(
@@ -157,11 +193,12 @@ async function sendAlert(reasons: string[]): Promise<void> {
     auth: { user: config.SMTP_USER, pass: config.SMTP_PASS },
   });
   const prefix = process.env.HEALTHCHECK_ALERT_SUBJECT_PREFIX ?? '[Market Pulse]';
+  const statusLine = reasons.length === 0 ? 'healthcheck OK' : 'healthcheck FAIL';
   await transporter.sendMail({
     from: config.SMTP_FROM,
     to,
-    subject: `${prefix} healthcheck FAIL`,
-    text: [`date=${isoDateIst()}`, '', ...reasons].join('\n'),
+    subject: `${prefix} ${statusLine}`,
+    text: [`date=${isoDateIst()}`, '', gttTrancheDetail, '', ...reasons].join('\n'),
   });
 }
 
@@ -177,6 +214,7 @@ async function main(): Promise<void> {
   const reasons: string[] = [];
 
   const db = getDb({ readonly: true });
+  let gttTrancheDetail = 'gtt_post_fix_tranche: unavailable';
 
   try {
     const emailErr = checkEmailBriefing(db, date);
@@ -192,6 +230,10 @@ async function main(): Promise<void> {
 
     const logErr = scanPipelineLogsForTodayErrors(date);
     if (logErr) reasons.push(logErr);
+
+    const gttRows = queryGttPostFixTranche(db);
+    gttTrancheDetail = formatGttPostFixTranche(gttRows);
+    console.log(gttTrancheDetail);
 
     //     const corrupt = db.prepare(`
     //   SELECT COUNT(*) AS cnt FROM paper_trades pt
@@ -212,13 +254,15 @@ async function main(): Promise<void> {
   const ok = reasons.length === 0;
   const ts = new Date().toISOString();
   const status = ok ? 'OK' : 'FAIL';
-  const detail = ok ? 'all_checks_passed' : reasons.join('; ');
+  const detail = ok
+    ? `all_checks_passed; ${gttTrancheDetail}`
+    : `${reasons.join('; ')}; ${gttTrancheDetail}`;
   const line = `${ts}\t${status}\t${date}\t${detail}`;
   console.log(line);
   appendHealthLog(line);
 
   if (!ok) {
-    await sendAlert(reasons);
+    await sendAlert(reasons, gttTrancheDetail);
     process.exitCode = 1;
   }
 }
