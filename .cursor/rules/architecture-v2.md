@@ -74,13 +74,16 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 
 **Core math:**
 ```
-# momentum_mf entry (momentum-rebalance): atr_multiplier from config (2.5 since May 2026 Phase 1)
-initial_stop = MAX(hard_floor, entry_price − atr_multiplier × ATR14_at_entry)  # hard_floor = entry × 0.92
+# All paths read position_sizing from momentum-config.json via trailing-stop-sizing.ts:
+#   atr_multiplier 2.5, lock_in_threshold_pct 18, tightened_multiplier 1.5
 
-# AI_PICK / PORTFOLIO_ADD day-1 latch (evaluate-trades): still max(LLM stop, entry − 2.0 × ATR14)
+initial_stop = MAX(hard_floor, entry_price − atr_multiplier × ATR14_at_entry)  # hard_floor = entry × 0.92
+day1_stop    = MAX(llm_stop, entry − atr_multiplier × ATR14_at_entry)       # evaluate-trades day-1 latch
 
 unrealised_pct = ((highest_close_since_entry − entry_price) / entry_price) × 100
-multiplier = (unrealised_pct ≥ 15.0 OR current_multiplier = 1.5) ? 1.5 : 2.0  # live trailing DB default 2.0 until tighten
+multiplier = (unrealised_pct ≥ lock_in_threshold_pct OR already_tightened_band)
+  ? tightened_multiplier : atr_multiplier
+# Legacy DB trailing_multiplier 2.0 → initial band (2.5); 1.5 → tightened band
 candidate_stop = highest_close_since_entry − (multiplier × ATR14_today)
 
 new_stop = MAX(candidate_stop, current_stop_loss)  // GOLDEN RULE — never moves down
@@ -344,4 +347,4 @@ Results are optimistic by ~0.3–0.5% avg return.
 - Selected production value: **2.5×** (bear sub-window PF 1.78; 3.0× rejected — floor-dominated)
 - Config: `config/momentum-config.json` → `position_sizing.atr_multiplier: 2.5`
 
-**Phase 2 (next):** Tightened multiplier sensitivity (`TIGHTENED_MULTIPLIER` in `src/backtest/position.ts`).
+**Phase 2 — lock-in joint sweep (completed):** `--sweep-lock-in` over `tightened_multiplier` `[1.25, 1.5, 1.75]` × `lock_in_threshold_pct` `[12, 15, 18]` with initial fixed **2.5×**. Winners deployed to config: **18% / 1.5×**. Live + backtest read [`src/config/trailing-stop-sizing.ts`](../../src/config/trailing-stop-sizing.ts).
