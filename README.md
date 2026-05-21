@@ -173,6 +173,8 @@ pnpm cli backtest -s 2025-10-01 -e 2026-04-30 -n momentum_breakout
 pnpm cli backtest-option-a --strategy all --from 2023-01-01 --to 2026-03-31  # Option A (default --regime-source proxy); --regime-source daily needs regime_daily ≥80%; add --verbose for timings
 pnpm exec tsx scripts/audit-regime-history.mts --from 2023-01-01 --to 2026-03-31  # persisted vs raw score regime (why no BULL?)
 pnpm backtest:option-a -- --strategy momentum-mf --dry-run
+pnpm backtest:option-a -- --strategy momentum-mf --sweep-initial-stop --dry-run  # Phase 1 initial-ATR table [1.5,2,2.5,3]
+pnpm exec tsx scripts/audit-atr-alignment.mts   # pre-deploy: signals.atr_14 vs backtest Wilder ATR
 pnpm cli sentiment         # score news headlines via LLM
 pnpm cli thesis            # generate AI theses for top-signal stocks
 pnpm cli brief             # stage 4 - compose + deliver briefing
@@ -253,7 +255,7 @@ Three places, in order of precedence:
    - [`watchlist.json`](config/watchlist.json) — symbols to highlight
    - [`screens.json`](config/screens.json) — screen criteria DSL
    - [`strategy-gates.json`](config/strategy-gates.json) — which screens / meta-strategies (e.g. `ai_picks_generation`) are allowed per regime and optional **size multipliers** (seed into `regime_strategy_gate` via `pnpm regime:seed-gates`)
-   - [`momentum-config.json`](config/momentum-config.json) — momentum strategy id, regime gate, portfolio slots, exit rank threshold, factor weights, blackout / sector caps, position sizing
+   - [`momentum-config.json`](config/momentum-config.json) — momentum strategy id, regime gate, portfolio slots, exit rank threshold, factor weights, blackout / sector caps, position sizing (`atr_multiplier` **2.5** for initial stop)
    - [`momentum-universe.json`](config/momentum-universe.json) — bucketed symbol union for the momentum ranker (~150-name screenable list)
    - [`portfolio.json`](config/portfolio.json) — manual holdings, used
      when `PORTFOLIO_SOURCE=manual`. Live Kite sync is the default in
@@ -307,7 +309,7 @@ configured screen against historical EOD data:
   SQL analysis (`sqlite3 data/market-pulse.db`).
 
 **Option A walk-forward** — `pnpm cli backtest-option-a --strategy all --from 2023-01-01 --to 2026-03-31`
-(or `pnpm backtest:option-a -- ...`) runs `momentum_mf` and/or `ai_pick` rules with indicators computed **from `quotes` only** (no `signals` table). Momentum price factors use **`adj_close`** (aligned with live enrich). **Default `regime-source` is `proxy`:** a coarse 3-signal regime from `quotes` only (`src/backtest/regime-proxy.ts`) — no `regime_daily`, no FII/VIX, no 3-day persistence. The proxy gate requires **≥252** NSE `NIFTY_50` rows **strictly before** `--from`. Use **`--regime-source daily`** to require **`regime_daily`** covering ≥80% of benchmark trading days (historical enrich/FII still affects label quality). Extended aggregates are stored on `backtest_runs` (migration `0014`). Each closed leg persists **`backtest_trades.exit_reason`** (migration `0015`: stop vs target vs time vs rank/regime/window-end). `--dry-run` skips DB writes but still enforces the chosen regime gate. Each run prints JSON **`option-a:start`** plus per-strategy results (including zero-trade runs); **`--verbose`** logs engine time.
+(or `pnpm backtest:option-a -- ...`) runs `momentum_mf` and/or `ai_pick` rules with indicators computed **from `quotes` only** (no `signals` table). Momentum price factors use **`adj_close`** (aligned with live enrich). **Default `regime-source` is `proxy`:** a coarse 3-signal regime from `quotes` only (`src/backtest/regime-proxy.ts`) — no `regime_daily`, no FII/VIX, no 3-day persistence. The proxy gate requires **≥252** NSE `NIFTY_50` rows **strictly before** `--from`. Use **`--regime-source daily`** to require **`regime_daily`** covering ≥80% of benchmark trading days (historical enrich/FII still affects label quality). Extended aggregates are stored on `backtest_runs` (migration `0014`). Each closed leg persists **`backtest_trades.exit_reason`** (migration `0015`: stop vs target vs time vs rank/regime/window-end). **`--sweep-initial-stop`** (momentum-mf only) prints a `console.table` over initial ATR multipliers `[1.5, 2.0, 2.5, 3.0]`; **`--initial-multiplier`** sets a single run. Production momentum entry stop uses **`atr_multiplier: 2.5`** in [`config/momentum-config.json`](config/momentum-config.json) (Phase 1 selected over 3.0×). `--dry-run` skips DB writes but still enforces the chosen regime gate. Each run prints JSON **`option-a:start`** plus per-strategy results (including zero-trade runs); **`--verbose`** logs engine time. GTT activation gates: [`docs/gtt-activation-criteria.md`](docs/gtt-activation-criteria.md).
 
 **Live `regime_daily` vs backtest proxy** — Full classifier (`runRegimeClassifier` / `computeRegimeSignals`) uses VIX, FII, and `signals` breadth; persisted labels use **3-session** agreement (`applyPersistence`). The Option A **proxy** intentionally diverges for runnable backtests without historical enrich. Audit persisted rows: `pnpm exec tsx scripts/audit-regime-history.mts --from … --to …`.
 

@@ -74,10 +74,13 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 
 **Core math:**
 ```
-initial_stop = MAX(llm_suggested_stop, entry_price − 2.0 × ATR14_at_entry)
+# momentum_mf entry (momentum-rebalance): atr_multiplier from config (2.5 since May 2026 Phase 1)
+initial_stop = MAX(hard_floor, entry_price − atr_multiplier × ATR14_at_entry)  # hard_floor = entry × 0.92
+
+# AI_PICK / PORTFOLIO_ADD day-1 latch (evaluate-trades): still max(LLM stop, entry − 2.0 × ATR14)
 
 unrealised_pct = ((highest_close_since_entry − entry_price) / entry_price) × 100
-multiplier = (unrealised_pct ≥ 15.0 OR current_multiplier = 1.5) ? 1.5 : 2.0
+multiplier = (unrealised_pct ≥ 15.0 OR current_multiplier = 1.5) ? 1.5 : 2.0  # live trailing DB default 2.0 until tighten
 candidate_stop = highest_close_since_entry − (multiplier × ATR14_today)
 
 new_stop = MAX(candidate_stop, current_stop_loss)  // GOLDEN RULE — never moves down
@@ -123,7 +126,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 | PORTFOLIO_ADD | 22 | 9.1% | **−3.27%** | +1.02% | −3.70% |
 | momentum_mf | 10 | 40% | **−0.59%** | +2.16% | −2.42% |
 
-**Phase gate:** GTT execution activates only when overall expectancy > 0 over 30+ closed trades. Currently NOT met — expectancy remains negative (AI_PICK is near breakeven after dedup). Observe mode only.
+**Phase gate:** GTT execution is **gated observe mode** until all three gates in [`docs/gtt-activation-criteria.md`](../../docs/gtt-activation-criteria.md) pass sequentially (≥30 post-fix closed trades with `source_date >= 2026-05-14`, net expectancy floors per signal type, live `regime_daily = BULL_TRENDING` at activation). Pre-fix dedup baseline expectancy remains negative — not comparable to backtest.
 
 **Fix status and caveats (May 14):**
 - PORTFOLIO_ADD duplicate block (symbol with ≥1 OPEN paper trade) — **fixed (May 12)**.
@@ -274,7 +277,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 
 **Deploy scripts:** `deploy/sync-env-to-vm.sh`, `deploy/sync-db-to-vm.sh` (rsync with WAL checkpoint), `deploy/setup.sh` (Node 22 + pnpm + PM2 bootstrap), `deploy/ecosystem.config.cjs`.
 
-**Healthcheck (`deploy/healthcheck.ts`):** Verifies `briefings` row delivered, `regime_daily` row present, no pino errors in PM2 logs, optional run-summary JSON thesis failure count. Appends TSV to `deploy/logs/health.log`. Sends alert email on failure.
+**Healthcheck (`deploy/healthcheck.ts`):** Verifies `briefings` row delivered, `regime_daily` row present, no pino errors in PM2 logs, optional run-summary JSON thesis failure count. Also logs **GTT post-fix tranche** metrics (`paper_trades` closed since `2026-05-14`, grouped by `signal_type`) on every run — empty tranche is logged, not a failure. Appends TSV to `deploy/logs/health.log`. Sends alert email on failure (includes tranche block).
 
 **config table** note — Kite token stored here
 
@@ -326,16 +329,19 @@ history when backfill ran, producing 99.6% CHOPPY. Proxy uses: Nifty vs SMA200,
 SMA200 slope, % universe above SMA200.
 
 **adj_close vs close:** mom_12_1_return uses adj_close (split-consistent). 
-RSI/SMA/ATR use close (matches live enricher). Production loadStockClosesAsc 
-uses COALESCE(adj_close, close) — alignment TODO before GTT activation.
+RSI/SMA/ATR use close (matches live enricher). `TechnicalEnricher` loads the **trailing** `lookback` window (last N bars). After historical quote backfill, re-run enrich and `pnpm exec tsx scripts/audit-atr-alignment.mts` (≤2% divergence on spot symbols) before trusting live stops vs backtest.
 
 **Survivorship bias:** active. Delisted symbols absent from quotes are excluded.
 Results are optimistic by ~0.3–0.5% avg return.
 
-**Results (2023-01-01 to 2026-05-21):**
+**Results (2023-01-01 to 2026-05-21, 2.0× initial ATR baseline run):**
 - momentum_mf: 689 trades, 52.8% hit rate, +1.62% avg net, PF 1.79
 - ai_pick (rule proxy): 313 trades, 56.5% hit rate, +1.98% avg net, PF 1.76
 
-**Option B (not yet built):** Parameter sensitivity / walk-forward windows.
-Priority trigger: if Option A expectancy < target after survivorship adjustment,
-or ATR multiplier sensitivity on trailing stop is needed.
+**Phase 1 — initial ATR multiplier sweep (momentum_mf, tightened mult held at 1.5):**
+- CLI: `pnpm backtest:option-a -- --strategy momentum-mf --sweep-initial-stop --dry-run`
+- Single value: `--initial-multiplier 2.5`
+- Selected production value: **2.5×** (bear sub-window PF 1.78; 3.0× rejected — floor-dominated)
+- Config: `config/momentum-config.json` → `position_sizing.atr_multiplier: 2.5`
+
+**Phase 2 (next):** Tightened multiplier sensitivity (`TIGHTENED_MULTIPLIER` in `src/backtest/position.ts`).
