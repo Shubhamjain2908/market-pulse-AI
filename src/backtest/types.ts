@@ -22,4 +22,8 @@ export interface ClosedSimTrade {
   maxDrawdownPct: number;
   holdDays: number;
   exitReason: BacktestExitReason;
+  /** True when structural -8% floor bound the stop at any point during the hold. */
+  hardFloorOverridden?: boolean;
+  /** True when hardFloor > raw ATR stop at any bar during the hold. */
+  floorBinding?: boolean;
 }

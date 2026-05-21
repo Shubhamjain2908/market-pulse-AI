@@ -25,6 +25,8 @@ export interface RunOptionAEngineOpts {
   to: string;
   costBpsRoundTrip: number;
   minHistoryDays: number;
+  /** Initial ATR stop multiplier for momentum-mf trailing (Phase 1 sweep). */
+  initialMultiplier?: number;
   universe?: string[];
   db: DatabaseType;
   regimeSource?: OptionARegimeSource;
@@ -65,6 +67,7 @@ export function runOptionAEngine(opts: RunOptionAEngineOpts): RunOptionAEngineRe
     to: opts.to,
     costBpsRoundTrip: opts.costBpsRoundTrip,
     minHistoryDays: opts.minHistoryDays,
+    initialMultiplier: opts.initialMultiplier,
     universe: universeForStrategies,
     db: opts.db,
     regimeSource,
