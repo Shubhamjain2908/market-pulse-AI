@@ -7,11 +7,11 @@
 import { config } from '../config/env.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { CursorAgentProvider } from './providers/cursor-agent.js';
+import { GoogleStudioProvider } from './providers/google-studio.js';
 import { MockLlmProvider } from './providers/mock.js';
 import { OpenAIProvider } from './providers/openai.js';
 import { VertexProvider } from './providers/vertex.js';
 import type { LlmProvider } from './types.js';
-import { GoogleStudioProvider } from "./providers/google-studio.js";
 
 let cached: LlmProvider | null = null;
 

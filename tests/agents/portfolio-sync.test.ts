@@ -2,8 +2,8 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { closeDb, getDb, migrate } from '../../src/db/index.js';
 import { resolveKiteAccessToken } from '../../src/agents/portfolio-sync.js';
+import { closeDb, getDb, migrate } from '../../src/db/index.js';
 
 describe('portfolio-sync token source precedence', () => {
   let dbPath: string;
@@ -66,4 +66,3 @@ describe('portfolio-sync token source precedence', () => {
     expect(token).toBe('');
   });
 });
-

@@ -7,8 +7,8 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 
 import type {
   NearStopOpenRow,
-  TrailingStopLogInsert,
   TrailingStopLogBriefingRow,
+  TrailingStopLogInsert,
   TrailingStopLogRow,
 } from '../types/trailing-stop.js';
 import { getDb } from './connection.js';
@@ -145,7 +145,10 @@ export function patchPaperTradeTrailing(
 }
 
 /** Idempotent on (trade_id, log_date, action). Returns new row id when inserted, else null. */
-export function insertStopLog(row: TrailingStopLogInsert, db: DatabaseType = getDb()): number | null {
+export function insertStopLog(
+  row: TrailingStopLogInsert,
+  db: DatabaseType = getDb(),
+): number | null {
   const result = db
     .prepare(
       `
@@ -185,7 +188,10 @@ export function insertStopLog(row: TrailingStopLogInsert, db: DatabaseType = get
  * this date were already processed; the walk continues from the next session only.
  * Excluding `STOPPED_OUT` avoids treating the exit bar as a résumé cursor after a close.
  */
-export function getLastEvaluatedBarDate(tradeId: number, db: DatabaseType = getDb()): string | null {
+export function getLastEvaluatedBarDate(
+  tradeId: number,
+  db: DatabaseType = getDb(),
+): string | null {
   const row = db
     .prepare(
       `SELECT log_date FROM trailing_stop_log
@@ -197,8 +203,11 @@ export function getLastEvaluatedBarDate(tradeId: number, db: DatabaseType = getD
 }
 
 /** Single log row by primary key (post-mortem agent). */
-export function getStopLogById(id: number, db: DatabaseType = getDb()): TrailingStopLogRow | undefined {
-  const row = db.prepare(`SELECT * FROM trailing_stop_log WHERE id = ?`).get(id) as
+export function getStopLogById(
+  id: number,
+  db: DatabaseType = getDb(),
+): TrailingStopLogRow | undefined {
+  const row = db.prepare('SELECT * FROM trailing_stop_log WHERE id = ?').get(id) as
     | Record<string, unknown>
     | undefined;
   return row ? parseLogRow(row) : undefined;
@@ -222,10 +231,8 @@ function parseBriefingLogRow(row: Record<string, unknown>): TrailingStopLogBrief
   const base = parseLogRow(row);
   return {
     ...base,
-    tradeEntryPrice:
-      row.trade_entry_price == null ? null : Number(row.trade_entry_price),
-    tradeExitPrice:
-      row.trade_exit_price == null ? null : Number(row.trade_exit_price),
+    tradeEntryPrice: row.trade_entry_price == null ? null : Number(row.trade_entry_price),
+    tradeExitPrice: row.trade_exit_price == null ? null : Number(row.trade_exit_price),
     tradePnlPct: row.trade_pnl_pct == null ? null : Number(row.trade_pnl_pct),
   };
 }

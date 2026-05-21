@@ -489,13 +489,7 @@ describe('evaluate paper trades', () => {
     const d1 = '2026-04-02';
     const d2 = '2026-04-03';
     seedNifty(d1, d2);
-    upsertQuotes(
-      [
-        q('RESUME1', d1, 100, 105, 95, 100),
-        q('RESUME1', d2, 100, 105, 99, 100),
-      ],
-      db,
-    );
+    upsertQuotes([q('RESUME1', d1, 100, 105, 95, 100), q('RESUME1', d2, 100, 105, 99, 100)], db);
     seedAtr14('RESUME1', [src, d1, d2], 3);
 
     insertPaperTradeIfAbsent(

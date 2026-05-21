@@ -1,10 +1,10 @@
 import express from 'express';
 import { config } from '../config/env.js';
+import { PROJECT_DOTENV_PATH } from '../config/project-paths.js';
 import { closeDb, getDb, migrate } from '../db/index.js';
-import { child } from '../logger.js';
+import { upsertEnvVar } from '../ingestors/kite/auth.js';
 import { KiteClient } from '../ingestors/kite/client.js';
-import { upsertEnvVar } from "../ingestors/kite/auth.js";
-import { PROJECT_DOTENV_PATH } from "../config/project-paths.js";
+import { child } from '../logger.js';
 
 const log = child({ component: 'kite-auth-server' });
 const app = express();
@@ -27,7 +27,11 @@ app.get('/auth/callback', async (req, res) => {
   try {
     const session = await kite.generateSession(requestToken);
     upsertKiteAccessToken(session.access_token);
-    upsertEnvVar(process.env.MP_DOTENV_PATH ?? PROJECT_DOTENV_PATH, 'KITE_ACCESS_TOKEN', session.access_token);
+    upsertEnvVar(
+      process.env.MP_DOTENV_PATH ?? PROJECT_DOTENV_PATH,
+      'KITE_ACCESS_TOKEN',
+      session.access_token,
+    );
 
     const nowLabel = formatIstNow();
     const expiry = getTokenExpiryFromIssuedAt(new Date());
@@ -84,13 +88,15 @@ function maskToken(token: string): string {
 
 function parseSqliteTimestamp(value: string): Date {
   // SQLite CURRENT_TIMESTAMP is UTC in "YYYY-MM-DD HH:MM:SS" format.
-  return new Date(value.replace(' ', 'T') + 'Z');
+  return new Date(`${value.replace(' ', 'T')}Z`);
 }
 
 function getTokenExpiryFromIssuedAt(issuedAt: Date): { label: string; instant: Date } {
   const issueIst = getIstDateParts(issuedAt);
   const nextIstDate = addDaysToYmd(issueIst.year, issueIst.month, issueIst.day, 1);
-  const expiryUtc = new Date(Date.UTC(nextIstDate.year, nextIstDate.month - 1, nextIstDate.day, 0, 30, 0));
+  const expiryUtc = new Date(
+    Date.UTC(nextIstDate.year, nextIstDate.month - 1, nextIstDate.day, 0, 30, 0),
+  );
   return {
     label: `${nextIstDate.year}-${pad2(nextIstDate.month)}-${pad2(nextIstDate.day)} 06:00 IST`,
     instant: expiryUtc,
@@ -131,12 +137,12 @@ function addDaysToYmd(
 }
 
 function formatIstNow(): string {
-  return new Intl.DateTimeFormat('en-IN', {
+  return `${new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',
     dateStyle: 'medium',
     timeStyle: 'medium',
     hour12: false,
-  }).format(new Date()) + ' IST';
+  }).format(new Date())} IST`;
 }
 
 function pad2(v: number): string {
@@ -258,6 +264,3 @@ function readKiteAuthPort(): number {
 }
 
 main();
-
-
-

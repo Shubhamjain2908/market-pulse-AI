@@ -77,9 +77,6 @@ CREATE TABLE signals (
 );
 CREATE INDEX idx_signals_date_name ON signals(date, name);
 CREATE INDEX idx_signals_symbol    ON signals(symbol);
--- App read contract (not enforced by SQLite): DbSignalProvider technical branch and
--- getLatestSignalsMap / getLatestSignalsMapsForSymbols only consider rows where
--- date <= as_of AND date >= date(as_of, '-90 days'); no silent use of older rows.
 CREATE TABLE screens (
   symbol            TEXT NOT NULL,
   date              TEXT NOT NULL,
@@ -169,7 +166,7 @@ CREATE TABLE backtest_runs (
   min_return_pct  REAL    NOT NULL,
   max_drawdown_pct REAL   NOT NULL, -- worst trade DD across the run
   created_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+, strategy_id TEXT, expectancy REAL, avg_hold_days REAL, profit_factor REAL, universe_json TEXT, cost_bps_round_trip INTEGER, notes TEXT);
 CREATE INDEX idx_backtest_runs_screen ON backtest_runs(screen_name, created_at DESC);
 CREATE TABLE backtest_trades (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,7 +178,7 @@ CREATE TABLE backtest_trades (
   exit_price    REAL    NOT NULL,
   return_pct    REAL    NOT NULL,
   max_drawdown_pct REAL NOT NULL, -- worst close during the hold, 0..-100
-  hold_days     INTEGER NOT NULL,
+  hold_days     INTEGER NOT NULL, exit_reason TEXT,
   FOREIGN KEY (run_id) REFERENCES backtest_runs(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_backtest_trades_run     ON backtest_trades(run_id);
@@ -323,16 +320,6 @@ CREATE UNIQUE INDEX uq_trailing_log_trade_day_action
   ON trailing_stop_log(trade_id, log_date, action);
 CREATE INDEX idx_paper_trades_signal_type ON paper_trades(signal_type);
 CREATE INDEX idx_paper_trades_signal_status ON paper_trades(signal_type, status);
-CREATE TABLE corporate_actions (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  symbol      TEXT    NOT NULL,
-  ex_date     TEXT    NOT NULL,
-  type        TEXT    NOT NULL,  -- 'split' | 'bonus'
-  factor      REAL    NOT NULL,
-  source      TEXT    NOT NULL,
-  applied_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(symbol, ex_date, type)
-);
 CREATE TABLE earnings_calendar (
   symbol        TEXT NOT NULL,
   expected_date TEXT NOT NULL, -- YYYY-MM-DD
@@ -358,4 +345,14 @@ CREATE TABLE config (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE corporate_actions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol      TEXT    NOT NULL,
+  ex_date     TEXT    NOT NULL,
+  type        TEXT    NOT NULL,  -- 'split' | 'bonus'
+  factor      REAL    NOT NULL,  -- adjustment divisor (e.g., 3.0 for a 3:1 split)
+  source      TEXT    NOT NULL,  -- 'yahoo'
+  applied_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(symbol, ex_date, type)
 );

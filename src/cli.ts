@@ -10,6 +10,7 @@
  *   mp momentum-rank      Phase 4.1 - momentum composite + ranks (signals)
  *   mp momentum-rebalance Phase 4.2 - regime gate, rank exits, entries (paper_trades)
  *   mp screen            Stage 3 - run screens + alert scan against today's signals
+ *   mp backtest-option-a  Option A walk-forward (momentum_mf / ai_pick; regime coverage gate)
  *   mp backtest          Replay screens against historical EOD data
  *   mp sentiment         Score news headlines via LLM
  *   mp thesis            Generate AI theses for top-signal stocks
@@ -368,6 +369,67 @@ program
     }
     closeDb();
   });
+
+program
+  .command('backtest-option-a')
+  .description('Option A walk-forward backtest (momentum_mf / ai_pick rules, quotes-only signals)')
+  .requiredOption('--strategy <id>', 'momentum-mf | ai-pick | all')
+  .option('--from <YYYY-MM-DD>', 'inclusive start', '2023-01-01')
+  .option('--to <YYYY-MM-DD>', 'inclusive end', '2026-03-31')
+  .option('--min-history-days <n>', 'min quote sessions in window for full universe', '504')
+  .option('--cost-bps <n>', 'round-trip transaction cost (bps), applied at exit', '20')
+  .option(
+    '--regime-source <mode>',
+    'proxy (default): quotes-only coarse regime; daily: require regime_daily ≥80% coverage',
+    'proxy',
+  )
+  .option('--dry-run', 'no DB writes; regime gate still enforced', false)
+  .option('--verbose', 'extra progress logging (engine timing)', false)
+  .action(
+    async (opts: {
+      strategy: string;
+      from: string;
+      to: string;
+      minHistoryDays: string;
+      costBps: string;
+      dryRun?: boolean;
+      verbose?: boolean;
+      regimeSource?: string;
+    }) => {
+      const { runOptionABacktestJob } = await import('./backtest/runner.js');
+      const s = opts.strategy.trim().toLowerCase();
+      const strategy =
+        s === 'momentum-mf' || s === 'momentum_mf'
+          ? 'momentum-mf'
+          : s === 'ai-pick' || s === 'ai_pick'
+            ? 'ai-pick'
+            : s === 'all'
+              ? 'all'
+              : null;
+      if (!strategy) {
+        logger.error({ strategy: opts.strategy }, 'unknown strategy');
+        process.exitCode = 1;
+        return;
+      }
+      const rs = (opts.regimeSource ?? 'proxy').trim().toLowerCase();
+      const regimeSource = rs === 'daily' ? 'daily' : rs === 'proxy' ? 'proxy' : null;
+      if (!regimeSource) {
+        logger.error({ regimeSource: opts.regimeSource }, 'regime-source must be proxy or daily');
+        process.exitCode = 1;
+        return;
+      }
+      await runOptionABacktestJob({
+        strategy,
+        from: opts.from,
+        to: opts.to,
+        minHistoryDays: Number(opts.minHistoryDays) || 504,
+        costBpsRoundTrip: Number(opts.costBps) || 20,
+        dryRun: Boolean(opts.dryRun),
+        verbose: Boolean(opts.verbose),
+        regimeSource,
+      });
+    },
+  );
 
 program
   .command('sentiment')

@@ -28,7 +28,7 @@ export class OpenAIProvider implements LlmProvider {
     this.model = config.OPENAI_MODEL;
     this.client = new OpenAI({
       baseURL: config.OPENAI_BASE_URL ?? 'https://api.openai.com/v1',
-      apiKey: config.OPENAI_API_KEY
+      apiKey: config.OPENAI_API_KEY,
     });
   }
 

@@ -293,6 +293,7 @@ describe('portfolio analyser', () => {
         pnlPct: -18.5,
         lastPrice: 315,
       },
+      null,
     );
     expect(out.action).toBe('HOLD');
     expect(out.triggerReason).toContain('averaging down');
@@ -304,6 +305,7 @@ describe('portfolio analyser', () => {
       { ...baseAction(), action: 'ADD', suggestedStop: 280, triggerReason: 'Dip buy.' },
       { rsi_14: 50, pct_from_52w_high: -20 },
       { pnlPct: -3.5, lastPrice: 315 },
+      null,
     );
     expect(out.action).toBe('ADD');
   });
@@ -316,6 +318,7 @@ describe('portfolio analyser', () => {
         pnlPct: 5,
         lastPrice: 315,
       },
+      null,
     );
     expect(out.action).toBe('ADD');
   });
@@ -380,6 +383,7 @@ describe('portfolio analyser', () => {
         pnlPct: 3,
         lastPrice: 315,
       },
+      null,
     );
     expect(out.action).toBe('ADD');
   });
