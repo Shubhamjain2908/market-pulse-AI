@@ -378,7 +378,12 @@ program
   .option('--to <YYYY-MM-DD>', 'inclusive end', '2026-03-31')
   .option('--min-history-days <n>', 'min quote sessions in window for full universe', '504')
   .option('--cost-bps <n>', 'round-trip transaction cost (bps), applied at exit', '20')
-  .option('--dry-run', 'no DB writes; still requires regime coverage gate', false)
+  .option(
+    '--regime-source <mode>',
+    'proxy (default): quotes-only coarse regime; daily: require regime_daily ≥80% coverage',
+    'proxy',
+  )
+  .option('--dry-run', 'no DB writes; regime gate still enforced', false)
   .option('--verbose', 'extra progress logging (engine timing)', false)
   .action(
     async (opts: {
@@ -389,6 +394,7 @@ program
       costBps: string;
       dryRun?: boolean;
       verbose?: boolean;
+      regimeSource?: string;
     }) => {
       const { runOptionABacktestJob } = await import('./backtest/runner.js');
       const s = opts.strategy.trim().toLowerCase();
@@ -405,6 +411,13 @@ program
         process.exitCode = 1;
         return;
       }
+      const rs = (opts.regimeSource ?? 'proxy').trim().toLowerCase();
+      const regimeSource = rs === 'daily' ? 'daily' : rs === 'proxy' ? 'proxy' : null;
+      if (!regimeSource) {
+        logger.error({ regimeSource: opts.regimeSource }, 'regime-source must be proxy or daily');
+        process.exitCode = 1;
+        return;
+      }
       await runOptionABacktestJob({
         strategy,
         from: opts.from,
@@ -413,6 +426,7 @@ program
         costBpsRoundTrip: Number(opts.costBps) || 20,
         dryRun: Boolean(opts.dryRun),
         verbose: Boolean(opts.verbose),
+        regimeSource,
       });
     },
   );

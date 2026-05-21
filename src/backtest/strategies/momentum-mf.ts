@@ -25,9 +25,11 @@ import { buildTradingDayIndex } from '../../scripts/evaluate-trades.js';
 import type { Regime } from '../../types/regime.js';
 import { scoreMomentumFromFactorRows } from '../momentum-inmemory-rank.js';
 import { type LongTrailState, initLongTrailState, stepLongPositionOneBar } from '../position.js';
-import { countDistinctQuoteDates, loadOhlcvMap, quoteDateBounds } from '../quotes-loader.js';
+import { loadOhlcvMap } from '../quotes-loader.js';
+import type { OptionARegimeSource, RegimeProxyMap } from '../regime-proxy.js';
 import { type OHLCVBar, SIGNAL_WINDOW_LEN, computeSignalsForLastBar } from '../signals.js';
 import type { ClosedSimTrade } from '../types.js';
+import { filterOptionAUniverse } from '../universe-filter.js';
 
 const MARKET_TZ = 'Asia/Kolkata';
 
@@ -39,6 +41,8 @@ export interface MomentumMfBacktestOpts {
   /** When set, overrides momentum universe. */
   universe?: string[];
   db: DatabaseType;
+  regimeSource: OptionARegimeSource;
+  regimeProxyByDate?: RegimeProxyMap;
 }
 
 interface OpenPosition {
@@ -157,27 +161,11 @@ function resolveSector(
   return classifySector(symbol, sectorMap, row?.sector ?? null);
 }
 
-function filterUniverse(
-  universe: string[],
-  from: string,
-  to: string,
-  minHistoryDays: number,
-  db: DatabaseType,
-): string[] {
-  const out: string[] = [];
-  for (const sym of universe) {
-    const u = sym.toUpperCase();
-    const n = countDistinctQuoteDates(u, from, to, db);
-    if (n >= minHistoryDays) {
-      out.push(u);
-      continue;
-    }
-    if (n >= 252 && n < minHistoryDays) {
-      const { minD, maxD } = quoteDateBounds(u, db);
-      if (minD && maxD && minD <= from && maxD >= to) out.push(u);
-    }
+function regimeForDay(D: string, opts: MomentumMfBacktestOpts): Regime | null {
+  if (opts.regimeSource === 'proxy' && opts.regimeProxyByDate) {
+    return opts.regimeProxyByDate.get(D) ?? 'CHOPPY';
   }
-  return out.sort((a, b) => a.localeCompare(b));
+  return getTodayRegime(D, opts.db)?.regime ?? null;
 }
 
 function barsThroughDate(all: OHLCVBar[], date: string): OHLCVBar[] {
@@ -202,7 +190,13 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
   const universeRaw = (opts.universe ?? getMomentumUniverseSymbols({ fresh: true })).map((s) =>
     s.toUpperCase(),
   );
-  const universe = filterUniverse(universeRaw, opts.from, opts.to, opts.minHistoryDays, opts.db);
+  const universe = filterOptionAUniverse(
+    universeRaw,
+    opts.from,
+    opts.to,
+    opts.minHistoryDays,
+    opts.db,
+  );
   const benchSym = NIFTY_BENCHMARK_SYMBOL.toUpperCase();
 
   const extendedFrom = addCalendarDaysIst(opts.from, -450);
@@ -241,8 +235,7 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
   };
 
   for (const D of tradingDays) {
-    const regimeRow = getTodayRegime(D, opts.db);
-    const regime = regimeRow?.regime ?? null;
+    const regime = regimeForDay(D, opts);
     const regimeAllowed = regime != null && cfg.regime_gate.includes(regime as Regime);
 
     if (!regimeAllowed) {

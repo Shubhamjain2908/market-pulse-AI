@@ -175,7 +175,7 @@ CREATE TABLE backtest_runs (
   profit_factor   REAL,
   universe_json   TEXT,
   cost_bps_round_trip INTEGER,
-  notes           TEXT
+  notes           TEXT    -- Option A: survivorship + regime source (proxy vs daily); see runner persist
 );
 CREATE INDEX idx_backtest_runs_screen ON backtest_runs(screen_name, created_at DESC);
 CREATE TABLE backtest_trades (

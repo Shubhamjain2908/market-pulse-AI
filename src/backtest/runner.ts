@@ -4,7 +4,7 @@
  *
  * Usage:
  *   pnpm exec tsx src/backtest/runner.ts --strategy momentum-mf --from 2023-01-01 --to 2026-03-31
- *   pnpm exec tsx src/backtest/runner.ts --strategy all --min-history-days 504 --cost-bps 20
+ *   pnpm exec tsx src/backtest/runner.ts --strategy all --regime-source proxy
  */
 
 import { parseArgs } from 'node:util';
@@ -21,6 +21,11 @@ import { closeDb, getDb, migrate } from '../db/index.js';
 import { isIsoDate } from '../ingestors/base/dates.js';
 import { NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
 import { type OptionAStrategy, type RunOptionAEngineResult, runOptionAEngine } from './engine.js';
+import {
+  type OptionARegimeSource,
+  REGIME_PROXY_MIN_PRIOR_BARS,
+  countBenchQuotesStrictlyBefore,
+} from './regime-proxy.js';
 import { buildOptionARunRow, tradesToDbRows } from './results.js';
 
 const DEFAULT_FROM = '2023-01-01';
@@ -36,6 +41,8 @@ export interface OptionARunnerInput {
   dryRun: boolean;
   /** Extra timing / engine breadcrumbs (default false). */
   verbose?: boolean;
+  /** `proxy` (default): quotes-only coarse regime. `daily`: require regime_daily coverage gate. */
+  regimeSource?: OptionARegimeSource;
 }
 
 function usage(): void {
@@ -43,7 +50,8 @@ function usage(): void {
   pnpm exec tsx src/backtest/runner.ts \\
     --strategy momentum-mf|ai-pick|all \\
     [--from YYYY-MM-DD] [--to YYYY-MM-DD] \\
-    [--min-history-days 504] [--cost-bps 20] [--dry-run] [--verbose]
+    [--min-history-days 504] [--cost-bps 20] [--regime-source proxy|daily] \\
+    [--dry-run] [--verbose]
 `);
 }
 
@@ -52,6 +60,13 @@ function parseStrategy(s: string): OptionAStrategy | null {
   if (u === 'momentum-mf' || u === 'momentum_mf') return 'momentum-mf';
   if (u === 'ai-pick' || u === 'ai_pick') return 'ai-pick';
   if (u === 'all') return 'all';
+  return null;
+}
+
+function parseRegimeSource(s: string | undefined): OptionARegimeSource | null {
+  if (s == null || s === '') return 'proxy';
+  const u = s.trim().toLowerCase();
+  if (u === 'proxy' || u === 'daily') return u;
   return null;
 }
 
@@ -71,18 +86,39 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
 
   const bench = NIFTY_BENCHMARK_SYMBOL.toUpperCase();
   const tradingDays = listBenchmarkTradingDates(bench, input.from, input.to, db);
+  const regimeSource: OptionARegimeSource = input.regimeSource ?? 'proxy';
 
   let cov: ReturnType<typeof regimeCoverageForWindow> | null = null;
-  if (tradingDays.length > 0) {
-    cov = regimeCoverageForWindow(tradingDays, db);
-    if (cov.ratio < REGIME_COVERAGE_MIN) {
+  let niftyPriorBars: number | null = null;
+
+  if (regimeSource === 'daily') {
+    if (tradingDays.length > 0) {
+      cov = regimeCoverageForWindow(tradingDays, db);
+      if (cov.ratio < REGIME_COVERAGE_MIN) {
+        console.error(
+          [
+            'FATAL: regime_daily coverage for the backtest window is below 80%.',
+            `  Window trading days: ${cov.totalDays}; days with regime row: ${cov.withRegime} (${(cov.ratio * 100).toFixed(1)}%).`,
+            `  regime_daily MIN(date)=${cov.regimeMin} MAX(date)=${cov.regimeMax} COUNT=${cov.regimeCount}`,
+            '  Run scripts/backfill-regime.mts (or the regime pipeline) until coverage is sufficient.',
+            '  Or use --regime-source proxy for a quotes-only coarse regime (see src/backtest/regime-proxy.ts).',
+            '  SQL: SELECT MIN(date), MAX(date), COUNT(*) FROM regime_daily;',
+          ].join('\n'),
+        );
+        closeDb();
+        process.exitCode = 1;
+        return;
+      }
+    }
+  } else {
+    niftyPriorBars = countBenchQuotesStrictlyBefore(bench, input.from, db);
+    if (niftyPriorBars < REGIME_PROXY_MIN_PRIOR_BARS) {
       console.error(
         [
-          'FATAL: regime_daily coverage for the backtest window is below 80%.',
-          `  Window trading days: ${cov.totalDays}; days with regime row: ${cov.withRegime} (${(cov.ratio * 100).toFixed(1)}%).`,
-          `  regime_daily MIN(date)=${cov.regimeMin} MAX(date)=${cov.regimeMax} COUNT=${cov.regimeCount}`,
-          '  Run scripts/backfill-regime.mts (or the regime pipeline) until coverage is sufficient.',
-          '  SQL: SELECT MIN(date), MAX(date), COUNT(*) FROM regime_daily;',
+          `FATAL: regime proxy requires at least ${REGIME_PROXY_MIN_PRIOR_BARS} NSE EOD rows for ${bench} strictly before --from (${input.from}).`,
+          `  Found ${niftyPriorBars}. SMA200/slope need sufficient history.`,
+          '  Ingest a longer NIFTY benchmark series (e.g. Yahoo ^NSEI mapped to NIFTY_50), then retry.',
+          '  Or use --regime-source daily if regime_daily is backfilled for this window.',
         ].join('\n'),
       );
       closeDb();
@@ -95,7 +131,15 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
   const survivorshipNote =
     'Survivorship bias: symbols absent from quotes are excluded; delisted names may inflate results.';
 
-  const regimeHist = tradingDays.length > 0 ? regimeHistogramForTradingDates(tradingDays, db) : {};
+  const regimeHist =
+    regimeSource === 'daily' && tradingDays.length > 0
+      ? regimeHistogramForTradingDates(tradingDays, db)
+      : null;
+
+  const regimeDebugHint =
+    regimeSource === 'daily'
+      ? 'regime_source=daily uses regime_daily (needs backfill + enrich/FII for realistic labels). Audit: pnpm exec tsx scripts/audit-regime-history.mts --from <from> --to <to>'
+      : 'regime_source=proxy uses quotes-only 3-signal coarse labels (no regime_daily, no 3-day persistence); see src/backtest/regime-proxy.ts';
 
   console.log(
     JSON.stringify(
@@ -104,10 +148,11 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
         from: input.from,
         to: input.to,
         strategy: input.strategy,
+        regimeSource,
         benchmark: bench,
         benchmarkTradingDays: tradingDays.length,
         regimeCoverage:
-          cov != null
+          regimeSource === 'daily' && cov != null
             ? {
                 withRegime: cov.withRegime,
                 totalDays: cov.totalDays,
@@ -117,14 +162,21 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
                 regimeTableRowCount: cov.regimeCount,
               }
             : null,
-        regimeLabelsInBacktestWindow: regimeHist,
+        niftyPriorBarsStrictlyBeforeFrom:
+          regimeSource === 'proxy'
+            ? { required: REGIME_PROXY_MIN_PRIOR_BARS, actual: niftyPriorBars }
+            : null,
+        regimeLabelsInBacktestWindow: regimeSource === 'daily' ? regimeHist : null,
+        regimeProxyNote:
+          regimeSource === 'proxy'
+            ? 'Proxy labels built once in engine (BULL=all3, BEAR=all3, else CHOPPY). See src/backtest/regime-proxy.ts'
+            : null,
         universeSymbolCount: universe.length,
         minHistoryDays: input.minHistoryDays,
         costBpsRoundTrip: input.costBpsRoundTrip,
         dryRun: input.dryRun,
         survivorshipNote,
-        regimeDebugHint:
-          'Persisted labels need score inputs (NIFTY/VIX quotes, fii_dii, signals close+sma_200 for breadth) plus 3-session persistence. If you never see BULL_TRENDING, run: pnpm exec tsx scripts/audit-regime-history.mts --from <from> --to <to>',
+        regimeDebugHint,
       },
       null,
       2,
@@ -133,7 +185,7 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
 
   const verbose = input.verbose === true;
   const t0 = performance.now();
-  const { byStrategy } = runOptionAEngine({
+  const { byStrategy, universeUsed } = runOptionAEngine({
     strategy: input.strategy,
     from: input.from,
     to: input.to,
@@ -141,10 +193,17 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
     minHistoryDays: input.minHistoryDays,
     universe,
     db,
+    regimeSource,
   });
   if (verbose) {
     console.log(`[option-a] engine finished in ${Math.round(performance.now() - t0)}ms`);
   }
+
+  const regimePersistNote =
+    regimeSource === 'proxy'
+      ? ' regime_source=proxy (quotes-only 3-signal regime; not regime_daily; no persistence).'
+      : ' regime_source=daily (regime_daily table).';
+  const notesCombined = `${survivorshipNote}${regimePersistNote}`;
 
   if (input.dryRun) {
     const keysToReport = keysForStrategy(input.strategy);
@@ -166,10 +225,10 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
       from: input.from,
       to: input.to,
       holdDays,
-      universe,
+      universe: universeUsed,
       trades,
       costBpsRoundTrip: input.costBpsRoundTrip,
-      notes: survivorshipNote,
+      notes: notesCombined,
     });
     const runId = insertOptionABacktestRun(row, db);
     insertOptionABacktestTrades(runId, tradesToDbRows(trades), db);
@@ -202,6 +261,7 @@ async function main(): Promise<void> {
       to: { type: 'string', default: DEFAULT_TO },
       'min-history-days': { type: 'string', default: '504' },
       'cost-bps': { type: 'string', default: '20' },
+      'regime-source': { type: 'string', default: 'proxy' },
       'dry-run': { type: 'boolean', default: false },
       verbose: { type: 'boolean', default: false },
     },
@@ -215,6 +275,10 @@ async function main(): Promise<void> {
   const verbose = values.verbose === true;
   const minHistoryDays = Number(values['min-history-days']);
   const costBps = Number(values['cost-bps']);
+  const regimeSourceRaw = values['regime-source'];
+  const regimeSource = parseRegimeSource(
+    typeof regimeSourceRaw === 'string' ? regimeSourceRaw : undefined,
+  );
 
   if (typeof stratRaw !== 'string') {
     usage();
@@ -224,6 +288,11 @@ async function main(): Promise<void> {
   const strategy = parseStrategy(stratRaw);
   if (!strategy) {
     console.error(`Unknown --strategy ${stratRaw}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (!regimeSource) {
+    console.error('--regime-source must be proxy or daily');
     process.exitCode = 1;
     return;
   }
@@ -251,6 +320,7 @@ async function main(): Promise<void> {
     costBpsRoundTrip: costBps,
     dryRun,
     verbose,
+    regimeSource,
   });
 }
 

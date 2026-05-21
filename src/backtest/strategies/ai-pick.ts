@@ -10,9 +10,11 @@ import { getTodayRegime } from '../../db/regime-queries.js';
 import { NIFTY_BENCHMARK_SYMBOL } from '../../market/benchmarks.js';
 import { addCalendarDaysIst } from '../../market/trading-days.js';
 import { buildTrade } from '../metrics.js';
-import { countDistinctQuoteDates, loadOhlcvMap, quoteDateBounds } from '../quotes-loader.js';
+import { loadOhlcvMap } from '../quotes-loader.js';
+import type { OptionARegimeSource, RegimeProxyMap } from '../regime-proxy.js';
 import { type OHLCVBar, SIGNAL_WINDOW_LEN, computeSignalsForLastBar } from '../signals.js';
 import type { ClosedSimTrade } from '../types.js';
+import { filterOptionAUniverse } from '../universe-filter.js';
 
 const HOLD_DAYS = 20;
 
@@ -23,29 +25,15 @@ export interface AiPickBacktestOpts {
   minHistoryDays: number;
   universe?: string[];
   db: DatabaseType;
+  regimeSource: OptionARegimeSource;
+  regimeProxyByDate?: RegimeProxyMap;
 }
 
-function filterUniverse(
-  universe: string[],
-  from: string,
-  to: string,
-  minHistoryDays: number,
-  db: DatabaseType,
-): string[] {
-  const out: string[] = [];
-  for (const sym of universe) {
-    const u = sym.toUpperCase();
-    const n = countDistinctQuoteDates(u, from, to, db);
-    if (n >= minHistoryDays) {
-      out.push(u);
-      continue;
-    }
-    if (n >= 252 && n < minHistoryDays) {
-      const { minD, maxD } = quoteDateBounds(u, db);
-      if (minD && maxD && minD <= from && maxD >= to) out.push(u);
-    }
+function regimeForDay(D: string, opts: AiPickBacktestOpts): string | null {
+  if (opts.regimeSource === 'proxy' && opts.regimeProxyByDate) {
+    return opts.regimeProxyByDate.get(D) ?? 'CHOPPY';
   }
-  return out.sort((a, b) => a.localeCompare(b));
+  return getTodayRegime(D, opts.db)?.regime ?? null;
 }
 
 function barsThroughDate(all: OHLCVBar[], date: string): OHLCVBar[] {
@@ -73,7 +61,13 @@ export function runAiPickBacktest(opts: AiPickBacktestOpts): ClosedSimTrade[] {
   const universeRaw = (opts.universe ?? getMomentumUniverseSymbols({ fresh: true })).map((s) =>
     s.toUpperCase(),
   );
-  const universe = filterUniverse(universeRaw, opts.from, opts.to, opts.minHistoryDays, opts.db);
+  const universe = filterOptionAUniverse(
+    universeRaw,
+    opts.from,
+    opts.to,
+    opts.minHistoryDays,
+    opts.db,
+  );
 
   const extendedFrom = addCalendarDaysIst(opts.from, -400);
   const ohlcv = loadOhlcvMap([...universe, benchSym], extendedFrom, opts.to, opts.db);
@@ -86,8 +80,8 @@ export function runAiPickBacktest(opts: AiPickBacktestOpts): ClosedSimTrade[] {
   for (let di = 0; di < tradingDays.length; di++) {
     const D = tradingDays[di];
     if (!D) continue;
-    const regimeRow = getTodayRegime(D, opts.db);
-    if (regimeRow?.regime !== 'BULL_TRENDING') continue;
+    const regime = regimeForDay(D, opts);
+    if (regime !== 'BULL_TRENDING') continue;
 
     const nextD = tradingDays[di + 1];
     if (!nextD) break;
