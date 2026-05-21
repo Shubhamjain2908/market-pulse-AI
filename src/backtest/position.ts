@@ -8,10 +8,12 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import { exitPriceWhenStopHit } from '../scripts/evaluate-trades.js';
 import type { BacktestExitReason } from './types.js';
 
-/** Phase 2 sweep target — do not inline in step logic. */
-export const TIGHTENED_MULTIPLIER = 1.5;
-
 const HARD_FLOOR_PCT = 0.92;
+
+/** Defaults when sweep opts omit overrides (Phase 2 winners; aligned with momentum-config). */
+export const DEFAULT_INITIAL_MULTIPLIER = 2.5;
+export const DEFAULT_LOCK_IN_THRESHOLD_PCT = 18;
+export const DEFAULT_TIGHTENED_MULTIPLIER = 1.5;
 
 export interface SimOhlcBar {
   date: string;
@@ -34,6 +36,8 @@ export interface LongPositionSimResult {
   hardFloorOverridden: boolean;
   /** True when structural floor was above raw ATR stop at any point during the hold. */
   floorBinding: boolean;
+  /** True once peak unrealized gain crossed lockInThresholdPct (sticky for lifecycle). */
+  wasTailWinner: boolean;
 }
 
 export interface LongTrailState {
@@ -41,6 +45,8 @@ export interface LongTrailState {
   entryPrice: number;
   sourceDate: string;
   initialMultiplier: number;
+  tightenedMultiplier: number;
+  lockInThresholdPct: number;
   /** Pre-entry stop (LLM/config); used for day-1 latch when ATR at source is missing. */
   initialStopLoss: number;
   target: number;
@@ -48,6 +54,7 @@ export interface LongTrailState {
   hardFloor: number;
   hardFloorOverridden: boolean;
   floorBinding: boolean;
+  wasTailWinner: boolean;
   atr14AtSourceDate: number | null;
   stopLoss: number;
   highestClose: number | null;
@@ -78,13 +85,15 @@ function candidateInitialStop(
   return entryPrice - initialMultiplier * atr14AtEntry;
 }
 
-function activeMultiplier(
-  entryPrice: number,
-  highestCloseSinceEntry: number,
-  initialMultiplier: number,
-): number {
-  const unrealisedPct = ((highestCloseSinceEntry - entryPrice) / entryPrice) * 100;
-  return unrealisedPct >= 15 ? TIGHTENED_MULTIPLIER : initialMultiplier;
+function peakUnrealisedPct(entryPrice: number, highestCloseSinceEntry: number): number {
+  return ((highestCloseSinceEntry - entryPrice) / entryPrice) * 100;
+}
+
+function activeMultiplier(state: LongTrailState, highestCloseSinceEntry: number): number {
+  const unrealisedPct = peakUnrealisedPct(state.entryPrice, highestCloseSinceEntry);
+  return unrealisedPct >= state.lockInThresholdPct
+    ? state.tightenedMultiplier
+    : state.initialMultiplier;
 }
 
 export function initLongTrailState(opts: {
@@ -92,6 +101,8 @@ export function initLongTrailState(opts: {
   entryPrice: number;
   sourceDate: string;
   initialMultiplier: number;
+  tightenedMultiplier?: number;
+  lockInThresholdPct?: number;
   /** Fallback when ATR at entry is unavailable (e.g. pre-computed LLM stop). */
   initialStopLoss: number;
   target: number;
@@ -129,13 +140,16 @@ export function initLongTrailState(opts: {
     symbol: opts.symbol,
     entryPrice: opts.entryPrice,
     sourceDate: opts.sourceDate,
-    initialMultiplier: opts.initialMultiplier,
+    initialMultiplier: opts.initialMultiplier ?? DEFAULT_INITIAL_MULTIPLIER,
+    tightenedMultiplier: opts.tightenedMultiplier ?? DEFAULT_TIGHTENED_MULTIPLIER,
+    lockInThresholdPct: opts.lockInThresholdPct ?? DEFAULT_LOCK_IN_THRESHOLD_PCT,
     initialStopLoss: opts.initialStopLoss,
     target: opts.target,
     maxHoldDays: opts.maxHoldDays,
     hardFloor,
     hardFloorOverridden,
     floorBinding,
+    wasTailWinner: false,
     atr14AtSourceDate: opts.atr14AtSourceDate,
     stopLoss,
     highestClose: null,
@@ -145,7 +159,7 @@ export function initLongTrailState(opts: {
 }
 
 /**
- * One session step — strict EOD chronology for Phase 1 unconfounded sweep.
+ * One session step — strict EOD chronology for Phase 1/2 sweeps.
  * Returns `closed` when the position ends; otherwise updated `state`.
  */
 export function stepLongPositionOneBar(
@@ -161,11 +175,15 @@ export function stepLongPositionOneBar(
   let initialSetupComplete = state.initialSetupComplete;
   let hardFloorOverridden = state.hardFloorOverridden;
   let floorBinding = state.floorBinding;
+  let wasTailWinner = state.wasTailWinner;
   const { hardFloor } = state;
 
   const highestCloseSinceEntry =
     highestClose === null ? bar.close : Math.max(highestClose, bar.close);
   highestClose = highestCloseSinceEntry;
+
+  const unrealisedPct = peakUnrealisedPct(state.entryPrice, highestCloseSinceEntry);
+  if (unrealisedPct >= state.lockInThresholdPct) wasTailWinner = true;
 
   let skipTrailThisBar = false;
   if (!initialSetupComplete) {
@@ -180,11 +198,7 @@ export function stepLongPositionOneBar(
 
   if (initialSetupComplete && !skipTrailThisBar) {
     if (atr14Today !== undefined && Number.isFinite(atr14Today) && atr14Today > 0) {
-      const mult = activeMultiplier(
-        state.entryPrice,
-        highestCloseSinceEntry,
-        state.initialMultiplier,
-      );
+      const mult = activeMultiplier(state, highestCloseSinceEntry);
       const computedATRStop = highestCloseSinceEntry - mult * atr14Today;
       if (hardFloor > computedATRStop) floorBinding = true;
       stopLoss = Math.max(computedATRStop, stopLoss);
@@ -231,6 +245,7 @@ export function stepLongPositionOneBar(
       exitReason,
       hardFloorOverridden,
       floorBinding,
+      wasTailWinner,
     };
   };
 
@@ -275,6 +290,7 @@ export function stepLongPositionOneBar(
       initialSetupComplete,
       hardFloorOverridden,
       floorBinding,
+      wasTailWinner,
       maxDrawdownPct,
     },
   };
@@ -291,6 +307,8 @@ export function simulateLongPositionUntilClose(opts: {
   entryPrice: number;
   sourceDate: string;
   initialMultiplier: number;
+  tightenedMultiplier?: number;
+  lockInThresholdPct?: number;
   initialStopLoss: number;
   target: number;
   maxHoldDays: number;
@@ -306,6 +324,8 @@ export function simulateLongPositionUntilClose(opts: {
     entryPrice,
     sourceDate,
     initialMultiplier,
+    tightenedMultiplier,
+    lockInThresholdPct,
     initialStopLoss,
     target,
     maxHoldDays,
@@ -324,6 +344,8 @@ export function simulateLongPositionUntilClose(opts: {
     entryPrice,
     sourceDate,
     initialMultiplier,
+    tightenedMultiplier,
+    lockInThresholdPct,
     initialStopLoss,
     target,
     maxHoldDays,
@@ -354,5 +376,6 @@ export function simulateLongPositionUntilClose(opts: {
     exitReason: 'WINDOW_END',
     hardFloorOverridden: state.hardFloorOverridden,
     floorBinding: state.floorBinding,
+    wasTailWinner: state.wasTailWinner,
   };
 }

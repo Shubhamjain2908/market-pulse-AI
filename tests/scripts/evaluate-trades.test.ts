@@ -1,7 +1,8 @@
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as trailingSizing from '../../src/config/trailing-stop-sizing.js';
 import { closeDb, getDb, migrate, upsertQuotes } from '../../src/db/index.js';
 import {
   getOpenPaperTrades,
@@ -43,11 +44,21 @@ describe('exitPriceWhenStopHit (R3)', () => {
   });
 });
 
+/** Stable sizing for integration scenarios written under 2× / 1.5× @ 15%. */
+const legacyTrailSizing = {
+  initialMultiplier: 2,
+  tightenedMultiplier: 1.5,
+  lockInThresholdPct: 15,
+} as const;
+
 describe('evaluate paper trades', () => {
   let dbPath: string;
   let db: ReturnType<typeof getDb>;
 
   beforeEach(() => {
+    vi.spyOn(trailingSizing, 'trailingStopSizingFromMomentumConfig').mockReturnValue(
+      legacyTrailSizing,
+    );
     dbPath = join(tmpdir(), `mp-ev-${Date.now()}.db`);
     process.env.DATABASE_PATH = dbPath;
     db = getDb({ path: dbPath });
@@ -55,6 +66,7 @@ describe('evaluate paper trades', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     db.close();
     closeDb();
     try {

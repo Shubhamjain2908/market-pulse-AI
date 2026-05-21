@@ -26,4 +26,6 @@ export interface ClosedSimTrade {
   hardFloorOverridden?: boolean;
   /** True when hardFloor > raw ATR stop at any bar during the hold. */
   floorBinding?: boolean;
+  /** True once peak unrealized gain crossed the lock-in threshold during the hold. */
+  wasTailWinner?: boolean;
 }

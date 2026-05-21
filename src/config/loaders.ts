@@ -77,6 +77,8 @@ const MomentumConfigSchema = z.object({
   position_sizing: z.object({
     risk_pct: z.number(),
     atr_multiplier: z.number(),
+    lock_in_threshold_pct: z.number(),
+    tightened_multiplier: z.number(),
     add_tranche_atr: z.number(),
     add_tranche_size_pct: z.number(),
     trim_rsi_threshold: z.number(),

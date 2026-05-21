@@ -29,8 +29,13 @@ import {
 import { buildOptionARunRow, tradesToDbRows } from './results.js';
 import {
   PHASE1_INITIAL_MULTIPLIERS,
+  PHASE2_FIXED_INITIAL_MULTIPLIER,
+  PHASE2_LOCK_IN_THRESHOLDS_PCT,
+  PHASE2_TIGHTENED_MULTIPLIERS,
   computePhase1SweepRow,
+  computePhase2SweepRow,
   formatPhase1SweepTable,
+  formatPhase2SweepTable,
 } from './sweep-metrics.js';
 
 const DEFAULT_FROM = '2023-01-01';
@@ -52,6 +57,10 @@ export interface OptionARunnerInput {
   initialMultiplier?: number;
   /** Phase 1 cross-sectional sweep over [1.5, 2.0, 2.5, 3.0] (momentum-mf only). */
   sweepInitialStop?: boolean;
+  /** Phase 2 joint 3×3 lock-in sweep; initial ATR fixed at 2.5× (momentum-mf only). */
+  sweepLockIn?: boolean;
+  tightenedMultiplier?: number;
+  lockInThresholdPct?: number;
 }
 
 function usage(): void {
@@ -60,10 +69,13 @@ function usage(): void {
     --strategy momentum-mf|ai-pick|all \\
     [--from YYYY-MM-DD] [--to YYYY-MM-DD] \\
     [--min-history-days 504] [--cost-bps 20] [--regime-source proxy|daily] \\
-    [--initial-multiplier 2.0] [--sweep-initial-stop] [--dry-run] [--verbose]
+    [--initial-multiplier 2.5] [--sweep-initial-stop] [--sweep-lock-in] [--dry-run] [--verbose]
 
-  Phase 1 trailing-stop sweep (momentum-mf):
+  Phase 1 initial-ATR sweep (momentum-mf):
     pnpm exec tsx src/backtest/runner.ts --strategy momentum-mf --sweep-initial-stop --dry-run
+
+  Phase 2 lock-in joint sweep (momentum-mf, initial ATR fixed 2.5×):
+    pnpm exec tsx src/backtest/runner.ts --strategy momentum-mf --sweep-lock-in --dry-run
 `);
 }
 
@@ -197,6 +209,56 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
 
   const verbose = input.verbose === true;
 
+  if (input.sweepLockIn === true && input.sweepInitialStop === true) {
+    console.error('--sweep-lock-in and --sweep-initial-stop are mutually exclusive');
+    closeDb();
+    process.exitCode = 1;
+    return;
+  }
+
+  if (input.sweepLockIn === true) {
+    if (input.strategy !== 'momentum-mf') {
+      console.error('--sweep-lock-in requires --strategy momentum-mf');
+      closeDb();
+      process.exitCode = 1;
+      return;
+    }
+    const sweepRows = [];
+    for (const tightenedMultiplier of PHASE2_TIGHTENED_MULTIPLIERS) {
+      for (const lockInThresholdPct of PHASE2_LOCK_IN_THRESHOLDS_PCT) {
+        const t0 = performance.now();
+        const { byStrategy } = runOptionAEngine({
+          strategy: 'momentum-mf',
+          from: input.from,
+          to: input.to,
+          costBpsRoundTrip: input.costBpsRoundTrip,
+          minHistoryDays: input.minHistoryDays,
+          initialMultiplier: PHASE2_FIXED_INITIAL_MULTIPLIER,
+          tightenedMultiplier,
+          lockInThresholdPct,
+          universe,
+          db,
+          regimeSource,
+        });
+        if (verbose) {
+          console.log(
+            `[option-a] phase2 sweep tightened=${tightenedMultiplier} lockIn=${lockInThresholdPct}% ` +
+              `finished in ${Math.round(performance.now() - t0)}ms`,
+          );
+        }
+        const trades = byStrategy.momentum_mf ?? [];
+        sweepRows.push(computePhase2SweepRow(tightenedMultiplier, lockInThresholdPct, trades));
+      }
+    }
+    console.log(
+      `\nPhase 2 lock-in joint sweep (momentum-mf, initialMult=${PHASE2_FIXED_INITIAL_MULTIPLIER}, net metrics):`,
+    );
+    console.table(formatPhase2SweepTable(sweepRows));
+    console.log(JSON.stringify({ phase: 'option-a:phase2-sweep-done', dryRun: true }, null, 2));
+    closeDb();
+    return;
+  }
+
   if (input.sweepInitialStop === true) {
     if (input.strategy !== 'momentum-mf') {
       console.error('--sweep-initial-stop requires --strategy momentum-mf');
@@ -241,6 +303,8 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
     costBpsRoundTrip: input.costBpsRoundTrip,
     minHistoryDays: input.minHistoryDays,
     initialMultiplier: input.initialMultiplier,
+    tightenedMultiplier: input.tightenedMultiplier,
+    lockInThresholdPct: input.lockInThresholdPct,
     universe,
     db,
     regimeSource,
@@ -314,6 +378,7 @@ async function main(): Promise<void> {
       'regime-source': { type: 'string', default: 'proxy' },
       'initial-multiplier': { type: 'string' },
       'sweep-initial-stop': { type: 'boolean', default: false },
+      'sweep-lock-in': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
       verbose: { type: 'boolean', default: false },
     },
@@ -332,6 +397,7 @@ async function main(): Promise<void> {
     typeof regimeSourceRaw === 'string' ? regimeSourceRaw : undefined,
   );
   const sweepInitialStop = values['sweep-initial-stop'] === true;
+  const sweepLockIn = values['sweep-lock-in'] === true;
   const initialMultRaw = values['initial-multiplier'];
   let initialMultiplier: number | undefined;
   if (typeof initialMultRaw === 'string' && initialMultRaw.length > 0) {
@@ -386,6 +452,7 @@ async function main(): Promise<void> {
     regimeSource,
     initialMultiplier,
     sweepInitialStop,
+    sweepLockIn,
   });
 }
 

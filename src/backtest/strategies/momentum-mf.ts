@@ -11,6 +11,7 @@ import {
   loadMomentumConfig,
   loadSectorMap,
 } from '../../config/loaders.js';
+import { trailingStopSizingFromMomentumConfig } from '../../config/trailing-stop-sizing.js';
 import { isInEarningsBlackoutCalendarWindow } from '../../db/momentum-queries.js';
 import { getTodayRegime } from '../../db/regime-queries.js';
 import {
@@ -40,6 +41,10 @@ export interface MomentumMfBacktestOpts {
   minHistoryDays: number;
   /** Initial ATR stop multiplier (Phase 1 sweep); defaults to momentum config. */
   initialMultiplier?: number;
+  /** Tightened trail multiplier after lock-in (Phase 2 sweep). */
+  tightenedMultiplier?: number;
+  /** Peak gain % to flip tightened trail (Phase 2 sweep). */
+  lockInThresholdPct?: number;
   /** When set, overrides momentum universe. */
   universe?: string[];
   db: DatabaseType;
@@ -218,14 +223,21 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
   const closed: ClosedSimTrade[] = [];
   let open: OpenPosition[] = [];
 
-  const initialMultiplier = opts.initialMultiplier ?? cfg.position_sizing.atr_multiplier;
+  const trailSizing = trailingStopSizingFromMomentumConfig(cfg);
+  const initialMultiplier = opts.initialMultiplier ?? trailSizing.initialMultiplier;
+  const tightenedMultiplier = opts.tightenedMultiplier ?? trailSizing.tightenedMultiplier;
+  const lockInThresholdPct = opts.lockInThresholdPct ?? trailSizing.lockInThresholdPct;
 
   const closePositionAt = (
     p: OpenPosition,
     exitDate: string,
     exitPrice: number,
     exitReason: BacktestExitReason,
-    meta?: { hardFloorOverridden?: boolean; floorBinding?: boolean },
+    meta?: {
+      hardFloorOverridden?: boolean;
+      floorBinding?: boolean;
+      wasTailWinner?: boolean;
+    },
   ): void => {
     const costFrac = opts.costBpsRoundTrip / 10_000;
     const exitNet = exitPrice * (1 - costFrac);
@@ -244,6 +256,7 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
       exitReason,
       hardFloorOverridden: meta?.hardFloorOverridden ?? p.trail.hardFloorOverridden,
       floorBinding: meta?.floorBinding ?? p.trail.floorBinding,
+      wasTailWinner: meta?.wasTailWinner ?? p.trail.wasTailWinner,
     });
   };
 
@@ -287,6 +300,7 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
           exitReason: step.result.exitReason,
           hardFloorOverridden: step.result.hardFloorOverridden,
           floorBinding: step.result.floorBinding,
+          wasTailWinner: step.result.wasTailWinner,
         });
         open = open.filter((x) => x.symbol !== p.symbol);
       } else {
@@ -404,6 +418,8 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
         entryPrice: entryPx,
         sourceDate: D,
         initialMultiplier,
+        tightenedMultiplier,
+        lockInThresholdPct,
         initialStopLoss: stopLoss,
         target,
         maxHoldDays: 90,
