@@ -75,13 +75,19 @@ export class TechnicalEnricher {
 
   private loadBars(symbol: string, db: DatabaseType): Array<RawQuote & { dateTs: number }> {
     const rows = db
-      .prepare(`
+      .prepare(
+        `
         SELECT symbol, exchange, date, open, high, low, close, adj_close AS adjClose, volume, source
-        FROM quotes
-        WHERE symbol = ? ${this.asOfDate ? 'AND date <= ?' : ''}
+        FROM (
+          SELECT symbol, exchange, date, open, high, low, close, adj_close, volume, source
+          FROM quotes
+          WHERE symbol = ? ${this.asOfDate ? 'AND date <= ?' : ''}
+          ORDER BY date DESC
+          LIMIT ?
+        )
         ORDER BY date ASC
-        LIMIT ?
-      `)
+      `,
+      )
       .all(
         ...(this.asOfDate ? [symbol, this.asOfDate, this.lookback] : [symbol, this.lookback]),
       ) as Array<RawQuote & { dateTs?: number }>;
