@@ -25,8 +25,12 @@ export interface RunOptionAEngineOpts {
   to: string;
   costBpsRoundTrip: number;
   minHistoryDays: number;
-  /** Initial ATR stop multiplier for momentum-mf trailing (Phase 1 sweep). */
+  /** Initial ATR stop multiplier for momentum-mf (Phase 1 sweep). */
   initialMultiplier?: number;
+  /** Tightened ATR multiplier after lock-in (Phase 2 sweep). */
+  tightenedMultiplier?: number;
+  /** Peak gain % to activate tightened trail (Phase 2 sweep). */
+  lockInThresholdPct?: number;
   universe?: string[];
   db: DatabaseType;
   regimeSource?: OptionARegimeSource;
@@ -68,6 +72,8 @@ export function runOptionAEngine(opts: RunOptionAEngineOpts): RunOptionAEngineRe
     costBpsRoundTrip: opts.costBpsRoundTrip,
     minHistoryDays: opts.minHistoryDays,
     initialMultiplier: opts.initialMultiplier,
+    tightenedMultiplier: opts.tightenedMultiplier,
+    lockInThresholdPct: opts.lockInThresholdPct,
     universe: universeForStrategies,
     db: opts.db,
     regimeSource,
