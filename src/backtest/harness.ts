@@ -207,10 +207,10 @@ function persistRun(
   const insertTrade = db.prepare(`
     INSERT INTO backtest_trades (
       run_id, symbol, entry_date, entry_price, exit_date, exit_price,
-      return_pct, max_drawdown_pct, hold_days
+      return_pct, max_drawdown_pct, hold_days, exit_reason
     ) VALUES (
       @runId, @symbol, @entryDate, @entryPrice, @exitDate, @exitPrice,
-      @returnPct, @drawdown, @holdDays
+      @returnPct, @drawdown, @holdDays, @exitReason
     )
   `);
   const tx = db.transaction(() => {
@@ -242,6 +242,7 @@ function persistRun(
         returnPct: t.returnPct,
         drawdown: t.maxDrawdownPct,
         holdDays: t.holdDays,
+        exitReason: null,
       });
     }
     return runId;

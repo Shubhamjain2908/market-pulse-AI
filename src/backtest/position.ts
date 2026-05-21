@@ -7,6 +7,7 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 
 import { exitPriceWhenStopHit } from '../scripts/evaluate-trades.js';
 import { applyDay1InitialStop, computeNewStop } from '../scripts/trailing-stop-engine.js';
+import type { BacktestExitReason } from './types.js';
 
 export interface SimOhlcBar {
   date: string;
@@ -16,8 +17,6 @@ export interface SimOhlcBar {
   close: number;
 }
 
-export type PositionExitKind = 'INITIAL_STOP' | 'TRAILING_STOP' | 'TARGET_HIT' | 'TIME_EXIT';
-
 export interface LongPositionSimResult {
   exitDate: string;
   exitGrossPrice: number;
@@ -26,7 +25,8 @@ export interface LongPositionSimResult {
   returnPct: number;
   maxDrawdownPct: number;
   holdDays: number;
-  exitKind: PositionExitKind;
+  /** Same labelling as paper `evaluate-trades` for stops (`skipTrailThisBar` → INITIAL_STOP). */
+  exitReason: BacktestExitReason;
 }
 
 export interface LongTrailState {
@@ -158,7 +158,7 @@ export function stepLongPositionOneBar(
 
   const finish = (
     grossExit: number,
-    exitKind: PositionExitKind,
+    exitReason: BacktestExitReason,
     exitDate: string,
     holdDays: number,
   ): LongPositionSimResult => {
@@ -170,7 +170,7 @@ export function stepLongPositionOneBar(
       returnPct: pnlPctLong(state.entryPrice, exitNet),
       maxDrawdownPct: Math.min(0, maxDrawdownPct),
       holdDays,
-      exitKind,
+      exitReason,
     };
   };
 
@@ -179,16 +179,17 @@ export function stepLongPositionOneBar(
 
   if (!skipStopTargetThisBar && hitSl && hitTg) {
     const exitPx = exitPriceWhenStopHit(bar, stopLoss);
+    const exitReason: BacktestExitReason = skipTrailThisBar ? 'INITIAL_STOP' : 'TRAILING_STOP';
     return {
       status: 'closed',
-      result: finish(exitPx, 'TRAILING_STOP', bar.date, elapsedTradingDays),
+      result: finish(exitPx, exitReason, bar.date, elapsedTradingDays),
     };
   }
 
   if (!skipStopTargetThisBar && hitSl) {
     const exitPx = exitPriceWhenStopHit(bar, stopLoss);
-    const exitKind: PositionExitKind = skipTrailThisBar ? 'INITIAL_STOP' : 'TRAILING_STOP';
-    return { status: 'closed', result: finish(exitPx, exitKind, bar.date, elapsedTradingDays) };
+    const exitReason: BacktestExitReason = skipTrailThisBar ? 'INITIAL_STOP' : 'TRAILING_STOP';
+    return { status: 'closed', result: finish(exitPx, exitReason, bar.date, elapsedTradingDays) };
   }
 
   if (!skipStopTargetThisBar && hitTg) {
@@ -289,6 +290,6 @@ export function simulateLongPositionUntilClose(opts: {
     returnPct: pnlPctLong(entryPrice, exitNet),
     maxDrawdownPct: Math.min(0, state.maxDrawdownPct),
     holdDays: elapsedLast,
-    exitKind: 'TIME_EXIT',
+    exitReason: 'WINDOW_END',
   };
 }

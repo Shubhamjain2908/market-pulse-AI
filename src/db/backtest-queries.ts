@@ -38,6 +38,7 @@ export interface OptionABacktestTradeInsert {
   returnPct: number;
   maxDrawdownPct: number;
   holdDays: number;
+  exitReason?: string | null;
 }
 
 /** Distinct quote dates for NSE benchmark in [from, to] (sorted ASC). */
@@ -171,10 +172,10 @@ export function insertOptionABacktestTrades(
   const stmt = db.prepare(`
     INSERT INTO backtest_trades (
       run_id, symbol, entry_date, entry_price, exit_date, exit_price,
-      return_pct, max_drawdown_pct, hold_days
+      return_pct, max_drawdown_pct, hold_days, exit_reason
     ) VALUES (
       @runId, @symbol, @entryDate, @entryPrice, @exitDate, @exitPrice,
-      @returnPct, @maxDrawdownPct, @holdDays
+      @returnPct, @maxDrawdownPct, @holdDays, @exitReason
     )
   `);
   const tx = db.transaction((batch: OptionABacktestTradeInsert[]) => {
@@ -189,6 +190,7 @@ export function insertOptionABacktestTrades(
         returnPct: t.returnPct,
         maxDrawdownPct: t.maxDrawdownPct,
         holdDays: t.holdDays,
+        exitReason: t.exitReason ?? null,
       });
     }
   });

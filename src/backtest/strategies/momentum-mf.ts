@@ -28,7 +28,7 @@ import { type LongTrailState, initLongTrailState, stepLongPositionOneBar } from 
 import { loadOhlcvMap } from '../quotes-loader.js';
 import type { OptionARegimeSource, RegimeProxyMap } from '../regime-proxy.js';
 import { type OHLCVBar, SIGNAL_WINDOW_LEN, computeSignalsForLastBar } from '../signals.js';
-import type { ClosedSimTrade } from '../types.js';
+import type { BacktestExitReason, ClosedSimTrade } from '../types.js';
 import { filterOptionAUniverse } from '../universe-filter.js';
 
 const MARKET_TZ = 'Asia/Kolkata';
@@ -216,7 +216,12 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
   const closed: ClosedSimTrade[] = [];
   let open: OpenPosition[] = [];
 
-  const closePositionAt = (p: OpenPosition, exitDate: string, exitPrice: number): void => {
+  const closePositionAt = (
+    p: OpenPosition,
+    exitDate: string,
+    exitPrice: number,
+    exitReason: BacktestExitReason,
+  ): void => {
     const costFrac = opts.costBpsRoundTrip / 10_000;
     const exitNet = exitPrice * (1 - costFrac);
     const retNet = ((exitNet - p.entryPrice) / p.entryPrice) * 100;
@@ -231,6 +236,7 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
       returnPct: retNet,
       maxDrawdownPct: Math.min(0, p.trail.maxDrawdownPct),
       holdDays,
+      exitReason,
     });
   };
 
@@ -241,7 +247,7 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
     if (!regimeAllowed) {
       for (const p of open) {
         const bx = barOnDate(ohlcv.get(p.symbol) ?? [], D);
-        if (bx) closePositionAt(p, D, bx.close);
+        if (bx) closePositionAt(p, D, bx.close, 'REGIME_EXIT');
       }
       open = [];
     }
@@ -271,6 +277,7 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
           returnPct: step.result.returnPct,
           maxDrawdownPct: step.result.maxDrawdownPct,
           holdDays: step.result.holdDays,
+          exitReason: step.result.exitReason,
         });
         open = open.filter((x) => x.symbol !== p.symbol);
       } else {
@@ -348,7 +355,7 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
       if (rk != null && rk > cfg.exit_rank_threshold) {
         const bx = barOnDate(ohlcv.get(p.symbol) ?? [], D);
         if (bx) {
-          closePositionAt(p, D, bx.close);
+          closePositionAt(p, D, bx.close, 'RANK_DECAY');
           open = open.filter((x) => x.symbol !== p.symbol);
         }
       }
@@ -412,7 +419,7 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
     const bars = ohlcv.get(p.symbol);
     const last = bars?.[bars.length - 1];
     if (last && last.date <= opts.to) {
-      closePositionAt(p, last.date, last.close);
+      closePositionAt(p, last.date, last.close, 'WINDOW_END');
     }
   }
 

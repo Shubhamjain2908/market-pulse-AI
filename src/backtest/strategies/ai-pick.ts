@@ -1,6 +1,8 @@
 /**
  * Option A backtest: `ai_pick` — rule-based screen proxy (no LLM).
  * Entry next session open after signal; fixed hold window; costs on exit.
+ * At most {@link MAX_CONCURRENT_POSITIONS} overlapping legs; ties broken by
+ * `volumeRatio20d` (highest confirmation first).
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
@@ -13,10 +15,21 @@ import { buildTrade } from '../metrics.js';
 import { loadOhlcvMap } from '../quotes-loader.js';
 import type { OptionARegimeSource, RegimeProxyMap } from '../regime-proxy.js';
 import { type OHLCVBar, SIGNAL_WINDOW_LEN, computeSignalsForLastBar } from '../signals.js';
-import type { ClosedSimTrade } from '../types.js';
+import type { BacktestExitReason, ClosedSimTrade } from '../types.js';
 import { filterOptionAUniverse } from '../universe-filter.js';
 
 const HOLD_DAYS = 20;
+/** Aligns with `momentum-config` portfolio_slots (live book breadth). */
+const MAX_CONCURRENT_POSITIONS = 10;
+
+interface OpenLeg {
+  entryDate: string;
+  exitDate: string;
+}
+
+function countConcurrentOnDate(legs: OpenLeg[], sessionDate: string): number {
+  return legs.filter((o) => o.entryDate <= sessionDate && o.exitDate >= sessionDate).length;
+}
 
 export interface AiPickBacktestOpts {
   from: string;
@@ -75,6 +88,7 @@ export function runAiPickBacktest(opts: AiPickBacktestOpts): ClosedSimTrade[] {
   const tradingDays = benchBars.map((b) => b.date).filter((d) => d >= opts.from && d <= opts.to);
 
   const closed: ClosedSimTrade[] = [];
+  const openLegs: OpenLeg[] = [];
   const costFrac = opts.costBpsRoundTrip / 10_000;
 
   for (let di = 0; di < tradingDays.length; di++) {
@@ -85,6 +99,8 @@ export function runAiPickBacktest(opts: AiPickBacktestOpts): ClosedSimTrade[] {
 
     const nextD = tradingDays[di + 1];
     if (!nextD) break;
+
+    const candidates: { sym: string; volumeRatio20d: number; barsAll: OHLCVBar[] }[] = [];
 
     for (const sym of universe) {
       const barsAll = ohlcv.get(sym);
@@ -98,13 +114,32 @@ export function runAiPickBacktest(opts: AiPickBacktestOpts): ClosedSimTrade[] {
       const entryPx = entryBar.open;
       if (!(entryPx > 0)) continue;
 
+      candidates.push({ sym, volumeRatio20d: sig.volumeRatio20d, barsAll });
+    }
+
+    candidates.sort((a, b) => b.volumeRatio20d - a.volumeRatio20d || a.sym.localeCompare(b.sym));
+
+    for (const c of candidates) {
+      if (countConcurrentOnDate(openLegs, nextD) >= MAX_CONCURRENT_POSITIONS) {
+        break;
+      }
+
+      const { sym, barsAll } = c;
+      const entryBar = barsAll.find((b) => b.date === nextD);
+      if (!entryBar) continue;
+      const entryPx = entryBar.open;
+      if (!(entryPx > 0)) continue;
+
       const entryIdx = barsAll.findIndex((b) => b.date === nextD);
       if (entryIdx === -1) continue;
       const forward = barsAll.slice(entryIdx + 1).map((b) => ({ date: b.date, close: b.close }));
       const t = buildTrade(sym, { date: nextD, close: entryPx }, forward, HOLD_DAYS);
       if (!t) continue;
 
+      const exitReason: BacktestExitReason = t.holdDays >= HOLD_DAYS ? 'TIME_EXIT' : 'WINDOW_END';
+
       const exitNet = t.exitPrice * (1 - costFrac);
+      openLegs.push({ entryDate: t.entryDate, exitDate: t.exitDate });
       closed.push({
         symbol: sym,
         entryDate: t.entryDate,
@@ -114,6 +149,7 @@ export function runAiPickBacktest(opts: AiPickBacktestOpts): ClosedSimTrade[] {
         returnPct: ((exitNet - t.entryPrice) / t.entryPrice) * 100,
         maxDrawdownPct: t.maxDrawdownPct,
         holdDays: t.holdDays,
+        exitReason,
       });
     }
   }

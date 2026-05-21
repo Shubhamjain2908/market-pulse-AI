@@ -189,6 +189,7 @@ CREATE TABLE backtest_trades (
   return_pct    REAL    NOT NULL,
   max_drawdown_pct REAL NOT NULL, -- worst close during the hold, 0..-100
   hold_days     INTEGER NOT NULL,
+  exit_reason   TEXT,   -- Option A: TRAILING_STOP | INITIAL_STOP | …; harness rows often null
   FOREIGN KEY (run_id) REFERENCES backtest_runs(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_backtest_trades_run     ON backtest_trades(run_id);

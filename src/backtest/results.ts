@@ -93,5 +93,6 @@ export function tradesToDbRows(trades: ClosedSimTrade[]) {
     returnPct: t.returnPct,
     maxDrawdownPct: t.maxDrawdownPct,
     holdDays: t.holdDays,
+    exitReason: t.exitReason,
   }));
 }
