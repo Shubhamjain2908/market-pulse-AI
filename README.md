@@ -1,5 +1,7 @@
 # Market Pulse AI
 
+[![CI](https://github.com/Shubhamjain2908/market-pulse-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/Shubhamjain2908/market-pulse-AI/actions/workflows/ci.yml)
+
 A personal morning-briefing agent for Indian stock markets (NSE/BSE).
 **Not** an auto-trader — every order is still placed by you. The system is a
 modular pipeline that runs every weekday at 8:45 AM IST and emails you a
