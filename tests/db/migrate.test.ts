@@ -51,7 +51,9 @@ describe('db/migrate', () => {
     expect(result.applied).toContain('0013_corporate_actions');
     expect(result.applied).toContain('0015_backtest_exit_reason');
 
-    const tradeCols = db.prepare(`PRAGMA table_info(backtest_trades)`).all() as Array<{ name: string }>;
+    const tradeCols = db.prepare('PRAGMA table_info(backtest_trades)').all() as Array<{
+      name: string;
+    }>;
     expect(tradeCols.some((c) => c.name === 'exit_reason')).toBe(true);
     db.close();
   });

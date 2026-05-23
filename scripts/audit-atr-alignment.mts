@@ -8,8 +8,8 @@
 
 import { parseArgs } from 'node:util';
 
-import { atr } from '../src/enrichers/technical/indicators.js';
 import { closeDb, getDb, migrate } from '../src/db/index.js';
+import { atr } from '../src/enrichers/technical/indicators.js';
 import { argvForCliParseArgs } from './argv-for-cli.js';
 
 const DEFAULT_SYMBOLS = ['RELIANCE', 'HDFCBANK', 'INFY'];
