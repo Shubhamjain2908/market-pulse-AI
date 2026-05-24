@@ -131,6 +131,14 @@ export interface ScreenMatch {
   timeHorizon?: string;
 }
 
+/** A single warning to surface in the briefing header (yellow banner pattern). */
+export interface WarningEntry {
+  /** Short category label, e.g. "Ingest" or "Data gap". */
+  category: string;
+  /** Human-readable detail shown in the banner. */
+  message: string;
+}
+
 /** Forward-tested LLM signals (paper ledger). Shown when stats exist. */
 export interface SignalPerformance {
   windowDays: number;
@@ -183,12 +191,15 @@ export interface BriefingData {
   regimeBlock?: string;
   /** Momentum screener block (rank monitor + decay alerts); between screener and watchlist. */
   momentumBlock?: string;
+  /** Non-fatal warnings to display in a yellow banner at the top of the briefing. */
+  warnings?: WarningEntry[];
 }
 
 export function renderBriefing(data: BriefingData): string {
   const t = THEME;
   const bodyInner = `
     ${renderHeader(data.date)}
+    ${renderWarnings(data.warnings)}
     ${renderMood(data.date, data.mood, data.moodNarrative, data.marketClosure)}
     ${renderSignalPerformance(data.signalPerformance)}
     ${data.trailingStopBlock ?? ''}
@@ -807,6 +818,23 @@ function renderNews(news: NewsRow[]): string {
     </section>`;
 }
 
+function renderWarnings(warnings?: WarningEntry[]): string {
+  if (!warnings || warnings.length === 0) return '';
+  const items = warnings
+    .map(
+      (w) => `
+      <div class="ingest-warning">
+        <strong>${esc(w.category)}:</strong> ${esc(w.message)}
+      </div>`,
+    )
+    .join('');
+  return `
+    <section class="card warnings-card">
+      <div class="warnings-header">⚠\ufe0f Pipeline Warnings</div>
+      ${items}
+    </section>`;
+}
+
 function renderFooter(): string {
   return `
     <footer>
@@ -989,6 +1017,10 @@ function baseStyles(): string {
     .news .meta { color: ${c.muted}; font-size: 12px; margin-top: 2px; }
     .tag { background: #eef4f8; color: ${c.accent}; padding: 1px 6px; border-radius: 4px;
       font-weight: 600; font-size: 11px; }
+    .warnings-card { background: #fff8e6; border-color: #f0b429; }
+    .warnings-header { font-size: 14px; font-weight: 700; color: #b7791f; margin-bottom: 8px; }
+    .ingest-warning { padding: 6px 0; border-bottom: 1px solid #f0e0a8; font-size: 13px; line-height: 1.45; }
+    .ingest-warning:last-child { border-bottom: none; }
     .ai-placeholder { background: #fbf7e9; border-color: #f0e0a8; }
     .mood-narrative { margin-top: 12px; padding: 10px 14px; background: #f8fafc;
       border-left: 3px solid ${c.accent}; border-radius: 4px; font-size: 14px;

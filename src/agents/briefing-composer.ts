@@ -5,6 +5,7 @@
 
 import { composeBriefing } from '../briefing/composer.js';
 import type { MomentumRebalanceSummary } from '../briefing/momentum-card.js';
+import type { WarningEntry } from '../briefing/template.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 
@@ -26,6 +27,8 @@ export interface BriefRunOptions {
     watchlistSize: number;
   };
   momentumRebalanceSummary?: MomentumRebalanceSummary;
+  /** Non-fatal pipeline warnings surfaced during the workflow run. */
+  warnings?: WarningEntry[];
 }
 
 export interface BriefRunResult {
@@ -50,6 +53,7 @@ export async function runBriefingComposer(opts: BriefRunOptions = {}): Promise<B
     marketClosure: opts.marketClosure,
     thesisRun: opts.thesisRun,
     momentumRebalanceSummary: opts.momentumRebalanceSummary,
+    warnings: opts.warnings,
   });
   const screenMatches = composed.data.screenMatches?.reduce((s, m) => s + m.symbols.length, 0) ?? 0;
   log.info(

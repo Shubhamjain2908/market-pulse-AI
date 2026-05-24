@@ -52,6 +52,7 @@ import {
   type PortfolioSummary,
   type ScreenMatch,
   type ThesisCard,
+  type WarningEntry,
   type WatchlistAlert,
   renderBriefing,
 } from './template.js';
@@ -82,6 +83,8 @@ export interface ComposeBriefingOptions {
   moodNarrativeDisabled?: boolean;
   /** Optional: last weekly momentum rebalance counters (e.g. Sunday job passes through). */
   momentumRebalanceSummary?: MomentumRebalanceSummary;
+  /** Non-fatal pipeline warnings to surface in the briefing HTML header. */
+  warnings?: WarningEntry[];
 }
 
 export interface ComposedBriefing {
@@ -189,6 +192,27 @@ export async function composeBriefing(
     regimeBlock = `${banner}${card}`;
   }
 
+  const warnings: WarningEntry[] = [...(opts.warnings ?? [])];
+
+  // Data-gap warnings (FII/DII, news)
+  if (!opts.marketClosure) {
+    if (mood.fiiNet == null && mood.diiNet == null) {
+      warnings.push({
+        category: 'Data gap',
+        message:
+          'FII/DII net figures are unavailable — the NSE FII data endpoint may have been rate-limited or returned no cash-segment data for this session.',
+      });
+    }
+    // Only flag missing news when there are watchlist symbols and no closure
+    if (news.length === 0 && watchlist.length > 0) {
+      warnings.push({
+        category: 'Data gap',
+        message:
+          'No news headlines found in the configured RSS feeds for the lookback window. This may indicate a feed outage or connectivity issue.',
+      });
+    }
+  }
+
   const data: BriefingData = {
     date,
     mood,
@@ -207,6 +231,7 @@ export async function composeBriefing(
     trailingStopBlock,
     regimeBlock,
     momentumBlock,
+    warnings: warnings.length > 0 ? warnings : undefined,
   };
 
   log.info(
