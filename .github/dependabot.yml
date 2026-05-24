@@ -1,0 +1,24 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    groups:
+      typescript-toolchain:
+        patterns:
+          - "typescript"
+          - "@biomejs/*"
+          - "vitest"
+          - "@vitest/*"
+      google-ai:
+        patterns:
+          - "@google/*"
+          - "@google-cloud/*"
+    ignore:
+      - dependency-name: "better-sqlite3"
+        update-types: ["version-update:semver-major"]
