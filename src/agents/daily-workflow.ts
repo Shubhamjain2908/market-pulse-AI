@@ -6,6 +6,7 @@
  *  - scheduler jobs (`mp schedule`)
  */
 
+import type { WarningEntry } from '../briefing/template.js';
 import { config } from '../config/env.js';
 import { getMomentumUniverseSymbols } from '../config/loaders.js';
 import { getDb } from '../db/index.js';
@@ -116,6 +117,8 @@ export async function runDailyWorkflow(
     };
   }
 
+  const warnings: WarningEntry[] = [];
+
   if (!opts.skipPortfolio) {
     try {
       // Phase 4.5: portfolio sync + stop-loss are outside regime gates (`portfolio_exit_signals` /
@@ -127,21 +130,26 @@ export async function runDailyWorkflow(
         'stop-loss detector complete',
       );
     } catch (err) {
-      log.warn(
-        { err: (err as Error).message },
-        'portfolio sync/stop-loss failed; continuing workflow',
-      );
+      const msg = (err as Error).message;
+      log.warn({ err: msg }, 'portfolio sync/stop-loss failed; continuing workflow');
+      warnings.push({ category: 'Portfolio sync', message: msg });
     }
   }
 
-  await runDailyIngestor({ date });
+  const ingestResult = await runDailyIngestor({ date });
+  for (const f of ingestResult.failures) {
+    warnings.push({
+      category: 'Ingest',
+      message: `${f.ingestor} could not fetch ${f.capability}: ${f.reason}`,
+    });
+  }
+
   try {
     await applyCorporateActionsFromYahooSplits(getDb(), { refDate: date });
   } catch (err) {
-    log.warn(
-      { err: (err as Error).message },
-      'corporate actions from Yahoo splits failed; continuing workflow',
-    );
+    const msg = (err as Error).message;
+    log.warn({ err: msg }, 'corporate actions from Yahoo splits failed; continuing workflow');
+    warnings.push({ category: 'Corporate actions', message: msg });
   }
   await runSignalEnricher({ date });
   const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
@@ -168,6 +176,12 @@ export async function runDailyWorkflow(
   if (!opts.skipAi) {
     const sentimentResult = await enrichSentiment();
     log.info(sentimentResult, 'sentiment scoring done');
+    if (sentimentResult.scored === 0 && sentimentResult.failed > 0) {
+      warnings.push({
+        category: 'Sentiment',
+        message: `News sentiment scoring completed with ${sentimentResult.failed} error(s) and no successfully scored items.`,
+      });
+    }
 
     const thesisResult = await generateTheses({
       date,
@@ -188,6 +202,12 @@ export async function runDailyWorkflow(
 
     if (!opts.skipPortfolio) {
       const portfolioResult = await analysePortfolio({ date });
+      if (portfolioResult.failed > 0) {
+        warnings.push({
+          category: 'Portfolio analysis',
+          message: `${portfolioResult.failed} holding(s) failed AI analysis after retries; check LLM provider status. ${portfolioResult.analysed} holding(s) completed successfully.`,
+        });
+      }
       log.info(
         {
           analysed: portfolioResult.analysed,
@@ -207,6 +227,7 @@ export async function runDailyWorkflow(
     skipAi: opts.skipAi,
     thesisRun: opts.skipAi ? undefined : thesisRun,
     delivery: config.BRIEFING_DELIVERY,
+    warnings: warnings.length > 0 ? warnings : undefined,
   });
 
   maybeWriteDailyRunSummary({
