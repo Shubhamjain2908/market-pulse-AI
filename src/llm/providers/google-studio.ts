@@ -1,5 +1,5 @@
-import { HarmBlockThreshold, HarmCategory } from '@google-cloud/vertexai';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, HarmBlockThreshold, HarmCategory } from '@google/genai';
+import type { GenerateContentResponse } from '@google/genai';
 import { config } from '../../config/env.js';
 import { child } from '../../logger.js';
 import { parseAndValidate } from '../json.js';
@@ -260,10 +260,11 @@ function toGoogleResponseSchema(schema: unknown): Record<string, unknown> | unde
   }
 
   let candidate: unknown;
-  if (typeof (schema as any).toJSON === 'function') {
-    candidate = (schema as any).toJSON();
-  } else if ((schema as any).jsonSchema) {
-    candidate = (schema as any).jsonSchema;
+  const maybeSchema = schema as { toJSON?: () => unknown; jsonSchema?: unknown };
+  if (typeof maybeSchema.toJSON === 'function') {
+    candidate = maybeSchema.toJSON();
+  } else if (maybeSchema.jsonSchema) {
+    candidate = maybeSchema.jsonSchema;
   } else {
     candidate = JSON.parse(JSON.stringify(schema));
   }
@@ -293,7 +294,10 @@ function isLikelyJsonSchema(value: Record<string, unknown>): boolean {
 /**
  * Refactored safety extractor adapted for @google/genai wrapper results mapping.
  */
-function extractResponseText(result: any, opts?: { rejectMaxTokens?: boolean }): string {
+function extractResponseText(
+  result: GenerateContentResponse,
+  opts?: { rejectMaxTokens?: boolean },
+): string {
   // Check global input prompt rejection status
   const promptFeedback = result.promptFeedback;
   if (promptFeedback?.blockReason) {
@@ -306,6 +310,9 @@ function extractResponseText(result: any, opts?: { rejectMaxTokens?: boolean }):
   }
 
   const primeCandidate = candidates[0];
+  if (!primeCandidate) {
+    throw new Error('Google Studio returned a null first candidate.');
+  }
   const finishReason = primeCandidate.finishReason;
 
   // Process stop codes safely

@@ -1,26 +1,16 @@
 /**
- * Google Vertex AI — Gemini via `@google-cloud/vertexai`.
+ * Google Vertex AI — Gemini via `@google/genai`.
  *
  * Auth: Application Default Credentials. Either set
  * `GOOGLE_APPLICATION_CREDENTIALS` to a service-account JSON path, or run
  * `gcloud auth application-default login` for local development.
  *
- * Model IDs follow Vertex GA naming (see Cloud docs “Model versions and
- * lifecycle”). Defaults in env point at the current Gemini 2.5 family.
- *
- * TODO (before mid-2026): Google deprecates this SDK in favour of `@google/genai`
- * (see startup DeprecationWarning). Plan a dedicated migration PR — do not silence
- * that warning; it is the reminder to swap client + request shapes.
+ * Model IDs follow Vertex GA naming (see Cloud docs "Model versions and
+ * lifecycle"). Defaults in env point at the current Gemini 2.5 family.
  */
 
-import {
-  BlockedReason,
-  FinishReason,
-  type GenerateContentResponse,
-  HarmBlockThreshold,
-  HarmCategory,
-  VertexAI,
-} from '@google-cloud/vertexai';
+import { FinishReason, GoogleGenAI, HarmBlockThreshold, HarmCategory } from '@google/genai';
+import type { GenerateContentResponse } from '@google/genai';
 import { config } from '../../config/env.js';
 import { parseAndValidate } from '../json.js';
 import type {
@@ -33,7 +23,7 @@ import type {
 
 /**
  * Research-oriented safety: keep harassment/hate/sexual strict, but allow
- * “dangerous” bucket to pass at BLOCK_NONE — FII/DII flows and index % moves
+ * "dangerous" bucket to pass at BLOCK_NONE — FII/DII flows and index % moves
  * often get mis-tagged as generic policy/financial-advice and return empty candidates.
  */
 const RESEARCH_SAFETY_SETTINGS = [
@@ -58,7 +48,7 @@ const RESEARCH_SAFETY_SETTINGS = [
 export class VertexProvider implements LlmProvider {
   readonly name = 'vertex';
   readonly model: string;
-  private readonly vertex: VertexAI;
+  private readonly ai: GoogleGenAI;
 
   constructor() {
     if (!config.GOOGLE_VERTEX_PROJECT) {
@@ -67,7 +57,8 @@ export class VertexProvider implements LlmProvider {
       );
     }
     this.model = config.VERTEX_MODEL;
-    this.vertex = new VertexAI({
+    this.ai = new GoogleGenAI({
+      vertexai: true,
       project: config.GOOGLE_VERTEX_PROJECT,
       location: config.GOOGLE_VERTEX_LOCATION,
     });
@@ -75,25 +66,21 @@ export class VertexProvider implements LlmProvider {
 
   async generateText(opts: GenerateTextOptions): Promise<LlmTextResult> {
     const started = Date.now();
-    const generativeModel = this.vertex.getGenerativeModel(
-      {
-        model: this.model,
+
+    const result = await this.ai.models.generateContent({
+      model: this.model,
+      contents: opts.user,
+      config: {
         systemInstruction: opts.system,
         safetySettings: RESEARCH_SAFETY_SETTINGS,
-        generationConfig: {
-          temperature: opts.temperature ?? 0.2,
-          maxOutputTokens: opts.maxOutputTokens ?? 8192,
-        },
+        temperature: opts.temperature ?? 0.2,
+        maxOutputTokens: opts.maxOutputTokens ?? 8192,
+        httpOptions: { timeout: config.VERTEX_TIMEOUT_MS },
       },
-      { timeout: config.VERTEX_TIMEOUT_MS },
-    );
-
-    const result = await generativeModel.generateContent({
-      contents: [{ role: 'user', parts: [{ text: opts.user }] }],
     });
 
-    const text = extractResponseText(result.response);
-    const usage = result.response.usageMetadata;
+    const text = extractResponseText(result);
+    const usage = result.usageMetadata;
     return {
       text,
       model: this.model,
@@ -117,29 +104,24 @@ export class VertexProvider implements LlmProvider {
           ? opts.user
           : `${opts.user}\n\nIMPORTANT: Return ONLY a single valid JSON object matching the schema. No markdown fences, no commentary.`;
 
-      const generativeModel = this.vertex.getGenerativeModel(
-        {
+      try {
+        const result = await this.ai.models.generateContent({
           model: this.model,
-          systemInstruction: opts.system,
-          safetySettings: RESEARCH_SAFETY_SETTINGS,
-          generationConfig: {
+          contents: userPrompt,
+          config: {
+            systemInstruction: opts.system,
+            safetySettings: RESEARCH_SAFETY_SETTINGS,
             temperature: opts.temperature ?? 0.1,
             maxOutputTokens: opts.maxOutputTokens ?? 8192,
             responseMimeType: 'application/json',
+            httpOptions: { timeout: config.VERTEX_TIMEOUT_MS },
           },
-        },
-        { timeout: config.VERTEX_TIMEOUT_MS },
-      );
+        });
 
-      const result = await generativeModel.generateContent({
-        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-      });
+        const raw = extractResponseText(result, { rejectMaxTokens: true });
+        lastRaw = raw;
+        const usage = result.usageMetadata;
 
-      const raw = extractResponseText(result.response, { rejectMaxTokens: true });
-      lastRaw = raw;
-      const usage = result.response.usageMetadata;
-
-      try {
         const data = parseAndValidate(raw, opts.schema);
         return {
           data,
@@ -163,49 +145,44 @@ export class VertexProvider implements LlmProvider {
 }
 
 function extractResponseText(
-  response: GenerateContentResponse,
+  result: GenerateContentResponse,
   opts?: { rejectMaxTokens?: boolean },
 ): string {
-  const pf = response.promptFeedback;
-  if (pf?.blockReason && pf.blockReason !== BlockedReason.BLOCKED_REASON_UNSPECIFIED) {
-    throw new Error(`Vertex blocked the prompt: ${pf.blockReason}. ${pf.blockReasonMessage ?? ''}`);
+  const promptFeedback = result.promptFeedback;
+  if (promptFeedback?.blockReason) {
+    throw new Error(`Vertex blocked the prompt: ${promptFeedback.blockReason}`);
   }
 
-  const candidates = response.candidates ?? [];
-  const emptyReasons: string[] = [];
-
-  for (const cand of candidates) {
-    const reason = cand.finishReason;
-    let chunk = '';
-    if (cand.content?.parts?.length) {
-      for (const part of cand.content.parts) {
-        if ('text' in part && part.text) chunk += part.text;
-      }
-    }
-    const trimmed = chunk.trim();
-    if (trimmed) {
-      if (
-        reason &&
-        reason !== FinishReason.STOP &&
-        reason !== FinishReason.MAX_TOKENS &&
-        reason !== FinishReason.FINISH_REASON_UNSPECIFIED
-      ) {
-        throw new Error(
-          `Vertex stopped with finishReason=${reason}${cand.finishMessage ? `: ${cand.finishMessage}` : ''}`,
-        );
-      }
-      if (opts?.rejectMaxTokens && reason === FinishReason.MAX_TOKENS) {
-        throw new Error(
-          'Vertex hit MAX_TOKENS — output truncated. Increase maxOutputTokens or shorten the task.',
-        );
-      }
-      return trimmed;
-    }
-    if (reason && reason !== FinishReason.FINISH_REASON_UNSPECIFIED) {
-      emptyReasons.push(String(reason));
-    }
+  const candidates = result.candidates ?? [];
+  if (candidates.length === 0) {
+    throw new Error('Vertex returned no candidates.');
   }
 
-  const hint = emptyReasons.length > 0 ? ` finishReason=${emptyReasons.join(',')}` : '';
-  throw new Error(`Vertex returned no text candidates (empty or filtered).${hint}`);
+  const primeCandidate = candidates[0];
+  if (!primeCandidate) {
+    throw new Error('Vertex returned a null first candidate.');
+  }
+  const finishReason = primeCandidate.finishReason;
+
+  if (
+    finishReason &&
+    finishReason !== FinishReason.STOP &&
+    finishReason !== FinishReason.MAX_TOKENS
+  ) {
+    throw new Error(
+      `Vertex stopped with finishReason=${finishReason}${primeCandidate.finishMessage ? `: ${primeCandidate.finishMessage}` : ''}`,
+    );
+  }
+
+  if (opts?.rejectMaxTokens && finishReason === FinishReason.MAX_TOKENS) {
+    throw new Error(
+      'Vertex hit MAX_TOKENS — output truncated. Increase maxOutputTokens or shorten the task.',
+    );
+  }
+
+  if (result.text) {
+    return result.text.trim();
+  }
+
+  throw new Error('Vertex returned no text content in the response.');
 }
