@@ -52,7 +52,7 @@
     "healthcheck": "tsx deploy/healthcheck.ts",
     "llm:smoke:google-studio": "LLM_PROVIDER=google-studio tsx scripts/smoke-google-studio.mts",
     "llm:smoke:google-studio:flash": "LLM_PROVIDER=google-studio VERTEX_MODEL=gemini-2.5-flash tsx scripts/smoke-google-studio.mts",
-    "prepare": "echo 'skip husky setup until added'",
+    "prepare": "husky",
     "deploy": "pnpm build && pm2 reload deploy/ecosystem.config.cjs"
   },
   "keywords": [
@@ -95,11 +95,13 @@
     "@types/express": "^5.0.6",
     "@types/node": "^22.10.0",
     "@types/nodemailer": "^8.0.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@biomejs/biome", "better-sqlite3", "esbuild"]
+    "onlyBuiltDependencies": ["@biomejs/biome", "better-sqlite3", "esbuild", "husky"]
   }
 }
