@@ -7,8 +7,6 @@
  *
  * Model IDs follow Vertex GA naming (see Cloud docs "Model versions and
  * lifecycle"). Defaults in env point at the current Gemini 2.5 family.
- *
- * Migrated from @google-cloud/vertexai (deprecated mid-2026) to @google/genai.
  */
 
 import { FinishReason, GoogleGenAI, HarmBlockThreshold, HarmCategory } from '@google/genai';
@@ -77,6 +75,7 @@ export class VertexProvider implements LlmProvider {
         safetySettings: RESEARCH_SAFETY_SETTINGS,
         temperature: opts.temperature ?? 0.2,
         maxOutputTokens: opts.maxOutputTokens ?? 8192,
+        httpOptions: { timeout: config.VERTEX_TIMEOUT_MS },
       },
     });
 
@@ -115,6 +114,7 @@ export class VertexProvider implements LlmProvider {
             temperature: opts.temperature ?? 0.1,
             maxOutputTokens: opts.maxOutputTokens ?? 8192,
             responseMimeType: 'application/json',
+            httpOptions: { timeout: config.VERTEX_TIMEOUT_MS },
           },
         });
 
