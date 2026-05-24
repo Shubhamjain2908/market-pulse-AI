@@ -31,7 +31,7 @@
       },
       "suspicious": {
         "noConsoleLog": "off",
-        "noExplicitAny": "warn"
+        "noExplicitAny": "error"
       },
       "correctness": {
         "noUnusedVariables": "warn",
