@@ -16,7 +16,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import got, { type Got } from 'got';
+import got, { type Got, type RequestError } from 'got';
 import { z } from 'zod';
 import { config } from '../../config/env.js';
 import { child } from '../../logger.js';
@@ -58,9 +58,24 @@ export class KiteClient {
     this.http = got.extend({
       prefixUrl: opts.baseUrl ?? config.KITE_API_BASE,
       timeout: { request: opts.timeoutMs ?? 30_000 },
-      retry: { limit: 2, methods: ['GET'] },
+      retry: {
+        limit: 2,
+        methods: ['GET'],
+        statusCodes: [408, 429, 500, 502, 503, 504],
+        errorCodes: ['ETIMEDOUT', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED'],
+      },
       headers: { 'X-Kite-Version': '3' },
       throwHttpErrors: false,
+      hooks: {
+        beforeRetry: [
+          (err: RequestError) => {
+            log.warn(
+              { errorCode: err.code ?? 'unknown', statusCode: err.response?.statusCode ?? 0 },
+              'kite retry',
+            );
+          },
+        ],
+      },
     });
   }
 
