@@ -12,6 +12,7 @@
  */
 
 import { FinishReason, GoogleGenAI, HarmBlockThreshold, HarmCategory } from '@google/genai';
+import type { GenerateContentResponse } from '@google/genai';
 import { config } from '../../config/env.js';
 import { parseAndValidate } from '../json.js';
 import type {
@@ -143,7 +144,10 @@ export class VertexProvider implements LlmProvider {
   }
 }
 
-function extractResponseText(result: any, opts?: { rejectMaxTokens?: boolean }): string {
+function extractResponseText(
+  result: GenerateContentResponse,
+  opts?: { rejectMaxTokens?: boolean },
+): string {
   const promptFeedback = result.promptFeedback;
   if (promptFeedback?.blockReason) {
     throw new Error(`Vertex blocked the prompt: ${promptFeedback.blockReason}`);
@@ -155,6 +159,9 @@ function extractResponseText(result: any, opts?: { rejectMaxTokens?: boolean }):
   }
 
   const primeCandidate = candidates[0];
+  if (!primeCandidate) {
+    throw new Error('Vertex returned a null first candidate.');
+  }
   const finishReason = primeCandidate.finishReason;
 
   if (

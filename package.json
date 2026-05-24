@@ -100,10 +100,6 @@
     "vitest": "^2.1.8"
   },
   "pnpm": {
-    "onlyBuiltDependencies": [
-      "@biomejs/biome",
-      "better-sqlite3",
-      "esbuild"
-    ]
+    "onlyBuiltDependencies": ["@biomejs/biome", "better-sqlite3", "esbuild"]
   }
 }
