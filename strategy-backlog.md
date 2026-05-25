@@ -41,7 +41,9 @@
 
 **AI role:** Compare to sector peers on every metric. Identify the moat — what makes this company's margin profile sustainable.
 
-**Notes:** Requires 3-year fundamental time-series. `fundamentals` table has `as_of` dating — verify depth before building. No new data source needed if history is sufficient.
+**Notes:** Requires 3-year fundamental time-series. `fundamentals` table has `as_of` dating — verify depth before building.
+
+BLOCKED: fundamentals table confirmed empty (2026-05-21 audit). No historical time-series exists. Prerequisite: complete §3.5 Fundamentals Historical Backfill before this strategy can be scoped. Data engineering must precede strategy build.
 
 ---
 
@@ -123,6 +125,7 @@
 |---|---|---|
 | 1 | Dynamic Position Sizer | GTT gate must be active |
 | 2 | Catalyst-Driven Entry | None — data already present |
+| 2.5 | Fundamentals Historical Backfill | Screener.in scraper + backfill run |
 | 3 | Quality-GARP Screener | Verify `fundamentals` history depth |
 | 4 | Concall Intelligence Engine | BSE/Screener PDF scraper needed |
 | 5 | Earnings Reversal Play | Needs quarterly EPS data + concall engine |
