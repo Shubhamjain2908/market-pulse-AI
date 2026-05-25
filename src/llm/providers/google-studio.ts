@@ -188,8 +188,8 @@ export class GoogleStudioProvider implements LlmProvider {
       text,
       model: this.model,
       usage: {
-        inputTokens: usage?.promptTokenCount,
-        outputTokens: usage?.candidatesTokenCount,
+        inputTokens: usage?.promptTokenCount ?? 0,
+        outputTokens: usage?.candidatesTokenCount ?? 0,
         durationMs: Date.now() - started,
       },
     };
@@ -236,8 +236,8 @@ export class GoogleStudioProvider implements LlmProvider {
           raw,
           model: this.model,
           usage: {
-            inputTokens: usage?.promptTokenCount,
-            outputTokens: usage?.candidatesTokenCount,
+            inputTokens: usage?.promptTokenCount ?? 0,
+            outputTokens: usage?.candidatesTokenCount ?? 0,
             durationMs: Date.now() - started,
           },
         };

@@ -12,7 +12,6 @@
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
     "noImplicitReturns": true,
-    "exactOptionalPropertyTypes": false,
     "skipLibCheck": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,

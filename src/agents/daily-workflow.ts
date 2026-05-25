@@ -32,8 +32,11 @@ import { generateTheses } from './thesis-generator.js';
 const log = child({ component: 'daily-workflow' });
 
 export interface DailyWorkflowOptions {
+  /** ISO date (YYYY-MM-DD). Defaults to today IST. */
   date?: string;
+  /** Skip AI-powered stages (thesis, portfolio analysis, mood narrative). */
   skipAi?: boolean;
+  /** Skip portfolio sync and stop-loss detection. */
   skipPortfolio?: boolean;
 }
 

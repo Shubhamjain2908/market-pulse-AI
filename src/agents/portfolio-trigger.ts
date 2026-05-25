@@ -18,12 +18,12 @@ export function getPortfolioDeepLossPct(): number {
 }
 
 export interface SignalSnapshot {
-  rsi?: number;
-  volRatio?: number;
-  pct52wHigh?: number;
-  pct52wLow?: number;
+  rsi: number | undefined;
+  volRatio: number | undefined;
+  pct52wHigh: number | undefined;
+  pct52wLow: number | undefined;
   /** Close divided by SMA20 minus 1, when both exist */
-  vsSma20Pct?: number;
+  vsSma20Pct: number | undefined;
 }
 
 /**

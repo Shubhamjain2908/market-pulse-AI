@@ -27,7 +27,7 @@ async function main(): Promise<void> {
 
   for (let i = 0; i < symbols.length; i += BATCH) {
     const chunk = symbols.slice(i, i + BATCH);
-    const r = await ingestor.fetchQuotes({ date: asOf, symbols: chunk, signal: undefined });
+    const r = await ingestor.fetchQuotes({ date: asOf, symbols: chunk });
     rowsUpserted += upsertQuotes(r.data, db);
     failedTotal += r.failed.length;
     if (r.failed.length > 0) {

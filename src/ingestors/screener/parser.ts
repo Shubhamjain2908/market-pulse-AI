@@ -219,11 +219,11 @@ function parsePromoterShareholding($: CheerioAPI): { pct?: number; changeQoQ?: n
   const latest = nums.at(-1);
   if (latest === undefined) return {};
   if (nums.length < 2) {
-    return { pct: latest, changeQoQ: undefined };
+    return { pct: latest };
   }
   const prev = nums.at(-2);
   if (prev === undefined) {
-    return { pct: latest, changeQoQ: undefined };
+    return { pct: latest };
   }
   return { pct: latest, changeQoQ: Math.round((latest - prev) * 100) / 100 };
 }

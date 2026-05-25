@@ -85,8 +85,8 @@ export class VertexProvider implements LlmProvider {
       text,
       model: this.model,
       usage: {
-        inputTokens: usage?.promptTokenCount,
-        outputTokens: usage?.candidatesTokenCount,
+        inputTokens: usage?.promptTokenCount ?? 0,
+        outputTokens: usage?.candidatesTokenCount ?? 0,
         durationMs: Date.now() - started,
       },
     };
@@ -128,8 +128,8 @@ export class VertexProvider implements LlmProvider {
           raw,
           model: this.model,
           usage: {
-            inputTokens: usage?.promptTokenCount,
-            outputTokens: usage?.candidatesTokenCount,
+            inputTokens: usage?.promptTokenCount ?? 0,
+            outputTokens: usage?.candidatesTokenCount ?? 0,
             durationMs: Date.now() - started,
           },
         };

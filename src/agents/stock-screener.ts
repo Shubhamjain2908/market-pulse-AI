@@ -14,6 +14,7 @@ import type { Regime } from '../types/regime.js';
 const log = child({ component: 'stock-screener' });
 
 export interface ScreenRunOptions {
+  /** ISO date (YYYY-MM-DD). Defaults to today IST. */
   date?: string;
   /** Restrict to a single screen by name. */
   screen?: string;

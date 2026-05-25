@@ -23,8 +23,11 @@ import { syncSymbolSectorsFromYahoo } from '../market/yahoo-sectors.js';
 const log = child({ component: 'daily-ingestor' });
 
 export interface IngestRunOptions {
+  /** ISO date (YYYY-MM-DD). Defaults to today IST. */
   date?: string;
+  /** Universe of symbols to ingest. Defaults to ingest symbol universe. */
   symbols?: string[];
+  /** Optional abort signal, used by the CLI on Ctrl+C. */
   signal?: AbortSignal;
 }
 
