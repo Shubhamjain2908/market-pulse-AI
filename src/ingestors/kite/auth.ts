@@ -26,7 +26,7 @@ const log = child({ component: 'kite-auth' });
 export interface KiteLoginResult {
   accessToken: string;
   userId: string;
-  userName?: string;
+  userName: string | undefined;
   envPath: string;
 }
 

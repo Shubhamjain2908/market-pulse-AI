@@ -26,15 +26,15 @@ export const THEME = {
 } as const;
 
 export interface MarketMood {
-  fiiNet?: number;
-  diiNet?: number;
+  fiiNet: number | undefined;
+  diiNet: number | undefined;
   /** Latest cash-segment FII/DII row date (may be before briefing date). */
-  fiiDiiDate?: string;
-  vix?: number;
-  vixDate?: string;
-  niftyChangePct?: number;
+  fiiDiiDate: string | undefined;
+  vix: number | undefined;
+  vixDate: string | undefined;
+  niftyChangePct: number | undefined;
   /** Date of the Nifty bar used for Δ (previous session on holidays). */
-  niftyBarDate?: string;
+  niftyBarDate: string | undefined;
 }
 
 export interface WatchlistAlert {
@@ -127,8 +127,8 @@ export interface ScreenMatch {
   screenName: string;
   screenLabel: string;
   symbols: string[];
-  description?: string;
-  timeHorizon?: string;
+  description: string | undefined;
+  timeHorizon: string | undefined;
 }
 
 /** A single warning to surface in the briefing header (yellow banner pattern). */
@@ -159,7 +159,7 @@ export type AiPicksSectionStatus =
   | {
       kind: 'empty';
       reason: 'no_candidates' | 'all_watchlist_owned';
-      candidateCount?: number;
+      candidateCount: number | undefined;
     }
   | { kind: 'all_failed'; failed: number };
 
@@ -169,12 +169,12 @@ export interface BriefingData {
   /** Global indices / FX / commodities from `quotes` (Yahoo macro symbols). */
   globalCues: GlobalCuesSection;
   /** LLM-generated narrative summary of market conditions. */
-  moodNarrative?: string;
+  moodNarrative: string | undefined;
   /** When set, cash market was closed — banner + no fresh pipeline LLMs. */
-  marketClosure?: { kind: 'weekend' | 'holiday'; label: string };
+  marketClosure: { kind: 'weekend' | 'holiday'; label: string } | undefined;
   watchlistAlerts: WatchlistAlert[];
   /** Screens that fired today (Phase 2). */
-  screenMatches?: ScreenMatch[];
+  screenMatches: ScreenMatch[] | undefined;
   topGainers: MoverRow[];
   topLosers: MoverRow[];
   news: NewsRow[];

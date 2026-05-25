@@ -37,7 +37,7 @@ export interface EnricherStats {
 
 export class TechnicalEnricher {
   private readonly lookback: number;
-  private readonly asOfDate?: string;
+  private readonly asOfDate: string | undefined;
 
   constructor(opts: TechnicalEnricherOptions = {}) {
     this.lookback = opts.lookback ?? 260;

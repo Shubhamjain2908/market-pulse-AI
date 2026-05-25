@@ -300,9 +300,13 @@ function sanitizeStockContextForExcludedSignals(symbol: string, context: string)
 }
 
 export interface PortfolioAnalyserOptions {
+  /** ISO date (YYYY-MM-DD). Defaults to today IST. */
   date?: string;
+  /** Only analyse these symbols. Defaults to all holdings. */
   symbols?: string[];
+  /** Minimum position value in INR to analyse. Default 0. */
   minPositionInr?: number;
+  /** LLM concurrency limit. Defaults to config value. */
   concurrency?: number;
 }
 

@@ -61,7 +61,9 @@ import { renderTrailingStopBriefingBlock } from './trailing-stop-card.js';
 const log = child({ component: 'briefing-composer' });
 
 export interface ComposeBriefingOptions {
+  /** ISO date (YYYY-MM-DD) for the briefing. Defaults to today IST. */
   date?: string;
+  /** Override watchlist symbols. */
   watchlist?: string[];
   /** Skip all LLM calls (Phase 1 mode). */
   skipAi?: boolean;

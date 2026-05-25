@@ -53,8 +53,8 @@ export class OpenAIProvider implements LlmProvider {
       text,
       model: response.model,
       usage: {
-        inputTokens: response.usage?.prompt_tokens,
-        outputTokens: response.usage?.completion_tokens,
+        inputTokens: response.usage?.prompt_tokens ?? 0,
+        outputTokens: response.usage?.completion_tokens ?? 0,
         durationMs: Date.now() - started,
       },
     };

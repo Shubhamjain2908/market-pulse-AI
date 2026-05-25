@@ -15,7 +15,9 @@ import { defaultIngestSymbolUniverse } from '../market/ingest-symbols.js';
 const log = child({ component: 'signal-enricher' });
 
 export interface EnrichRunOptions {
+  /** ISO date (YYYY-MM-DD). Defaults to today IST. */
   date?: string;
+  /** Symbols to enrich. Defaults to ingest symbol universe. */
   symbols?: string[];
 }
 

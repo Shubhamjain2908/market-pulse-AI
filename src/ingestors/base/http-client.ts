@@ -101,7 +101,7 @@ export interface HttpClientOptions {
 export interface HttpClient {
   readonly name: string;
   readonly got: Got;
-  readonly cookieJar?: CookieJar;
+  readonly cookieJar: CookieJar | undefined;
   /** Acquire a rate-limit token. Most callers should use `request()` instead. */
   acquire(signal?: AbortSignal): Promise<void>;
   /** Convenience wrapper — acquires a token then calls `got()`. */

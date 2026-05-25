@@ -122,8 +122,11 @@ export function hasMomentumThesisContext(symbol: string, date: string, db: Datab
 }
 
 export interface ThesisGeneratorOptions {
+  /** ISO date (YYYY-MM-DD). Defaults to today IST. */
   date?: string;
+  /** Watchlist to generate theses for. Defaults to configured watchlist. */
   watchlist?: string[];
+  /** Maximum number of thesis cards to generate. Defaults to config value. */
   maxTheses?: number;
   /** When set, skips thesis generation if `ai_picks_generation` is disallowed for this regime. */
   regime?: Regime;

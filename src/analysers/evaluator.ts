@@ -87,7 +87,7 @@ export function evaluateCriterion(
         matched,
         lhs,
         rhs: [min, max],
-        reason: matched ? undefined : `${lhs} not in [${min}, ${max}]`,
+        ...(matched ? {} : { reason: `${lhs} not in [${min}, ${max}]` }),
       };
     }
     case 'gt_signal':
@@ -102,7 +102,7 @@ export function evaluateCriterion(
           matched: false,
           lhs,
           rhs: { signal: value, value: null },
-          reason: `rhs signal "${value}" missing`,
+          ...{ reason: `rhs signal "${value}" missing` },
         };
       }
       const matched = op === 'gt_signal' ? lhs > rhs : lhs < rhs;
@@ -111,7 +111,7 @@ export function evaluateCriterion(
         matched,
         lhs,
         rhs: { signal: value, value: rhs },
-        reason: matched ? undefined : `${lhs} ${op === 'gt_signal' ? '<=' : '>='} ${rhs}`,
+        ...(matched ? {} : { reason: `${lhs} ${op === 'gt_signal' ? '<=' : '>='} ${rhs}` }),
       };
     }
     default: {
@@ -136,7 +136,7 @@ function literalCompare(
     matched,
     lhs,
     rhs: value,
-    reason: matched ? undefined : `${lhs} ${criterion.op} ${value} is false`,
+    ...(matched ? {} : { reason: `${lhs} ${criterion.op} ${value} is false` }),
   };
 }
 

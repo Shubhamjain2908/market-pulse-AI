@@ -293,7 +293,7 @@ export function evaluateOnePaperTrade(
           multiplierUsed: trailingMult,
           unrealisedPct: lastTrailUnrealisedPct,
           action: 'STOPPED_OUT',
-          notes: gap,
+          notes: gap ?? null,
         },
         db,
       );
@@ -320,7 +320,7 @@ export function evaluateOnePaperTrade(
           multiplierUsed: trailingMult,
           unrealisedPct: lastTrailUnrealisedPct,
           action: 'STOPPED_OUT',
-          notes: gap,
+          notes: gap ?? null,
         },
         db,
       );

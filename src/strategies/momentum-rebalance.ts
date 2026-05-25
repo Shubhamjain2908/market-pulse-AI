@@ -180,6 +180,7 @@ export interface MomentumRebalanceResult {
   blackoutBlocked: number;
   unchangedHeld: number;
   thesisFailed: number;
+  /** Omitted when regime is allowed and rebalance proceeded normally. */
   skippedReason?: 'regime_gate' | 'missing_regime';
 }
 
