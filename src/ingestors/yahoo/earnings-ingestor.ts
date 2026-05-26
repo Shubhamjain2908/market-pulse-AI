@@ -9,6 +9,7 @@ import { replaceMomentumEarningsCalendarForSymbol } from '../../db/momentum-quer
 import { child } from '../../logger.js';
 import { BENCHMARK_QUOTE_SYMBOLS, GLOBAL_MACRO_QUOTE_SYMBOLS } from '../../market/benchmarks.js';
 import { heuristicInstrumentSector } from '../../market/instrument-sector-heuristic.js';
+import { isYahooMissingSymbolError } from '../../market/yahoo-errors.js';
 import { toYahooFinanceTicker } from '../../market/yahoo-ticker.js';
 import { isoDateIst } from '../base/dates.js';
 
@@ -88,7 +89,7 @@ export async function syncMomentumEarningsCalendarFromYahoo(
 ): Promise<SyncMomentumEarningsCalendarResult> {
   const refIso = opts.refDate ?? isoDateIst();
   const delayMs = opts.delayMs ?? 120;
-  const client = new YahooFinance();
+  const client = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
   const result: SyncMomentumEarningsCalendarResult = {
     symbolsProcessed: 0,
@@ -144,6 +145,13 @@ export async function syncMomentumEarningsCalendarFromYahoo(
         source: YAHOO_EARNINGS_CALENDAR_SOURCE,
         fetchedAt,
       });
+      if (isYahooMissingSymbolError(err)) {
+        log.debug(
+          { symbol: sym, yTicker, err: (err as Error).message },
+          'yahoo earnings unavailable for symbol; cleared calendar row (fail-open)',
+        );
+        continue;
+      }
       log.warn(
         { symbol: sym, yTicker, err: (err as Error).message },
         'yahoo earnings fetch failed; cleared calendar row (fail-open)',

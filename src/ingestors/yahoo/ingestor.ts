@@ -10,6 +10,7 @@
 
 import YahooFinance from 'yahoo-finance2';
 import { child } from '../../logger.js';
+import { isYahooMissingSymbolError } from '../../market/yahoo-errors.js';
 import { toYahooFinanceTicker } from '../../market/yahoo-ticker.js';
 import type { RawQuote } from '../../types/domain.js';
 import { isoDateIst } from '../base/dates.js';
@@ -68,6 +69,13 @@ export class YahooIngestor implements Ingestor {
           });
         }
       } catch (err) {
+        if (isYahooMissingSymbolError(err)) {
+          log.info(
+            { symbol, err: (err as Error).message },
+            'yahoo quote unavailable for symbol; skipping retries',
+          );
+          continue;
+        }
         log.warn({ symbol, err: (err as Error).message }, 'yahoo quote fetch failed');
         failed.push(symbol);
       }
