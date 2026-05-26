@@ -118,6 +118,24 @@ describe('HttpClient retry options', () => {
       ).retry;
       expect(retryOptions?.maxRetryAfter).toBe(10_000);
     });
+
+    it('returns 0 for non-retriable HTTP statuses such as 404', () => {
+      const client = createHttpClient({ name: 'test-no-retry-404' });
+      const retryOptions = (
+        client.got.defaults.options as {
+          retry?: { calculateDelay?: (ctx: unknown) => number };
+        }
+      ).retry;
+      const calculateDelay = retryOptions?.calculateDelay;
+      expect(typeof calculateDelay).toBe('function');
+
+      const delay = calculateDelay?.({
+        attemptCount: 1,
+        computedValue: 100,
+        error: { response: { statusCode: 404 } },
+      });
+      expect(delay).toBe(0);
+    });
   });
 
   it('default error codes cover common transient network failures', () => {
