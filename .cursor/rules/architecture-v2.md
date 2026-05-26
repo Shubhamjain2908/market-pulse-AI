@@ -47,6 +47,8 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 | **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs trailing-stop + SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). New bars only after the latest non-`STOPPED_OUT` `trailing_stop_log` row (exclusive `source_date` bound via `getSymbolBars`), so a raised persisted stop is not replayed against already-evaluated history. **Circuit breaker:** if `bar.open < 0.7 ×` prior session’s NSE `close` (`date < bar.date`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag. |
 | **Briefing** | `src/briefing/composer.ts` | Assembles HTML email + browser HTML. Two render paths: `renderEmailHtml()` (table-based, inline CSS, 600px, Gmail-safe) and `renderBrowserHtml()` (full CSS variables, beautiful UI). Delivered via Nodemailer → Gmail SMTP. |
 
+NOTE: Screener.in fundamentals ingest is not currently operational. fundamentals table is empty pending backfill build (see §3.5).
+
 ---
 
 ## 3. Completed Extension Modules
@@ -160,6 +162,18 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 - Rebalance: Sunday 8:00 AM IST — entries Sunday only, rank exits evaluated daily
 - Sector cap: max 3 stocks per NSE sector
 - Earnings blackout: block entries within ±3 trading days of earnings (from `earnings_calendar` table, sourced via Yahoo Finance)
+
+### 3.5 Fundamentals Historical Backfill (Planned)
+Status: NOT YET BUILT
+Blocker discovered: fundamentals table confirmed empty (May 21 2026 audit).
+Screener.in ingestor referenced in architecture has never successfully 
+populated historical time-series data.
+
+Build scope:
+- Screener.in scraper: annual + quarterly snapshots per symbol
+- Backfill target: 2022-01-01 to present
+- Minimum viable coverage: 3 calendar years on ≥100 momentum universe symbols
+- Post-backfill audit required before Quality-GARP build starts
 
 ---
 
@@ -309,6 +323,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 - Paper trade expectancy still negative on deduplicated baseline: AI_PICK −0.37%, PORTFOLIO_ADD −3.27%, momentum_mf −0.59%
 - All closed outcomes so far are pre-fix cohorts; evaluate quality only after post-fix trades complete
 - Overall expectancy still negative — GTT execution remains gated until 30+ post-fix closed trades confirm positive
+- fundamentals table: confirmed empty as of 2026-05-21 audit. Quality-GARP, Earnings Reversal, and any PEG/ROE CAGR dependent screens are blocked until backfill is complete.
 
 **Deferred to v2:**
 - Quarterly EPS scraper (true Factor 2 vs current `profit_growth_yoy` proxy)

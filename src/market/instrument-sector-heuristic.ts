@@ -5,7 +5,7 @@
 
 export function heuristicInstrumentSector(symbol: string): string | null {
   const s = symbol.toUpperCase();
-  if (/-GB$/.test(s)) return 'Sovereign Gold Bond';
+  if (/-GB$/.test(s) || /^SGB[A-Z0-9]+(?:-GB)?$/.test(s)) return 'Sovereign Gold Bond';
   if (s === 'GOLDBEES' || s === 'GOLDCASE') return 'Gold ETF';
   if (s === 'SILVERBEES') return 'Silver ETF';
   if (s === 'LIQUIDCASE' || s === 'LIQUIDBEES') return 'Liquid Fund';

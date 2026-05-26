@@ -9,6 +9,7 @@ import { upsertSymbolMetadata } from '../db/queries.js';
 import { child } from '../logger.js';
 import { BENCHMARK_QUOTE_SYMBOLS, GLOBAL_MACRO_QUOTE_SYMBOLS } from './benchmarks.js';
 import { heuristicInstrumentSector } from './instrument-sector-heuristic.js';
+import { isYahooMissingSymbolError } from './yahoo-errors.js';
 import { toYahooFinanceTicker } from './yahoo-ticker.js';
 
 const log = child({ component: 'yahoo-sectors' });
@@ -37,7 +38,7 @@ export async function syncSymbolSectorsFromYahoo(
   opts: { delayMs?: number; force?: boolean } = {},
 ): Promise<SyncSymbolSectorsResult> {
   const delayMs = opts.delayMs ?? 120;
-  const client = new YahooFinance();
+  const client = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
   const failed: string[] = [];
   let written = 0;
   let skipped = 0;
@@ -97,6 +98,14 @@ export async function syncSymbolSectorsFromYahoo(
         log.debug({ symbol: sym, yTicker }, 'yahoo quoteSummary had no sector; skipping DB write');
       }
     } catch (err) {
+      if (isYahooMissingSymbolError(err)) {
+        skipped++;
+        log.debug(
+          { symbol: sym, yTicker, err: (err as Error).message },
+          'yahoo sector metadata unavailable for symbol; skipping',
+        );
+        continue;
+      }
       failed.push(sym);
       log.warn({ symbol: sym, yTicker, err: (err as Error).message }, 'yahoo sector fetch failed');
     }

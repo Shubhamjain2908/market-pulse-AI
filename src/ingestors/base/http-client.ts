@@ -143,10 +143,19 @@ export function createHttpClient(opts: HttpClientOptions): HttpClient {
       calculateDelay: ({
         attemptCount,
         computedValue,
+        error,
       }: {
         attemptCount: number;
         computedValue: number;
+        error?: RequestError;
       }) => {
+        const statusCode = error?.response?.statusCode ?? 0;
+
+        // Guardrail: never retry non-retriable HTTP statuses (e.g. 404).
+        if (statusCode > 0 && !retryCfg.statusCodes.includes(statusCode)) {
+          return 0;
+        }
+
         // If got computed a value (e.g. from Retry-After header), cap it.
         if (computedValue > 0) {
           return Math.min(computedValue, retryCfg.maxRetryAfterMs);
