@@ -15,4 +15,3 @@ export function isYahooMissingSymbolError(err: unknown): boolean {
     msg.includes('quote not found for symbol')
   );
 }
-

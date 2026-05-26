@@ -11,4 +11,3 @@ describe('heuristicInstrumentSector', () => {
     expect(heuristicInstrumentSector('SGBDE31III-GB')).toBe('Sovereign Gold Bond');
   });
 });
-

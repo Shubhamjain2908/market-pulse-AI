@@ -7,9 +7,9 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import YahooFinance from 'yahoo-finance2';
 import { upsertSymbolMetadata } from '../db/queries.js';
 import { child } from '../logger.js';
-import { isYahooMissingSymbolError } from './yahoo-errors.js';
 import { BENCHMARK_QUOTE_SYMBOLS, GLOBAL_MACRO_QUOTE_SYMBOLS } from './benchmarks.js';
 import { heuristicInstrumentSector } from './instrument-sector-heuristic.js';
+import { isYahooMissingSymbolError } from './yahoo-errors.js';
 import { toYahooFinanceTicker } from './yahoo-ticker.js';
 
 const log = child({ component: 'yahoo-sectors' });
