@@ -19,6 +19,29 @@ import { parseScreenerHtml } from './parser.js';
 const log = child({ component: 'screener-ingestor' });
 const SCREENER_BASE = 'https://www.screener.in';
 
+function getHttpStatusCode(err: unknown): number {
+  const e = err as { response?: { statusCode?: number } };
+  return e.response?.statusCode ?? 0;
+}
+
+/**
+ * Screener URLs use the base company code; some NSE symbols include a
+ * trading-series suffix (`-BE`, `-BZ`, ...). Try both forms.
+ */
+export function buildScreenerCompanyPaths(symbol: string): string[] {
+  const u = symbol.trim().toUpperCase();
+  const variants = [u];
+  const withoutSeries = u.replace(/-[A-Z]{2}$/, '');
+  if (withoutSeries !== u && withoutSeries.length > 0) variants.push(withoutSeries);
+
+  const paths: string[] = [];
+  for (const v of variants) {
+    paths.push(`/company/${encodeURIComponent(v)}/consolidated/`);
+    paths.push(`/company/${encodeURIComponent(v)}/`);
+  }
+  return paths;
+}
+
 export class ScreenerIngestor implements Ingestor {
   readonly name = 'screener';
   readonly capabilities: ReadonlySet<IngestorCapability> = new Set(['fundamentals']);
@@ -54,6 +77,10 @@ export class ScreenerIngestor implements Ingestor {
           failed.push(symbol);
         }
       } catch (err) {
+        if (getHttpStatusCode(err) === 404) {
+          log.debug({ symbol }, 'screener skip: symbol has no screener.in company page');
+          continue;
+        }
         log.warn({ symbol, err: (err as Error).message }, 'screener fetch failed');
         failed.push(symbol);
       }
@@ -63,11 +90,8 @@ export class ScreenerIngestor implements Ingestor {
 
   private async fetchPage(symbol: string, signal?: AbortSignal): Promise<string> {
     await this.client.acquire(signal);
-    // Try consolidated first (preferred for groups), fall back to standalone.
-    const paths = [
-      `/company/${encodeURIComponent(symbol.toUpperCase())}/consolidated/`,
-      `/company/${encodeURIComponent(symbol.toUpperCase())}/`,
-    ];
+    // Try consolidated first (preferred for groups), then standalone.
+    const paths = buildScreenerCompanyPaths(symbol);
     let lastErr: unknown;
     for (const path of paths) {
       try {

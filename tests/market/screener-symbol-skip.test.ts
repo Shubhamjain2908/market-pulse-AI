@@ -4,6 +4,7 @@ import { skipScreenerFundamentalsFetch } from '../../src/market/screener-symbol-
 describe('skipScreenerFundamentalsFetch', () => {
   it('skips SGB tickers', () => {
     expect(skipScreenerFundamentalsFetch('SGBJUN31I-GB')).toBe(true);
+    expect(skipScreenerFundamentalsFetch('SGBJUN31I')).toBe(true);
   });
 
   it('skips benchmark and macro canonical symbols', () => {

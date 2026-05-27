@@ -10,6 +10,6 @@ const NO_SCREENER_PAGE = new Set<string>(
  */
 export function skipScreenerFundamentalsFetch(symbol: string): boolean {
   const s = symbol.trim().toUpperCase();
-  if (/-GB$/i.test(s)) return true;
+  if (/-GB$/i.test(s) || /^SGB[A-Z0-9]+(?:-GB)?$/i.test(s)) return true;
   return NO_SCREENER_PAGE.has(s);
 }
