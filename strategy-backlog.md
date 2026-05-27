@@ -4,6 +4,8 @@
 
 **Built:** Market Regime Filter · Adaptive Trailing Stop · Multi-Factor Momentum (momentum_mf)
 
+**Fundamentals backfill:** COMPLETE (2026-05-28). 236 symbols, audit gate passed.
+
 ---
 
 ## Unbuilt Strategies
@@ -22,13 +24,13 @@
 
 **AI role:** Summarise what consensus expects, flag if setup is contrarian. 2-sentence entry thesis.
 
-**Notes:** Earnings blackout logic already exists in momentum_mf (±3 days block). Catalyst entry is the inverse — enter *because* of the upcoming event. Reuse `earnings_calendar` table. Low data dependency, highest priority to build once gate is met.
+**Notes:** Earnings blackout logic already exists in momentum_mf (±3 days block). Catalyst entry is the inverse — enter *because* of the upcoming event. Reuse `earnings_calendar` table. Low data dependency, can be scoped and built during BEAR regime — paper trades queue and fire on next BULL entry.
 
 ---
 
 ### 2. Quality-GARP Screener
 **Category:** Stock picking + Quantitative | **Effort:** Medium | **Horizon:** Long (6–18 months) | **Build time:** 2 weeks
-**Stack needed:** `fundamentals` table (already populated via Screener.in)
+**Stack needed:** `fundamentals` table — NOW POPULATED (2026-05-28 backfill complete)
 
 **Entry signals:**
 - ROE > 18% for 3 consecutive years
@@ -41,9 +43,13 @@
 
 **AI role:** Compare to sector peers on every metric. Identify the moat — what makes this company's margin profile sustainable.
 
-**Notes:** Requires 3-year fundamental time-series. `fundamentals` table has `as_of` dating — verify depth before building.
+**Data gaps to handle before building:**
+- `operating_margin` not in `fundamentals` schema — OPM proxy: use `profit_growth_yoy` or add migration for `operating_margin_pct` column populated from Yahoo `operatingMargins` in `ticker.info`
+- Dec FY symbols (VBL, ACC, AMBUJACEM) have Dec 31 `as_of` dates — screener must not require strict Mar 31 year-end
+- `peg` only in `yahoo_snapshot` (today's value) — not historical. Quality-GARP PEG filter uses snapshot value only.
+- `promoter_holding_pct` on annual rows is NULL — must JOIN to latest `nse_shareholding` or `screener` row for this signal
 
-BLOCKED: fundamentals table confirmed empty (2026-05-21 audit). No historical time-series exists. Prerequisite: complete §3.5 Fundamentals Historical Backfill before this strategy can be scoped. Data engineering must precede strategy build.
+**Status: UNBLOCKED as of 2026-05-28. Next to build.**
 
 ---
 
@@ -97,7 +103,7 @@ BLOCKED: fundamentals table confirmed empty (2026-05-21 audit). No historical ti
 
 **AI role:** Core AI task. Read 8–12 pages of dense financial language, extract 5 things that matter, compare tone to last quarter. Feeds into thesis_json in `screens` and `theses` tables.
 
-**Notes:** Already listed as deferred in architecture-v2.md ("Concall Intelligence Engine — BSE PDF scraper + transcript analysis"). Unblocks Earnings Reversal Play (item 3) for full quality. High alpha potential, medium data engineering effort.
+**Notes:** Already listed as deferred in architecture-v2.md. Unblocks Earnings Reversal Play (item 3) for full quality. High alpha potential, medium data engineering effort.
 
 ---
 
@@ -115,18 +121,18 @@ BLOCKED: fundamentals table confirmed empty (2026-05-21 audit). No historical ti
 
 **AI role:** Daily flag any position where size has drifted above 5% due to price appreciation. Suggest trim qty.
 
-**Notes:** Prerequisite: GTT Execution Module must be active first. GTT gate is currently closed (expectancy negative). This is the natural next build *after* GTT activates. All data dependencies already present — lowest friction build on the list once gate opens.
+**Notes:** Prerequisite: GTT Execution Module must be active first. GTT gate is currently closed (expectancy negative). This is the natural next build *after* GTT activates. All data dependencies already present.
 
 ---
 
-## Build Priority Order (when gate opens)
+## Build Priority Order (updated 2026-05-28)
 
-| Priority | Strategy | Blocker |
-|---|---|---|
-| 1 | Dynamic Position Sizer | GTT gate must be active |
-| 2 | Catalyst-Driven Entry | None — data already present |
-| 2.5 | Fundamentals Historical Backfill | Screener.in scraper + backfill run |
-| 3 | Quality-GARP Screener | Verify `fundamentals` history depth |
-| 4 | Concall Intelligence Engine | BSE/Screener PDF scraper needed |
-| 5 | Earnings Reversal Play | Needs quarterly EPS data + concall engine |
-| 6 | Sector Rotation | Needs sector FII flow data source |
+| Priority | Strategy | Status | Blocker |
+|---|---|---|---|
+| 1 | Quality-GARP Screener | **UNBLOCKED** | None — data now present. Handle OPM gap + Dec FY symbols. |
+| 2 | Catalyst-Driven Entry | Ready to scope | None — build during BEAR regime |
+| 3 | yahoo_snapshot daily ingest | Infrastructure | Add to pipeline before Quality-GARP goes live |
+| 4 | Dynamic Position Sizer | Waiting | GTT gate must be active |
+| 5 | Concall Intelligence Engine | Blocked | BSE/Screener PDF scraper needed |
+| 6 | Earnings Reversal Play | Blocked | Needs quarterly EPS data + concall engine |
+| 7 | Sector Rotation | Blocked | Needs sector FII flow data source |
