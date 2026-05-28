@@ -30,6 +30,7 @@ trades. Currently NOT met.
 **Notes:** Earnings blackout logic already exists in momentum_mf (±3 days block). Catalyst entry is the inverse — enter
 *because* of the upcoming event. Reuse `earnings_calendar` table. Low data dependency, can be scoped and built during
 BEAR regime — paper trades queue and fire on next BULL entry.
+Known limitation (v1): `max_hold_days = days_to_earnings + 2` uses calendar days. A long weekend or NSE holiday immediately post-event may trigger `TIME_EXIT` before the post-event price move completes. Upgrade to trading-session count in v2 using `quotes` table date sequence.
 
 ---
 
