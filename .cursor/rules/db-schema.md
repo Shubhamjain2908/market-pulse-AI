@@ -88,6 +88,8 @@ CREATE TABLE screens (
   PRIMARY KEY (symbol, date, screen_name)
 );
 CREATE INDEX idx_screens_date_screen ON screens(date, screen_name);
+-- Quality-GARP v1 stores value-oriented JSON in screens.matched_criteria
+-- (fundamental + technical snapshot plus optional __regime_meta), not only DSL criteria arrays.
 CREATE TABLE portfolio (
   symbol     TEXT    NOT NULL,
   qty        REAL    NOT NULL,
@@ -297,6 +299,8 @@ CREATE TABLE regime_strategy_gate (
   PRIMARY KEY (strategy_id, regime)
 );
 CREATE INDEX idx_regime_strategy_gate_regime ON regime_strategy_gate(regime);
+-- `quality_garp` regime rows are seeded from config/strategy-gates.json.
+-- OPM migration/backfill remains deferred to v2 (no schema delta in this release).
 CREATE TABLE trailing_stop_log (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   trade_id        INTEGER NOT NULL REFERENCES paper_trades(id),

@@ -69,6 +69,13 @@ const MOMENTUM_THESIS_ADDENDUM = `MOMENTUM CONTEXT (only when the user message c
 - If the snapshot includes **FALSE MOMENTUM WARNING** (mom_false_flag = 1), call that out prominently and keep confidenceScore **≤ 5**.
 - Treat numeric momentum fields as authoritative; do not contradict them without explicit justification in bearCase.`;
 
+const QUALITY_GARP_THESIS_ADDENDUM = `QUALITY-GARP CONTEXT (only when the user message contains "## Quality-GARP context"):
+- Identify the company's sustainable moat and explain what keeps ROE/margins durable.
+- Compare ROE and revenue growth versus sector peers using the supplied sector context.
+- If a PEG valuation context line is present, explicitly assess whether PEG is justified versus growth durability.
+- If a momentum false-flag warning line is present, weight bearCase accordingly and keep confidenceScore ≤ 5.
+- Confidence calibration must stay aligned with guardrails: strong technical + fundamentals in 7-8 band; pure technical and weak fundamentals in 3-4 band.`;
+
 const MOMENTUM_CONTEXT_GATE_NAMES = new Set(['mom_rank', 'mom_composite_score', 'mom_12_1_return']);
 
 /**
@@ -119,6 +126,82 @@ export function buildMomentumContextAppend(
 
 export function hasMomentumThesisContext(symbol: string, date: string, db: DatabaseType): boolean {
   return buildMomentumContextAppend(symbol, date, db) != null;
+}
+
+interface QualityGarpThesisContext {
+  peg: number | null;
+  sector: string | null;
+  falseMomentumFlag: boolean;
+}
+
+function getQualityGarpThesisContext(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+): QualityGarpThesisContext | null {
+  const row = db
+    .prepare(
+      `
+      SELECT matched_criteria AS matchedCriteria
+      FROM screens
+      WHERE symbol = ? AND date = ? AND screen_name = 'quality_garp'
+      LIMIT 1
+    `,
+    )
+    .get(symbol, date) as { matchedCriteria: string } | undefined;
+  if (!row) return null;
+
+  let peg: number | null = null;
+  try {
+    const parsed = JSON.parse(row.matchedCriteria) as Record<string, unknown>;
+    const rawPeg = parsed.peg;
+    peg = typeof rawPeg === 'number' && Number.isFinite(rawPeg) ? rawPeg : null;
+  } catch {
+    peg = null;
+  }
+
+  const sectorRow = db.prepare('SELECT sector FROM symbols WHERE symbol = ?').get(symbol) as
+    | { sector: string | null }
+    | undefined;
+
+  const signalSnap = getLatestSignalsMap(symbol, date, db);
+  return {
+    peg,
+    sector: sectorRow?.sector ?? null,
+    falseMomentumFlag: signalSnap.mom_false_flag === 1,
+  };
+}
+
+function buildQualityGarpContextAppend(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+): string | null {
+  const ctx = getQualityGarpThesisContext(symbol, date, db);
+  if (!ctx) return null;
+
+  const lines = ['\n## Quality-GARP context'];
+  lines.push('- Screen trigger: quality_garp');
+  if (ctx.sector) {
+    lines.push(`- Sector context: ${ctx.sector}`);
+  } else {
+    lines.push('- Sector context: unknown (sector missing in symbols table)');
+  }
+  lines.push(
+    '- Compare this company against sector peers on ROE durability and revenue-growth quality before forming conviction.',
+  );
+  lines.push('- Identify the sustainable moat supporting margins/returns.');
+  if (ctx.peg != null) {
+    lines.push(
+      `- Valuation context: current PEG ratio is ${ctx.peg}. Assess whether this is justified given the growth rate.`,
+    );
+  }
+  if (ctx.falseMomentumFlag) {
+    lines.push(
+      '- Warning: momentum false flag is set (high price momentum with negative profit growth). Weight bear case accordingly.',
+    );
+  }
+  return lines.join('\n');
 }
 
 export interface ThesisGeneratorOptions {
@@ -212,12 +295,19 @@ export async function generateTheses(
   for (const candidate of toGenerate) {
     try {
       const context = buildStockContext(candidate.symbol, date, db);
-      const system = hasMomentumThesisContext(candidate.symbol, date, db)
-        ? `${THESIS_JSON_SYSTEM_PROMPT}\n\n${MOMENTUM_THESIS_ADDENDUM}`
-        : THESIS_JSON_SYSTEM_PROMPT;
+      const momentumContext = hasMomentumThesisContext(candidate.symbol, date, db);
+      const qualityGarpContext = buildQualityGarpContextAppend(candidate.symbol, date, db);
+      const contextWithScreen = qualityGarpContext ? `${context}\n${qualityGarpContext}` : context;
+      const systemAddenda: string[] = [];
+      if (momentumContext) systemAddenda.push(MOMENTUM_THESIS_ADDENDUM);
+      if (qualityGarpContext) systemAddenda.push(QUALITY_GARP_THESIS_ADDENDUM);
+      const system =
+        systemAddenda.length > 0
+          ? `${THESIS_JSON_SYSTEM_PROMPT}\n\n${systemAddenda.join('\n\n')}`
+          : THESIS_JSON_SYSTEM_PROMPT;
       const result = await llm.generateJson<Thesis>({
         system,
-        user: context,
+        user: contextWithScreen,
         schema: ThesisSchema,
         temperature: 0.3,
         maxRetries: 2,

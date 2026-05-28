@@ -6,7 +6,7 @@
  * are persisted to the `screens` table and alerts to `alerts`.
  */
 
-import { runAlertScan, runScreenEngine } from '../analysers/index.js';
+import { runAlertScan, runStockScreenAnalyser } from '../analysers/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 import type { Regime } from '../types/regime.js';
@@ -33,7 +33,11 @@ export interface ScreenRunResult {
 export async function runStockScreener(opts: ScreenRunOptions = {}): Promise<ScreenRunResult> {
   const date = opts.date ?? isoDateIst();
 
-  const engineResult = runScreenEngine({ date, onlyScreen: opts.screen, regime: opts.regime });
+  const engineResult = runStockScreenAnalyser({
+    date,
+    onlyScreen: opts.screen,
+    regime: opts.regime,
+  });
   const alertResult = runAlertScan({ date });
 
   log.info(

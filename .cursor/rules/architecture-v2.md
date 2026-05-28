@@ -169,12 +169,13 @@ Status: NOT YET BUILT
 Blocker discovered: fundamentals table confirmed empty (May 21 2026 audit).
 Screener.in ingestor referenced in architecture has never successfully 
 populated historical time-series data.
+Quality-GARP v1 is now implemented using available Yahoo annual + snapshot fundamentals where present; OPM migration/backfill remains deferred to v2.
 
 Build scope:
 - Screener.in scraper: annual + quarterly snapshots per symbol
 - Backfill target: 2022-01-01 to present
 - Minimum viable coverage: 3 calendar years on ≥100 momentum universe symbols
-- Post-backfill audit required before Quality-GARP build starts
+- Post-backfill audit required before any OPM-dependent extensions in Quality-GARP v2 start
 
 ---
 
@@ -324,7 +325,7 @@ Build scope:
 - Paper trade expectancy still negative on deduplicated baseline: AI_PICK −0.37%, PORTFOLIO_ADD −3.27%, momentum_mf −0.59%
 - All closed outcomes so far are pre-fix cohorts; evaluate quality only after post-fix trades complete
 - Overall expectancy still negative — GTT execution remains gated until 30+ post-fix closed trades confirm positive
-- fundamentals table: confirmed empty as of 2026-05-21 audit. Quality-GARP, Earnings Reversal, and any PEG/ROE CAGR dependent screens are blocked until backfill is complete.
+- fundamentals table coverage remains uneven; OPM-dependent extensions, Earnings Reversal, and PEG/ROE-CAGR-heavy variants remain deferred until backfill is complete.
 
 **Deferred to v2:**
 - Quarterly EPS scraper (true Factor 2 vs current `profit_growth_yoy` proxy)

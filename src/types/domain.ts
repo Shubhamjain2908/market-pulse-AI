@@ -147,6 +147,7 @@ export const ScreenMatchedCriteriaStoredSchema = z.union([
     criteria: z.array(ScreenCriterionSchema),
     __regime_meta: RegimeScreenMetaSchema,
   }),
+  z.record(z.string(), z.unknown()),
 ]);
 export type ScreenMatchedCriteriaStored = z.infer<typeof ScreenMatchedCriteriaStoredSchema>;
 

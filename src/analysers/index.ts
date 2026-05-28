@@ -12,6 +12,7 @@ export {
   type ScreenEngineResult,
   runScreenEngine,
 } from './engine.js';
+export { type StockScreenerOptions, runStockScreenAnalyser } from './stock-screener.js';
 export {
   type CriterionEvaluation,
   type ScreenEvaluation,

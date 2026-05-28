@@ -27,6 +27,17 @@
       ]
     },
     {
+      "name": "quality_garp",
+      "label": "Quality-GARP",
+      "description": "Quality Growth at a Reasonable Price: high ROE, consistent revenue growth, reasonable valuation, technical dip entry.",
+      "timeHorizon": "long",
+      "criteria": [
+        { "signal": "pe", "op": "lte", "value": 35 },
+        { "signal": "pb", "op": "lte", "value": 6 },
+        { "signal": "rsi_14", "op": "lt", "value": 45 }
+      ]
+    },
+    {
       "name": "fii_accumulation",
       "label": "FII Accumulation",
       "description": "Stocks holding above their long-term trend while FIIs have been net buyers in the cash segment for several consecutive sessions.",

@@ -92,6 +92,35 @@
     },
 
     {
+      "strategyId": "quality_garp",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "Full entries"
+    },
+    {
+      "strategyId": "quality_garp",
+      "regime": "CHOPPY",
+      "allowed": true,
+      "sizeMultiplier": 0.75,
+      "notes": "Reduced size"
+    },
+    {
+      "strategyId": "quality_garp",
+      "regime": "BEAR_TRENDING",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": "No entries"
+    },
+    {
+      "strategyId": "quality_garp",
+      "regime": "CRISIS",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": "No entries"
+    },
+
+    {
       "strategyId": "fii_accumulation",
       "regime": "BULL_TRENDING",
       "allowed": true,
