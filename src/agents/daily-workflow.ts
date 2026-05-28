@@ -13,6 +13,7 @@ import { getDb } from '../db/index.js';
 import { enrichSentiment } from '../enrichers/sentiment/enricher.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { applyCorporateActionsFromYahooSplits } from '../ingestors/corporate-actions.js';
+import { ingestYahooSnapshots } from '../ingestors/yahoo-snapshot-ingestor.js';
 import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { child } from '../logger.js';
 import { getMarketClosure, isSundayIst } from '../market/nse-calendar.js';
@@ -155,6 +156,19 @@ export async function runDailyWorkflow(
     warnings.push({ category: 'Corporate actions', message: msg });
   }
   await runSignalEnricher({ date });
+  try {
+    const snap = await ingestYahooSnapshots(getDb(), { date });
+    if (snap.failed > 0) {
+      log.warn(snap, 'yahoo snapshot ingest partial failures');
+    } else {
+      log.info(snap, 'yahoo snapshot ingest complete');
+    }
+  } catch (err) {
+    log.warn(
+      { err: (err as Error).message },
+      'yahoo snapshot ingest failed unexpectedly; continuing workflow',
+    );
+  }
   const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
   const momRegimeExits = applyMomentumRegimeGateExits({
     calendarDate: date,
