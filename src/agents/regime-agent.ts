@@ -115,7 +115,7 @@ export function buildRegimeAgentUserPayload(
 
 export function buildFallbackNarrative(prepared: PreparedRegimeDaily): string {
   const r = prepared.insertRow;
-  const vix = r.vixValue.toFixed(2);
+  const vix = r.vixValue != null ? r.vixValue.toFixed(2) : 'n/a';
   const fiiRaw = prepared.signals.fii20dRollingCr;
   const fii = fiiRaw != null && Number.isFinite(fiiRaw) ? fiiRaw.toFixed(1) : 'n/a';
   return `Regime: ${r.regime}. Score: ${r.scoreTotal.toFixed(1)}. VIX: ${vix}. FII 20d: ₹${fii}Cr.`;
