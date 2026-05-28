@@ -145,6 +145,66 @@ export function upsertFundamentals(rows: Fundamentals[], db: DatabaseType = getD
   return rows.length;
 }
 
+export interface QualityGarpFundamentalRow {
+  symbol: string;
+  latestRoe: number | null;
+  prevRoe: number | null;
+  latestRevGrowth: number | null;
+  pe: number | null;
+  pb: number | null;
+  peg: number | null;
+  marketCap: number | null;
+  promoterHoldingPct: number | null;
+  promoterHoldingChangeQoQ: number | null;
+}
+
+/** One-shot candidate fundamentals snapshot used by Quality-GARP screen evaluation. */
+export function getQualityGarpFundamentals(
+  asOfDate: string,
+  db: DatabaseType = getDb(),
+): QualityGarpFundamentalRow[] {
+  const rows = db
+    .prepare(
+      `
+      WITH AnnualRanked AS (
+        SELECT symbol, roe, revenue_growth_yoy, as_of,
+          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY as_of DESC) AS rn
+        FROM fundamentals
+        WHERE source = 'yahoo_annual' AND roe IS NOT NULL
+      ),
+      PromoterLatest AS (
+        SELECT symbol, promoter_holding_pct, promoter_holding_change_qoq,
+          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY as_of DESC) AS rn
+        FROM fundamentals
+        WHERE source IN ('nse_shareholding', 'screener')
+          AND promoter_holding_pct IS NOT NULL
+      )
+      SELECT
+        a1.symbol                                 AS symbol,
+        a1.roe                                    AS latestRoe,
+        a2.roe                                    AS prevRoe,
+        a1.revenue_growth_yoy                     AS latestRevGrowth,
+        s.pe                                      AS pe,
+        s.pb                                      AS pb,
+        s.peg                                     AS peg,
+        s.market_cap                              AS marketCap,
+        p.promoter_holding_pct                    AS promoterHoldingPct,
+        p.promoter_holding_change_qoq             AS promoterHoldingChangeQoQ
+      FROM AnnualRanked a1
+      LEFT JOIN AnnualRanked  a2 ON a1.symbol = a2.symbol AND a2.rn = 2
+      LEFT JOIN fundamentals   s ON a1.symbol = s.symbol
+                                 AND s.source = 'yahoo_snapshot'
+                                 AND s.as_of = ?
+      LEFT JOIN PromoterLatest p ON a1.symbol = p.symbol AND p.rn = 1
+      WHERE a1.rn = 1
+        AND s.pe IS NOT NULL
+        AND s.pb IS NOT NULL
+    `,
+    )
+    .all(asOfDate) as QualityGarpFundamentalRow[];
+  return rows;
+}
+
 // ---------------------------------------------------------------------------
 // News
 // ---------------------------------------------------------------------------

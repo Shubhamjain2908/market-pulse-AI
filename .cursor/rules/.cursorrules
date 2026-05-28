@@ -10,3 +10,5 @@ Never suggest database changes that violate db-schema.md.
 Never violate the constraints in guardrails.md.
 
 If a change is required in architecture, db schema, guardrails, or overall system state, update these files accordingly in the same change.
+
+**We have market pulse DB tool setup as mcp, query the  db for any confusion & clarity**

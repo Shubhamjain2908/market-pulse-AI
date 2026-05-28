@@ -18,8 +18,8 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
-import { runScreenEngine } from '../analysers/engine.js';
 import { DbSignalProvider } from '../analysers/signal-provider.js';
+import { runStockScreenAnalyser } from '../analysers/stock-screener.js';
 import { loadScreens, loadWatchlist } from '../config/loaders.js';
 import { getDb } from '../db/index.js';
 import { child } from '../logger.js';
@@ -97,7 +97,7 @@ export function runBacktest(opts: BacktestOptions, db: DatabaseType = getDb()): 
     );
 
     for (const date of tradingDates) {
-      const evalResult = runScreenEngine(
+      const evalResult = runStockScreenAnalyser(
         { date, symbols, screens: [screen], provider, persist: false },
         db,
       );
