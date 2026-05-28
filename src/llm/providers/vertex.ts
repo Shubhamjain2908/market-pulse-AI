@@ -9,8 +9,8 @@
  * lifecycle"). Defaults in env point at the current Gemini 2.5 family.
  */
 
-import { FinishReason, GoogleGenAI, HarmBlockThreshold, HarmCategory } from '@google/genai';
 import type { GenerateContentResponse } from '@google/genai';
+import { FinishReason, GoogleGenAI, HarmBlockThreshold, HarmCategory } from '@google/genai';
 import { config } from '../../config/env.js';
 import { parseAndValidate } from '../json.js';
 import type {

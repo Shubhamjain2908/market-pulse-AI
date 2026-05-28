@@ -15,13 +15,13 @@ import { getAlertsForDate } from '../analysers/alerts.js';
 import { config } from '../config/env.js';
 import { loadScreens, loadSectorMap, loadWatchlist } from '../config/loaders.js';
 import {
-  type PortfolioHoldingRow,
   countGatesForRegime,
   getDb,
   getLatestHoldings,
   getPortfolioAnalysisForDate,
   getRegimeForCalendarDate,
   listAllowedGatesForRegime,
+  type PortfolioHoldingRow,
 } from '../db/index.js';
 import {
   getMomentumRebalanceBriefingForCalendarDate,
@@ -50,11 +50,11 @@ import {
   type PortfolioPositionCard,
   type PortfolioRiskRollup,
   type PortfolioSummary,
+  renderBriefing,
   type ScreenMatch,
   type ThesisCard,
   type WarningEntry,
   type WatchlistAlert,
-  renderBriefing,
 } from './template.js';
 import { renderTrailingStopBriefingBlock } from './trailing-stop-card.js';
 

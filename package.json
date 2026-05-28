@@ -90,19 +90,25 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
+    "@biomejs/biome": "^2.4.15",
     "@types/better-sqlite3": "^7.6.12",
     "@types/express": "^5.0.6",
     "@types/node": "^22.10.0",
     "@types/nodemailer": "^8.0.0",
-    "@vitest/coverage-v8": "^2.1.9",
+    "@vitest/coverage-v8": "^4.1.7",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.5",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "typescript": "^6.0.3",
+    "vite": "^6.4.2",
+    "vitest": "^4.1.7"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@biomejs/biome", "better-sqlite3", "esbuild", "husky"]
+    "onlyBuiltDependencies": [
+      "@biomejs/biome",
+      "better-sqlite3",
+      "esbuild",
+      "husky"
+    ]
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type Bar, aggregate, buildTrade } from '../../src/backtest/metrics.js';
+import { aggregate, type Bar, buildTrade } from '../../src/backtest/metrics.js';
 
 describe('buildTrade', () => {
   const entry: Bar = { date: '2026-04-01', close: 100 };

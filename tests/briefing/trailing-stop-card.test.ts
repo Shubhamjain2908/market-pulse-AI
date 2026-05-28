@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { renderTrailingStopSection } from '../../src/briefing/trailing-stop-card.js';
-import {
-  GAP_DOWN_THROUGH_STOP_NOTE,
-  TRAILING_STOP_ANALYSIS_PENDING,
-} from '../../src/types/trailing-stop.js';
 import type {
   NearStopOpenRow,
   TrailingStopLogBriefingRow,
   TrailingStopLogRow,
+} from '../../src/types/trailing-stop.js';
+import {
+  GAP_DOWN_THROUGH_STOP_NOTE,
+  TRAILING_STOP_ANALYSIS_PENDING,
 } from '../../src/types/trailing-stop.js';
 
 function logRow(

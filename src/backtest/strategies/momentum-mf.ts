@@ -25,10 +25,10 @@ import { addCalendarDaysIst, lastOpenOnOrBefore } from '../../market/trading-day
 import { buildTradingDayIndex } from '../../scripts/evaluate-trades.js';
 import type { Regime } from '../../types/regime.js';
 import { scoreMomentumFromFactorRows } from '../momentum-inmemory-rank.js';
-import { type LongTrailState, initLongTrailState, stepLongPositionOneBar } from '../position.js';
+import { initLongTrailState, type LongTrailState, stepLongPositionOneBar } from '../position.js';
 import { loadOhlcvMap } from '../quotes-loader.js';
 import type { OptionARegimeSource, RegimeProxyMap } from '../regime-proxy.js';
-import { type OHLCVBar, SIGNAL_WINDOW_LEN, computeSignalsForLastBar } from '../signals.js';
+import { computeSignalsForLastBar, type OHLCVBar, SIGNAL_WINDOW_LEN } from '../signals.js';
 import type { BacktestExitReason, ClosedSimTrade } from '../types.js';
 import { filterOptionAUniverse } from '../universe-filter.js';
 
@@ -371,7 +371,9 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
     })();
 
     const rankBySym = new Map<string, number>();
-    rankedThisSession.forEach((row, i) => rankBySym.set(row.symbol, i + 1));
+    rankedThisSession.forEach((row, i) => {
+      rankBySym.set(row.symbol, i + 1);
+    });
 
     for (const p of [...open]) {
       const rk = rankBySym.get(p.symbol);

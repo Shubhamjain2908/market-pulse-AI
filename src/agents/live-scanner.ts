@@ -16,9 +16,9 @@ import { type Alert, upsertAlerts } from '../analysers/alerts.js';
 import { config } from '../config/env.js';
 import { loadWatchlist } from '../config/loaders.js';
 import {
-  type IntradayQuoteRow,
   getDb,
   getLatestHoldings,
+  type IntradayQuoteRow,
   upsertIntradayQuotes,
 } from '../db/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';

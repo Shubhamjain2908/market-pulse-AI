@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -7,7 +7,15 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "ignore": ["dist/**", "node_modules/**", "data/**", "coverage/**", "**/*.db", "new.cjs"]
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/node_modules",
+      "!**/data",
+      "!**/coverage",
+      "!**/*.db",
+      "!**/new.cjs"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -17,8 +25,12 @@
     "lineWidth": 100,
     "lineEnding": "lf"
   },
-  "organizeImports": {
-    "enabled": true
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
   },
   "linter": {
     "enabled": true,
@@ -30,8 +42,13 @@
         "useNodejsImportProtocol": "error"
       },
       "suspicious": {
-        "noConsoleLog": "off",
-        "noExplicitAny": "error"
+        "noExplicitAny": "error",
+        "noConsole": {
+          "level": "off",
+          "options": {
+            "allow": ["log"]
+          }
+        }
       },
       "correctness": {
         "noUnusedVariables": "warn",

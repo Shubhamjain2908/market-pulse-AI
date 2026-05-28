@@ -4,7 +4,7 @@
  * The base `schema.sql` is treated as migration #0001 and runs on first init.
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Database as DatabaseType } from 'better-sqlite3';

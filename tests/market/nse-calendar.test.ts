@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   getHolidayName,
   getMarketClosure,
-  isWeekendIst,
   istWeekdaySun0,
+  isWeekendIst,
 } from '../../src/market/nse-calendar.js';
 
 describe('nse-calendar', () => {

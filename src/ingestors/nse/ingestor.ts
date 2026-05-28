@@ -19,8 +19,8 @@ import { RATE_LIMITS } from '../../constants.js';
 import { child } from '../../logger.js';
 import type { FiiDiiRow, RawQuote } from '../../types/domain.js';
 import { isoDateIst } from '../base/dates.js';
-import { type HttpClient, createHttpClient } from '../base/http-client.js';
-import type { IngestResult, Ingestor, IngestorCapability, IngestorContext } from '../types.js';
+import { createHttpClient, type HttpClient } from '../base/http-client.js';
+import type { Ingestor, IngestorCapability, IngestorContext, IngestResult } from '../types.js';
 import { primeNseCookies } from './cookie-jar.js';
 import type { NseFiiDiiRow, NseQuoteResponse } from './types.js';
 

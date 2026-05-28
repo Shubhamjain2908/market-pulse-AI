@@ -11,8 +11,8 @@
  * commas, units and leading/trailing whitespace.
  */
 
-import { load } from 'cheerio';
 import type { CheerioAPI } from 'cheerio';
+import { load } from 'cheerio';
 import { child } from '../../logger.js';
 import type { Fundamentals } from '../../types/domain.js';
 import { isoDateIst } from '../base/dates.js';

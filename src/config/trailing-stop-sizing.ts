@@ -3,7 +3,7 @@
  * Backtest fallbacks in `position.ts` mirror these values when sweep opts omit overrides.
  */
 
-import { type MomentumConfig, loadMomentumConfig } from './loaders.js';
+import { loadMomentumConfig, type MomentumConfig } from './loaders.js';
 
 export interface TrailingStopSizing {
   initialMultiplier: number;

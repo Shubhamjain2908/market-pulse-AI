@@ -24,7 +24,7 @@ import { loadScreens, loadWatchlist } from '../config/loaders.js';
 import { getDb } from '../db/index.js';
 import { child } from '../logger.js';
 import type { ScreenDefinition } from '../types/domain.js';
-import { type AggregateMetrics, type Bar, type Trade, aggregate, buildTrade } from './metrics.js';
+import { type AggregateMetrics, aggregate, type Bar, buildTrade, type Trade } from './metrics.js';
 
 const log = child({ component: 'backtest-harness' });
 

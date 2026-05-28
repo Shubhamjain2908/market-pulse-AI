@@ -6,8 +6,8 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { getDb } from '../db/connection.js';
 import {
-  type InsertRegimeRowInput,
   getTodayRegime,
+  type InsertRegimeRowInput,
   insertRegimeRow,
 } from '../db/regime-queries.js';
 import { computeRegimeSignals } from '../enrichers/regime-signals.js';

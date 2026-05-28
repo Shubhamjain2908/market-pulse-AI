@@ -11,10 +11,10 @@ import { config } from '../config/env.js';
 import { loadWatchlist } from '../config/loaders.js';
 import { getDb, getLatestHoldings, isStrategyAllowed } from '../db/index.js';
 import {
-  type StoredThesis,
-  type UpsertThesisRow,
   getDistinctOpenPaperTradeSymbols,
   getThesesForDate,
+  type StoredThesis,
+  type UpsertThesisRow,
   upsertThesis,
 } from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';

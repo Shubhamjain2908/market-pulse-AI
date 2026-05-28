@@ -6,9 +6,9 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 
 import { NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
 import {
+  buildRegimeProxyMapForOptionAWindow,
   type OptionARegimeSource,
   type RegimeProxyMap,
-  buildRegimeProxyMapForOptionAWindow,
 } from './regime-proxy.js';
 import { runAiPickBacktest } from './strategies/ai-pick.js';
 import { runMomentumMfBacktest } from './strategies/momentum-mf.js';

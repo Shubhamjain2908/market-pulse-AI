@@ -7,10 +7,10 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { PortfolioSchema, ScreenDefinitionSchema } from '../types/domain.js';
 import type { Portfolio, ScreenDefinition } from '../types/domain.js';
-import { RegimeSchema, StrategyGatesFileSchema } from '../types/regime.js';
+import { PortfolioSchema, ScreenDefinitionSchema } from '../types/domain.js';
 import type { StrategyGatesFile } from '../types/regime.js';
+import { RegimeSchema, StrategyGatesFileSchema } from '../types/regime.js';
 
 const cache = new Map<string, unknown>();
 

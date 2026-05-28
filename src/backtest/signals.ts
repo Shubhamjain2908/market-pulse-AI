@@ -3,9 +3,9 @@
  */
 
 import {
-  type Bar as OhlcvBar,
   atr,
   fiftyTwoWeek,
+  type Bar as OhlcvBar,
   rsi,
   sma,
   volumeRatio,

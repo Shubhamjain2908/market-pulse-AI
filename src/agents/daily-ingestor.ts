@@ -11,9 +11,9 @@ import { config } from '../config/env.js';
 import { getDb, insertNews, upsertFiiDii, upsertFundamentals, upsertQuotes } from '../db/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import {
+  bootstrapIngestors,
   type IngestorCapability,
   type IngestorContext,
-  bootstrapIngestors,
   pickIngestor,
 } from '../ingestors/index.js';
 import { child } from '../logger.js';

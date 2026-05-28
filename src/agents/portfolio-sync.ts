@@ -13,7 +13,7 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { config } from '../config/env.js';
 import { loadPortfolio } from '../config/loaders.js';
-import { type PortfolioHoldingRow, getDb, upsertHoldings } from '../db/index.js';
+import { getDb, type PortfolioHoldingRow, upsertHoldings } from '../db/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { KiteApiError, KiteClient } from '../ingestors/kite/client.js';
 import { child } from '../logger.js';

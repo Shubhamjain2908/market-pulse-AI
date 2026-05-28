@@ -3,7 +3,7 @@
  */
 
 import type { OptionABacktestRunInsert } from '../db/backtest-queries.js';
-import { type Trade, aggregate } from './metrics.js';
+import { aggregate, type Trade } from './metrics.js';
 import type { ClosedSimTrade } from './types.js';
 
 function toMetricTrades(trades: ClosedSimTrade[]): Trade[] {

@@ -16,7 +16,7 @@ import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 import type { ScreenDefinition, ScreenResult } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
-import { type ScreenEvaluation, evaluateScreen, toScreenResult } from './evaluator.js';
+import { evaluateScreen, type ScreenEvaluation, toScreenResult } from './evaluator.js';
 import { DbSignalProvider, type SignalProvider } from './signal-provider.js';
 
 const log = child({ component: 'screen-engine' });

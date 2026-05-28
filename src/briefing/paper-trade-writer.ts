@@ -3,7 +3,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
-import { type PaperTradeHorizon, insertPaperTradeIfAbsent } from '../db/queries.js';
+import { insertPaperTradeIfAbsent, type PaperTradeHorizon } from '../db/queries.js';
 import { child } from '../logger.js';
 import { parseInrPriceMidpoint } from './paper-trade-parsers.js';
 import type { PortfolioSummary, ThesisCard } from './template.js';

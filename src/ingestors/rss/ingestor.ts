@@ -16,8 +16,8 @@ import Parser from 'rss-parser';
 import { RATE_LIMITS } from '../../constants.js';
 import { child } from '../../logger.js';
 import type { NewsItem } from '../../types/domain.js';
-import { type HttpClient, createHttpClient } from '../base/http-client.js';
-import type { IngestResult, Ingestor, IngestorCapability, IngestorContext } from '../types.js';
+import { createHttpClient, type HttpClient } from '../base/http-client.js';
+import type { Ingestor, IngestorCapability, IngestorContext, IngestResult } from '../types.js';
 import { DEFAULT_FEEDS, type FeedDefinition } from './feeds.js';
 
 const log = child({ component: 'rss-ingestor' });

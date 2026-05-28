@@ -15,7 +15,7 @@ import {
   normalizePersistedTrailingMult,
   trailingStopSizingFromMomentumConfig,
 } from '../config/trailing-stop-sizing.js';
-import { type PaperTradeRow, closePaperTrade, getOpenPaperTrades } from '../db/queries.js';
+import { closePaperTrade, getOpenPaperTrades, type PaperTradeRow } from '../db/queries.js';
 import {
   getAtr14,
   getLastEvaluatedBarDate,
