@@ -1,0 +1,39 @@
+---
+description: Automatically groups modified files, writes semantic commit messages, and applies user git configuration during staging and committing.
+globs: *
+alwaysApply: true
+---
+
+# Git and Commit Workflow Guidelines
+
+## 1. User Identity & Git Configuration
+Whenever performing or preparing git commits, always ensure the following author details are respected (override or append to git environment flags if invoking shell scripts/Composer tasks):
+- **Username**: shubhamjain2908
+- **Email**: shubhamjain2908@gmail.com
+
+## 2. File Grouping Strategy
+Before generating a commit message or proposing a commit, analyze changed files and group them logically. Do not lump unrelated changes together. Group by:
+- **Scope**: Keep feature additions (`src/components`), backend logic (`src/api`), and configurations (`package.json`) distinct.
+- **Atomic Commits**: If a task spans multiple features, break them into smaller, independent, self-contained commits.
+
+## 3. Commit Message Standards
+When generating commit messages (such as when the user clicks the AI magic wand icon or uses Composer to commit), strictly adhere to the **Conventional Commits** specification:
+
+### Format:
+`<type>(<scope>): <short description in present tense>`
+`[blank line]`
+`[optional body explaining the WHY, not the WHAT]`
+
+### Allowed Types:
+- `feat`: A new feature
+- `fix`: A bug fix
+- `docs`: Documentation only changes
+- `style`: Changes that do not affect the meaning of the code (white-space, formatting)
+- `refactor`: A code change that neither fixes a bug nor adds a feature
+- `test`: Adding missing tests or correcting existing tests
+- `chore`: Changes to the build process or auxiliary tools/libraries
+
+### Rules:
+- Use lowercase for the entire header line.
+- Do not end the subject line with a period.
+- Limit the first line to 50 characters.
