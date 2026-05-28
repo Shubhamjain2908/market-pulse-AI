@@ -315,4 +315,61 @@ describe('thesis generator', () => {
     expect(stored).toHaveLength(1);
     expect(stored[0]?.confidence).toBe(5);
   });
+
+  it('clamps confidenceScore to 6 for catalyst_entry context', async () => {
+    db.prepare(
+      `
+      INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+      VALUES ('RELIANCE', ?, 'catalyst_entry', 1, ?)
+    `,
+    ).run(
+      today,
+      JSON.stringify({
+        expected_earnings_date: '2026-05-08',
+        days_to_earnings: 8,
+        pct_from_sma50: 2.5,
+        pct_from_52w_low: 10.2,
+        profit_growth_yoy: 0.21,
+        recent_sentiment_avg: 0.2,
+        recent_news_count: 2,
+      }),
+    );
+    db.prepare(
+      `
+      INSERT INTO news (symbol, headline, source, url, published_at, sentiment)
+      VALUES
+        ('RELIANCE', 'Catalyst headline 1', 'test', 'https://example.com/c1', datetime(?, '-1 days'), 0.2),
+        ('RELIANCE', 'Catalyst headline 2', 'test', 'https://example.com/c2', datetime(?, '-2 days'), 0.1)
+    `,
+    ).run(today, today);
+
+    const hiConfLlm: LlmProvider = {
+      name: 'stub',
+      model: 'stub',
+      async generateText(): Promise<never> {
+        throw new Error('unused');
+      },
+      async generateJson<T>(): Promise<LlmJsonResult<T>> {
+        const raw = JSON.stringify({
+          symbol: 'RELIANCE',
+          thesis: 'Catalyst thesis line that satisfies minimum schema length requirements.',
+          bullCase: ['Bull'],
+          bearCase: ['Bear'],
+          entryZone: '₹2,900',
+          stopLoss: '₹2,800',
+          target: '₹3,100',
+          timeHorizon: 'medium',
+          confidenceScore: 9,
+          triggerScreen: 'anything',
+        });
+        const data = parseAndValidate(raw, ThesisSchema) as T;
+        return { data, raw, model: 'stub', usage: { durationMs: 1 } };
+      },
+    };
+
+    await generateTheses({ date: today, watchlist: ['RELIANCE'], maxTheses: 1 }, db, hiConfLlm);
+    const stored = getThesesForDate(today, db);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.confidence).toBe(6);
+  });
 });

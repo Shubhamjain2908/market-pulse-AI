@@ -38,6 +38,13 @@
       ]
     },
     {
+      "name": "catalyst_entry",
+      "label": "Catalyst-Driven Entry",
+      "description": "Event-driven pre-earnings entry sleeve. Runtime matching is handled by the catalyst screener dispatcher.",
+      "timeHorizon": "short",
+      "criteria": [{ "signal": "close", "op": "gt", "value": 0 }]
+    },
+    {
       "name": "fii_accumulation",
       "label": "FII Accumulation",
       "description": "Stocks holding above their long-term trend while FIIs have been net buyers in the cash segment for several consecutive sessions.",

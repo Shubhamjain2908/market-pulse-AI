@@ -1,13 +1,25 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { loadEtfExclusions, loadScreens, loadWatchlist } from '../config/loaders.js';
-import { getDb, getSizeMultiplier, isStrategyAllowed } from '../db/index.js';
+import {
+  getDb,
+  getDistinctOpenPaperTradeSymbols,
+  getLatestHoldings,
+  getSizeMultiplier,
+  isStrategyAllowed,
+} from '../db/index.js';
 import { getQualityGarpFundamentals, upsertScreenResults } from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
+import { child } from '../logger.js';
 import type { ScreenDefinition, ScreenResult } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
+import { runCatalystScreener } from './catalyst-screener.js';
 import type { ScreenEngineResult } from './engine.js';
 import { runScreenEngine } from './engine.js';
 import { DbSignalProvider, type SignalProvider } from './signal-provider.js';
+
+const log = child({ component: 'stock-screener-analyser' });
+const QUALITY_GARP_SCREEN = 'quality_garp';
+const CATALYST_ENTRY_SCREEN = 'catalyst_entry';
 
 export interface StockScreenerOptions {
   date?: string;
@@ -18,8 +30,6 @@ export interface StockScreenerOptions {
   persist?: boolean;
   regime?: Regime;
 }
-
-const QUALITY_GARP_SCREEN = 'quality_garp';
 
 interface QualityGarpMatchedCriteria {
   [key: string]: unknown;
@@ -62,9 +72,17 @@ export function runStockScreenAnalyser(
 
   const provider = opts.provider ?? new DbSignalProvider(db);
   const persist = opts.persist ?? true;
+  const etfExclusions = new Set(loadEtfExclusions().map((s) => s.toUpperCase()));
+  const alreadyOwned = new Set([
+    ...getLatestHoldings(db).map((h) => h.symbol.toUpperCase()),
+    ...getDistinctOpenPaperTradeSymbols(db).map((s) => s.toUpperCase()),
+  ]);
 
   const qualityScreen = screens.find((s) => s.name === QUALITY_GARP_SCREEN);
-  const dslScreens = screens.filter((s) => s.name !== QUALITY_GARP_SCREEN);
+  const catalystScreen = screens.find((s) => s.name === CATALYST_ENTRY_SCREEN);
+  const dslScreens = screens.filter(
+    (s) => s.name !== QUALITY_GARP_SCREEN && s.name !== CATALYST_ENTRY_SCREEN,
+  );
 
   const matchesByScreen: Record<string, number> = {};
   const partialByScreen: Record<string, number> = {};
@@ -91,13 +109,30 @@ export function runStockScreenAnalyser(
 
   if (qualityScreen) {
     const qualityResult = runQualityGarpScreen(
-      { date, symbols, provider, persist, regime: opts.regime },
+      { date, symbols, provider, persist, regime: opts.regime, etfExclusions, alreadyOwned },
       db,
     );
     matchesByScreen[QUALITY_GARP_SCREEN] = qualityResult.matches;
     partialByScreen[QUALITY_GARP_SCREEN] = qualityResult.partial;
     evaluations.push(...qualityResult.evaluations);
     screensApplied.push(QUALITY_GARP_SCREEN);
+  }
+
+  if (catalystScreen) {
+    const catalystResult = runCatalystEntryScreen(
+      {
+        date,
+        persist,
+        regime: opts.regime,
+        etfExclusions,
+        alreadyOwned,
+      },
+      db,
+    );
+    matchesByScreen[CATALYST_ENTRY_SCREEN] = catalystResult.matches;
+    partialByScreen[CATALYST_ENTRY_SCREEN] = catalystResult.partial;
+    evaluations.push(...catalystResult.evaluations);
+    screensApplied.push(CATALYST_ENTRY_SCREEN);
   }
 
   return {
@@ -116,16 +151,17 @@ function runQualityGarpScreen(
     provider: SignalProvider;
     persist: boolean;
     regime?: Regime;
+    etfExclusions: Set<string>;
+    alreadyOwned: Set<string>;
   },
   db: DatabaseType,
 ): { matches: number; partial: number; evaluations: ScreenEngineResult['evaluations'] } {
-  const { date, symbols, provider, persist, regime } = opts;
+  const { date, symbols, provider, persist, regime, etfExclusions } = opts;
 
   if (regime != null && !isStrategyAllowed(QUALITY_GARP_SCREEN, regime, db)) {
     return { matches: 0, partial: 0, evaluations: [] };
   }
 
-  const etfExclusions = new Set(loadEtfExclusions());
   const fundamentals = getQualityGarpFundamentals(date, db);
   const fundamentalsBySymbol = new Map(fundamentals.map((row) => [row.symbol.toUpperCase(), row]));
 
@@ -187,6 +223,63 @@ function runQualityGarpScreen(
     partial: 0,
     evaluations,
   };
+}
+
+function runCatalystEntryScreen(
+  opts: {
+    date: string;
+    persist: boolean;
+    regime?: Regime;
+    etfExclusions: Set<string>;
+    alreadyOwned: Set<string>;
+  },
+  db: DatabaseType,
+): { matches: number; partial: number; evaluations: ScreenEngineResult['evaluations'] } {
+  const { date, persist, regime, etfExclusions, alreadyOwned } = opts;
+
+  if (regime != null && !isStrategyAllowed(CATALYST_ENTRY_SCREEN, regime, db)) {
+    log.info({ screen: CATALYST_ENTRY_SCREEN, regime }, 'catalyst_entry gated by regime');
+    return { matches: 0, partial: 0, evaluations: [] };
+  }
+
+  // IMPORTANT: `date` is derived upstream from isoDateIst() and passed through unchanged.
+  const candidates = runCatalystScreener(db, date, alreadyOwned, etfExclusions);
+  const evaluations: ScreenEngineResult['evaluations'] = candidates.map((candidate) => ({
+    symbol: candidate.symbol,
+    date,
+    screenName: CATALYST_ENTRY_SCREEN,
+    criteria: [],
+    matchedCount: 1,
+    totalCriteria: 1,
+    score: 1,
+    passed: true,
+  }));
+  const results: ScreenResult[] = candidates.map((candidate) => {
+    const matchedCriteria =
+      regime == null
+        ? { ...candidate }
+        : {
+            ...candidate,
+            __regime_meta: {
+              regime,
+              sizeMultiplier: getSizeMultiplier(CATALYST_ENTRY_SCREEN, regime, db),
+              strategyId: CATALYST_ENTRY_SCREEN,
+            },
+          };
+    return {
+      symbol: candidate.symbol,
+      date,
+      screenName: CATALYST_ENTRY_SCREEN,
+      score: 1,
+      matchedCriteria,
+    };
+  });
+
+  if (persist) {
+    upsertScreenResults(results, db);
+  }
+
+  return { matches: results.length, partial: 0, evaluations };
 }
 
 function evaluateQualityGarpSymbol(

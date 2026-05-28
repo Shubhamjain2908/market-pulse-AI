@@ -480,9 +480,10 @@ export function upsertSymbolMetadata(
 // Paper trades (forward-testing ledger)
 // ---------------------------------------------------------------------------
 
-export type PaperTradeSignalType = 'AI_PICK' | 'PORTFOLIO_ADD' | 'momentum_mf';
+export type PaperTradeSignalType = 'AI_PICK' | 'PORTFOLIO_ADD' | 'momentum_mf' | 'catalyst_entry';
 export type PaperTradeStatus = 'OPEN' | 'CLOSED_WIN' | 'CLOSED_LOSS' | 'CLOSED_TIME';
 export type PaperTradeHorizon = 'short' | 'medium' | 'long';
+export type PaperTradeStopType = 'trailing' | 'fixed';
 
 export interface PaperTradeInsertRow {
   symbol: string;
@@ -493,6 +494,9 @@ export interface PaperTradeInsertRow {
   target: number;
   timeHorizon: PaperTradeHorizon;
   maxHoldDays: number;
+  stopType?: PaperTradeStopType;
+  trailingMultiplier?: number;
+  atr14AtEntry?: number | null;
   notes?: string | null;
 }
 
@@ -515,6 +519,7 @@ export interface PaperTradeRow {
   highestCloseSinceEntry: number | null;
   atr14AtEntry: number | null;
   trailingMultiplier: number | null;
+  stopType: PaperTradeStopType;
   stopRaisedToday: number | null;
   exitReason: ExitReason | null;
 }
@@ -528,10 +533,10 @@ export function insertPaperTradeIfAbsent(
     .prepare(`
     INSERT OR IGNORE INTO paper_trades (
       symbol, signal_type, source_date, entry_price, stop_loss, target,
-      time_horizon, max_hold_days, status, notes
+      time_horizon, max_hold_days, stop_type, trailing_multiplier, atr14_at_entry, status, notes
     ) VALUES (
       @symbol, @signalType, @sourceDate, @entryPrice, @stopLoss, @target,
-      @timeHorizon, @maxHoldDays, 'OPEN', @notes
+      @timeHorizon, @maxHoldDays, @stopType, @trailingMultiplier, @atr14AtEntry, 'OPEN', @notes
     )
   `)
     .run({
@@ -543,6 +548,9 @@ export function insertPaperTradeIfAbsent(
       target: row.target,
       timeHorizon: row.timeHorizon,
       maxHoldDays: row.maxHoldDays,
+      stopType: row.stopType ?? 'trailing',
+      trailingMultiplier: row.trailingMultiplier ?? 2,
+      atr14AtEntry: row.atr14AtEntry ?? null,
       notes: row.notes ?? null,
     });
   return result.changes > 0;
@@ -560,6 +568,7 @@ export function getOpenPaperTrades(db: DatabaseType = getDb()): PaperTradeRow[] 
            highest_close_since_entry AS highestCloseSinceEntry,
            atr14_at_entry AS atr14AtEntry,
            trailing_multiplier AS trailingMultiplier,
+           stop_type AS stopType,
            stop_raised_today AS stopRaisedToday,
            exit_reason AS exitReason
     FROM paper_trades
@@ -586,6 +595,7 @@ export function getOpenPaperTrades(db: DatabaseType = getDb()): PaperTradeRow[] 
     highestCloseSinceEntry: number | null;
     atr14AtEntry: number | null;
     trailingMultiplier: number | null;
+    stopType: PaperTradeStopType;
     stopRaisedToday: number | null;
     exitReason: ExitReason | null;
   }>;
@@ -624,6 +634,7 @@ export function getOpenPaperTradesForSignal(
            highest_close_since_entry AS highestCloseSinceEntry,
            atr14_at_entry AS atr14AtEntry,
            trailing_multiplier AS trailingMultiplier,
+           stop_type AS stopType,
            stop_raised_today AS stopRaisedToday,
            exit_reason AS exitReason
     FROM paper_trades
@@ -650,6 +661,7 @@ export function getOpenPaperTradesForSignal(
     highestCloseSinceEntry: number | null;
     atr14AtEntry: number | null;
     trailingMultiplier: number | null;
+    stopType: PaperTradeStopType;
     stopRaisedToday: number | null;
     exitReason: ExitReason | null;
   }>;

@@ -264,7 +264,7 @@ CREATE TABLE paper_trades (
   pnl_pct        REAL,
   notes          TEXT,
   created_at     TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
-, highest_close_since_entry REAL, atr14_at_entry REAL, trailing_multiplier REAL DEFAULT 2.0, stop_raised_today INTEGER DEFAULT 0, exit_reason TEXT);
+, highest_close_since_entry REAL, atr14_at_entry REAL, trailing_multiplier REAL DEFAULT 2.0, stop_raised_today INTEGER DEFAULT 0, exit_reason TEXT, stop_type TEXT NOT NULL DEFAULT 'trailing');
 CREATE UNIQUE INDEX uq_paper_trades_signal_day
   ON paper_trades(symbol, signal_type, source_date);
 CREATE INDEX idx_paper_trades_status ON paper_trades(status);

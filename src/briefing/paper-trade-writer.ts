@@ -24,6 +24,41 @@ function isValidLongLevel(entry: number, stop: number, target: number): boolean 
   return true;
 }
 
+interface CatalystScreenCriteria {
+  days_to_earnings: number;
+  atr_14: number | null;
+}
+
+function getCatalystScreenCriteria(
+  symbol: string,
+  sourceDate: string,
+  db: DatabaseType,
+): CatalystScreenCriteria | null {
+  const row = db
+    .prepare(
+      `
+      SELECT matched_criteria AS matchedCriteria
+      FROM screens
+      WHERE symbol = ? AND date = ? AND screen_name = 'catalyst_entry'
+      LIMIT 1
+    `,
+    )
+    .get(symbol, sourceDate) as { matchedCriteria: string } | undefined;
+  if (!row) return null;
+  try {
+    const parsed = JSON.parse(row.matchedCriteria) as Record<string, unknown>;
+    const daysToEarnings = parsed.days_to_earnings;
+    if (typeof daysToEarnings !== 'number' || !Number.isFinite(daysToEarnings)) {
+      return null;
+    }
+    const atr14 =
+      typeof parsed.atr_14 === 'number' && Number.isFinite(parsed.atr_14) ? parsed.atr_14 : null;
+    return { days_to_earnings: daysToEarnings, atr_14: atr14 };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Idempotent: one row per (symbol, signal_type, source_date). Safe to call on every brief run.
  */
@@ -32,9 +67,10 @@ export function recordPaperTrades(
   theses: ThesisCard[],
   portfolio: PortfolioSummary | undefined,
   db: DatabaseType,
-): { insertedAiPick: number; insertedPortfolioAdd: number } {
+): { insertedAiPick: number; insertedPortfolioAdd: number; insertedCatalystEntry: number } {
   let insertedAiPick = 0;
   let insertedPortfolioAdd = 0;
+  let insertedCatalystEntry = 0;
 
   for (const t of theses) {
     const entry = parseInrPriceMidpoint(t.entryZone);
@@ -51,6 +87,29 @@ export function recordPaperTrades(
       );
       continue;
     }
+    const catalystCriteria = getCatalystScreenCriteria(t.symbol, sourceDate, db);
+    if (catalystCriteria) {
+      const maxHoldDays = Math.max(1, Math.trunc(catalystCriteria.days_to_earnings) + 2);
+      const ok = insertPaperTradeIfAbsent(
+        {
+          symbol: t.symbol,
+          signalType: 'catalyst_entry',
+          sourceDate,
+          entryPrice: entry,
+          stopLoss: entry * 0.96,
+          target: entry * 1.08,
+          timeHorizon: 'short',
+          maxHoldDays,
+          stopType: 'fixed',
+          trailingMultiplier: 0,
+          atr14AtEntry: catalystCriteria.atr_14,
+        },
+        db,
+      );
+      if (ok) insertedCatalystEntry++;
+      continue;
+    }
+
     const { horizon, maxHoldDays } = horizonToDays(t.timeHorizon ?? 'medium');
     const ok = insertPaperTradeIfAbsent(
       {
@@ -102,5 +161,5 @@ export function recordPaperTrades(
     }
   }
 
-  return { insertedAiPick, insertedPortfolioAdd };
+  return { insertedAiPick, insertedPortfolioAdd, insertedCatalystEntry };
 }

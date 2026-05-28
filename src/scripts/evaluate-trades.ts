@@ -129,6 +129,7 @@ export function evaluateOnePaperTrade(
   asOf: string,
   opts?: EvaluatePaperTradesOptions,
 ): 'CLOSED_WIN' | 'CLOSED_LOSS' | 'CLOSED_TIME' | 'no_data' | 'still_open' {
+  const isFixedStop = trade.stopType === 'fixed';
   const lastEvaluated = getLastEvaluatedBarDate(trade.id, db);
   const walkFrom = lastEvaluated ?? trade.sourceDate;
   const bars = getSymbolBars(db, trade.symbol, walkFrom, asOf);
@@ -155,7 +156,8 @@ export function evaluateOnePaperTrade(
     highestClose ?? trade.entryPrice,
   );
 
-  let initialSetupComplete = trade.atr14AtEntry != null || trade.highestCloseSinceEntry != null;
+  let initialSetupComplete =
+    isFixedStop || trade.atr14AtEntry != null || trade.highestCloseSinceEntry != null;
 
   for (let i = 0; i < bars.length; i++) {
     const bar = bars[i];
@@ -164,13 +166,15 @@ export function evaluateOnePaperTrade(
     const stopAtBarStart = stopLoss;
 
     const maxCloseSinceEntry =
-      highestClose === null ? bar.close : Math.max(highestClose, bar.close);
-    highestClose = maxCloseSinceEntry;
-    lastTrailUnrealisedPct = unrealisedPctFromHigh(trade.entryPrice, maxCloseSinceEntry);
+      isFixedStop || highestClose === null ? bar.close : Math.max(highestClose, bar.close);
+    if (!isFixedStop) {
+      highestClose = maxCloseSinceEntry;
+      lastTrailUnrealisedPct = unrealisedPctFromHigh(trade.entryPrice, maxCloseSinceEntry);
+    }
 
     let skipTrailThisBar = false;
 
-    if (!initialSetupComplete) {
+    if (!isFixedStop && !initialSetupComplete) {
       const atrOnSource = getAtr14(trade.symbol, trade.sourceDate, db);
       stopLoss = applyDay1InitialStop(
         trade.entryPrice,
@@ -185,7 +189,7 @@ export function evaluateOnePaperTrade(
       lastTrailCandidate = stopLoss;
     }
 
-    if (initialSetupComplete && !skipTrailThisBar) {
+    if (!isFixedStop && initialSetupComplete && !skipTrailThisBar) {
       const atrToday = getAtr14(trade.symbol, bar.date, db);
       if (atrToday !== undefined) {
         const prevStop = stopLoss;
@@ -259,14 +263,14 @@ export function evaluateOnePaperTrade(
     const elapsed = dayIndex.get(bar.date) ?? 0;
 
     const raisedForBriefingLatch =
-      stopLoss > stopAtBarStart && bar.date === asOf && !skipTrailThisBar;
+      !isFixedStop && stopLoss > stopAtBarStart && bar.date === asOf && !skipTrailThisBar;
 
     const persistOpenRow = (): void => {
       patchPaperTradeTrailing(
         trade.id,
         {
           stopLoss,
-          highestCloseSinceEntry: maxCloseSinceEntry,
+          highestCloseSinceEntry: isFixedStop ? undefined : maxCloseSinceEntry,
           atr14AtEntry: atr14AtEntryStored,
           trailingMultiplier: trailingMult,
           stopRaisedToday: raisedForBriefingLatch ? 1 : 0,
@@ -277,6 +281,12 @@ export function evaluateOnePaperTrade(
 
     const logStoppedOut = (logDate: string, notes: string | null, exitReason: ExitReason): void => {
       const exitPx = exitPriceWhenStopHit(bar, stopLoss);
+      if (isFixedStop) {
+        const pnl = pnlPctLong(trade.entryPrice, exitPx);
+        const status = pnl >= 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
+        closePaperTrade(trade.id, status, logDate, exitPx, pnl, db, notes ?? null, exitReason);
+        return;
+      }
       const gap = bar.open < stopLoss ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
       // STOPPED_OUT row: new_stop is booked exit price (R3: gap-through uses bar.open).
       const logId = insertStopLog(
@@ -305,6 +315,20 @@ export function evaluateOnePaperTrade(
 
     if (!skipStopTargetThisBar && hitSl && hitTg) {
       const exitPx = exitPriceWhenStopHit(bar, stopLoss);
+      if (isFixedStop) {
+        const pnl = pnlPctLong(trade.entryPrice, exitPx);
+        closePaperTrade(
+          trade.id,
+          'CLOSED_LOSS',
+          bar.date,
+          exitPx,
+          pnl,
+          db,
+          'same-day SL+TP: counted as loss (conservative)',
+          'INITIAL_STOP',
+        );
+        return 'CLOSED_LOSS';
+      }
       const gap = bar.open < stopLoss ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
       const logId = insertStopLog(
         {

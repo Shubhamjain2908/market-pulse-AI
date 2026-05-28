@@ -76,6 +76,13 @@ const QUALITY_GARP_THESIS_ADDENDUM = `QUALITY-GARP CONTEXT (only when the user m
 - If a momentum false-flag warning line is present, weight bearCase accordingly and keep confidenceScore ≤ 5.
 - Confidence calibration must stay aligned with guardrails: strong technical + fundamentals in 7-8 band; pure technical and weak fundamentals in 3-4 band.`;
 
+const CATALYST_ENTRY_THESIS_ADDENDUM = `CATALYST ENTRY CONTEXT (only when the user message contains "=== CATALYST EVENT CONTEXT ==="):
+- Maximum confidenceScore is 6/10; no analyst estimate revision feed is available, so never infer consensus revisions from price action alone.
+- Your thesis must include exactly 2 sentences: (1) what the market likely expects from this earnings event based on recent news tone, (2) whether setup is consensus or contrarian.
+- Use stopLoss = entry × 0.96 and target = entry × 1.08.
+- Use timeHorizon = "short".
+- Set triggerScreen to "catalyst_entry".`;
+
 const MOMENTUM_CONTEXT_GATE_NAMES = new Set(['mom_rank', 'mom_composite_score', 'mom_12_1_return']);
 
 /**
@@ -132,6 +139,17 @@ interface QualityGarpThesisContext {
   peg: number | null;
   sector: string | null;
   falseMomentumFlag: boolean;
+}
+
+interface CatalystEntryThesisContext {
+  expectedEarningsDate: string;
+  daysToEarnings: number;
+  pctFromSma50: number;
+  pctFrom52wLow: number | null;
+  profitGrowthYoY: number | null;
+  recentSentimentAvg: number | null;
+  recentNewsCount: number;
+  headlines: string[];
 }
 
 function getQualityGarpThesisContext(
@@ -200,6 +218,111 @@ function buildQualityGarpContextAppend(
     lines.push(
       '- Warning: momentum false flag is set (high price momentum with negative profit growth). Weight bear case accordingly.',
     );
+  }
+  return lines.join('\n');
+}
+
+function getCatalystEntryThesisContext(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+): CatalystEntryThesisContext | null {
+  const row = db
+    .prepare(
+      `
+      SELECT matched_criteria AS matchedCriteria
+      FROM screens
+      WHERE symbol = ? AND date = ? AND screen_name = 'catalyst_entry'
+      LIMIT 1
+    `,
+    )
+    .get(symbol, date) as { matchedCriteria: string } | undefined;
+  if (!row) return null;
+
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    parsed = JSON.parse(row.matchedCriteria) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (!parsed) return null;
+
+  const expectedEarningsDate = parsed.expected_earnings_date;
+  const daysToEarnings = parsed.days_to_earnings;
+  const pctFromSma50 = parsed.pct_from_sma50;
+  if (
+    typeof expectedEarningsDate !== 'string' ||
+    typeof daysToEarnings !== 'number' ||
+    typeof pctFromSma50 !== 'number'
+  ) {
+    return null;
+  }
+
+  const pctFrom52wLow =
+    typeof parsed.pct_from_52w_low === 'number' && Number.isFinite(parsed.pct_from_52w_low)
+      ? parsed.pct_from_52w_low
+      : null;
+  const profitGrowthYoY =
+    typeof parsed.profit_growth_yoy === 'number' && Number.isFinite(parsed.profit_growth_yoy)
+      ? parsed.profit_growth_yoy
+      : null;
+  const recentSentimentAvg =
+    typeof parsed.recent_sentiment_avg === 'number' && Number.isFinite(parsed.recent_sentiment_avg)
+      ? parsed.recent_sentiment_avg
+      : null;
+  const recentNewsCount =
+    typeof parsed.recent_news_count === 'number' && Number.isFinite(parsed.recent_news_count)
+      ? parsed.recent_news_count
+      : 0;
+
+  const headlines = (
+    db
+      .prepare(
+        `
+      SELECT headline
+      FROM news
+      WHERE symbol = ?
+        AND published_at >= datetime(?, '-7 days')
+      ORDER BY published_at DESC
+      LIMIT 2
+    `,
+      )
+      .all(symbol, date) as Array<{ headline: string }>
+  ).map((h) => h.headline);
+
+  return {
+    expectedEarningsDate,
+    daysToEarnings,
+    pctFromSma50,
+    pctFrom52wLow,
+    profitGrowthYoY,
+    recentSentimentAvg,
+    recentNewsCount,
+    headlines,
+  };
+}
+
+function buildCatalystEntryContextAppend(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+): string | null {
+  const ctx = getCatalystEntryThesisContext(symbol, date, db);
+  if (!ctx) return null;
+
+  const lines = [
+    '\n=== CATALYST EVENT CONTEXT ===',
+    `Earnings date: ${ctx.expectedEarningsDate} (${ctx.daysToEarnings} days away)`,
+    `Price vs SMA50: ${ctx.pctFromSma50}%`,
+    `Distance from 52W low: ${ctx.pctFrom52wLow ?? 'unavailable'}%`,
+    `Profit growth YoY: ${ctx.profitGrowthYoY ?? 'unavailable'}%`,
+    `Recent news (${ctx.recentNewsCount} items in last 7 days):`,
+    `  Avg sentiment: ${ctx.recentSentimentAvg ?? 'no recent news'}`,
+  ];
+  if (ctx.headlines.length === 0) {
+    lines.push('  Headlines: unavailable');
+  } else {
+    lines.push(`  Headlines: ${ctx.headlines.join(' | ')}`);
   }
   return lines.join('\n');
 }
@@ -297,10 +420,14 @@ export async function generateTheses(
       const context = buildStockContext(candidate.symbol, date, db);
       const momentumContext = hasMomentumThesisContext(candidate.symbol, date, db);
       const qualityGarpContext = buildQualityGarpContextAppend(candidate.symbol, date, db);
-      const contextWithScreen = qualityGarpContext ? `${context}\n${qualityGarpContext}` : context;
+      const catalystContext = buildCatalystEntryContextAppend(candidate.symbol, date, db);
+      const contextWithScreen = [context, qualityGarpContext, catalystContext]
+        .filter((part): part is string => part != null && part !== '')
+        .join('\n');
       const systemAddenda: string[] = [];
       if (momentumContext) systemAddenda.push(MOMENTUM_THESIS_ADDENDUM);
       if (qualityGarpContext) systemAddenda.push(QUALITY_GARP_THESIS_ADDENDUM);
+      if (catalystContext) systemAddenda.push(CATALYST_ENTRY_THESIS_ADDENDUM);
       const system =
         systemAddenda.length > 0
           ? `${THESIS_JSON_SYSTEM_PROMPT}\n\n${systemAddenda.join('\n\n')}`
@@ -319,6 +446,12 @@ export async function generateTheses(
         thesisOut = {
           ...thesisOut,
           confidenceScore: Math.min(thesisOut.confidenceScore, 5),
+        };
+      }
+      if (catalystContext) {
+        thesisOut = {
+          ...thesisOut,
+          confidenceScore: Math.min(thesisOut.confidenceScore, 6),
         };
       }
 

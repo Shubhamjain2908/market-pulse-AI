@@ -45,7 +45,7 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 | **Screen** | `src/analysers/stock-screener.ts` | Loads `config/screens.json`. Checks `regime_strategy_gate`. Writes passing symbols to `screens`. |
 | **AI Thesis** | `src/agents/thesis-generator.ts` | Per screen pass: sends technicals + fundamentals + news + regime context to LLM. Returns structured JSON. Skips symbols in live portfolio (`alreadyOwned`) and any symbol with an OPEN `paper_trades` row (any `signal_type`). |
 | **Portfolio review** | `src/agents/portfolio-sync.ts` + `portfolio-analyser.ts` | When AI is enabled and portfolio is not skipped: after thesis, optional Kite sync (earlier in the same run) feeds `portfolio_holdings`; analyser writes `portfolio_analysis` (full LLM, lite snapshot, or **stale-holdings placeholders** — see §4). |
-| **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs trailing-stop + SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). New bars only after the latest non-`STOPPED_OUT` `trailing_stop_log` row (exclusive `source_date` bound via `getSymbolBars`), so a raised persisted stop is not replayed against already-evaluated history. **Circuit breaker:** if `bar.open < 0.7 ×` prior session’s NSE `close` (`date < bar.date`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag. |
+| **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). `stop_type='trailing'` follows adaptive ATR trailing; `stop_type='fixed'` bypasses trailing math/logs and evaluates stops/targets at static levels. New bars only after the latest non-`STOPPED_OUT` `trailing_stop_log` row (exclusive `source_date` bound via `getSymbolBars`), so a raised persisted stop is not replayed against already-evaluated history. **Circuit breaker:** if `bar.open < 0.7 ×` prior session’s NSE `close` (`date < bar.date`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag. |
 | **Briefing** | `src/briefing/composer.ts` | Assembles HTML email + browser HTML. Two render paths: `renderEmailHtml()` (table-based, inline CSS, 600px, Gmail-safe) and `renderBrowserHtml()` (full CSS variables, beautiful UI). Delivered via Nodemailer → Gmail SMTP. |
 
 NOTE: Screener.in fundamentals ingest is not currently operational. fundamentals table is empty pending backfill build (see §3.5).
@@ -117,10 +117,11 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 
 ### 3.3 Paper Trades Ledger
 
-**Three signal types currently active:**
+**Signal types currently active:**
 - `AI_PICK` — from thesis generator on screened candidates
 - `PORTFOLIO_ADD` — from portfolio analyser ADD recommendations
 - `momentum_mf` — from Sunday momentum rebalance
+- `catalyst_entry` — from catalyst-driven screen hits (fixed stop)
 
 **Unique constraint:** `UNIQUE INDEX uq_paper_trades_signal_day ON paper_trades(symbol, signal_type, source_date)`
 
@@ -191,7 +192,7 @@ Build scope:
 | **Averaging-down disclosure** | If position at loss: state (a) % gain to breakeven, (b) whether stop allows recovery room | Portfolio analyser system prompt Rule 8 |
 | **No macro hallucination** | No FII/DII/USD/crude in stock-specific thesis unless directly tied to that stock's economics | All agent prompts |
 | **No financial hallucination** | Never invoke data not present in provided context | All agent prompts |
-| **Confidence range** | Full 1–10 scale. Strong tech + fundamentals = 7–8. Pure tech, weak fundamentals = 3–4. False momentum flag = max 5 | Thesis generator system prompt |
+| **Confidence range** | Full 1–10 scale. Strong tech + fundamentals = 7–8. Pure tech, weak fundamentals = 3–4. False momentum flag = max 5. Catalyst-event theses are hard-capped in code at max 6. | Thesis generator system prompt + post-LLM clamp |
 | **ETF/SGB RSI exclusion** | LIQUIDCASE, GOLDBEES, GOLDCASE, SILVERBEES, NIFTYBEES, JUNIORBEES, SGBs — skip RSI/volume signals entirely | `config/etf-exclusions.json` + portfolio analyser (newly added) |
 | **Regime gate absolute** | momentum_mf: no entries if regime ≠ BULL_TRENDING. No exception. | `momentum-rebalance.ts` pre-check |
 | **alreadyOwned filter** | Skip symbol in AI Picks if currently held in Kite portfolio **or** symbol has any OPEN `paper_trades` row (any `signal_type`) | Thesis generator input preprocessing (**extended May 14**) |
@@ -249,7 +250,7 @@ Build scope:
   Base columns: `symbol, signal_type, entry_price, stop_loss, target, time_horizon, 
   max_hold_days, status, outcome_date, exit_price, pnl_pct, notes`.
   ALTER-added columns (schema evolved via migrations): `highest_close_since_entry, 
-  atr14_at_entry, trailing_multiplier (default 2.0), stop_raised_today, exit_reason`.
+  atr14_at_entry, trailing_multiplier (default 2.0), stop_raised_today, exit_reason, stop_type (default 'trailing')`.
   Status values: `OPEN | CLOSED_WIN | CLOSED_LOSS | CLOSED_TIME`.
   Exit reasons: `TRAILING_STOP | INITIAL_STOP | TARGET_HIT | TIME_EXIT | MANUAL`.
 - **`trailing_stop_log`** — append-only audit. UNIQUE `(trade_id, log_date, action)`.

@@ -124,7 +124,11 @@ export async function composeBriefing(
   const portfolio = gatherPortfolio(date, db);
 
   const paperLog = recordPaperTrades(date, theses, portfolio, db);
-  if (paperLog.insertedAiPick > 0 || paperLog.insertedPortfolioAdd > 0) {
+  if (
+    paperLog.insertedAiPick > 0 ||
+    paperLog.insertedPortfolioAdd > 0 ||
+    paperLog.insertedCatalystEntry > 0
+  ) {
     log.info(paperLog, 'paper trades recorded');
   }
 
