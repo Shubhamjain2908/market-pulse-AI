@@ -496,6 +496,40 @@ describe('evaluate paper trades', () => {
     expect(getOpenPaperTrades(db)).toHaveLength(1);
   });
 
+  it('fixed stop_type skips trailing-stop math and logs', () => {
+    const src = '2026-04-01';
+    const d1 = '2026-04-02';
+    seedNifty(d1);
+    upsertQuotes([q('FIXED1', d1, 100, 104, 95, 99)], db);
+    seedAtr14('FIXED1', [src, d1], 3);
+
+    insertPaperTradeIfAbsent(
+      {
+        symbol: 'FIXED1',
+        signalType: 'catalyst_entry',
+        sourceDate: src,
+        entryPrice: 100,
+        stopLoss: 96,
+        target: 108,
+        timeHorizon: 'short',
+        maxHoldDays: 10,
+        stopType: 'fixed',
+        trailingMultiplier: 0,
+      },
+      db,
+    );
+    const t = getOpenPaperTrades(db)[0];
+    if (t === undefined) throw new Error('missing trade');
+    expect(evaluateOnePaperTrade(t, db, d1, { skipAi: true })).toBe('CLOSED_LOSS');
+
+    const logCount = (
+      db.prepare(`SELECT COUNT(*) AS c FROM trailing_stop_log WHERE trade_id = ?`).get(t.id) as {
+        c: number;
+      }
+    ).c;
+    expect(logCount).toBe(0);
+  });
+
   it('incremental resume: inflated persisted stop does not replay prior bars (no false stop-out)', () => {
     const src = '2026-04-01';
     const d1 = '2026-04-02';
