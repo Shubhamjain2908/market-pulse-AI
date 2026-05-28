@@ -24,9 +24,9 @@ function parseRegimeRow(row: Record<string, unknown>): RegimeRow {
     scoreVix: Number(row.score_vix),
     scoreFii: Number(row.score_fii),
     scoreBreadth: Number(row.score_breadth),
-    vixValue: Number(row.vix_value),
-    niftyVsSma200: Number(row.nifty_vs_sma200),
-    fii20dNet: Number(row.fii_20d_net),
+    vixValue: row.vix_value == null ? null : Number(row.vix_value),
+    niftyVsSma200: row.nifty_vs_sma200 == null ? null : Number(row.nifty_vs_sma200),
+    fii20dNet: row.fii_20d_net == null ? null : Number(row.fii_20d_net),
     adRatio: row.ad_ratio == null ? null : Number(row.ad_ratio),
     pctAboveSma200: row.pct_above_sma200 == null ? null : Number(row.pct_above_sma200),
     crisisOverride: Number(row.crisis_override) === 1,
@@ -82,9 +82,9 @@ export interface InsertRegimeRowInput {
   scoreVix: number;
   scoreFii: number;
   scoreBreadth: number;
-  vixValue: number;
-  niftyVsSma200: number;
-  fii20dNet: number;
+  vixValue: number | null;
+  niftyVsSma200: number | null;
+  fii20dNet: number | null;
   adRatio: number | null;
   pctAboveSma200: number | null;
   crisisOverride: boolean;

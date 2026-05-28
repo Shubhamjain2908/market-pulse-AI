@@ -156,6 +156,7 @@ export async function runDailyWorkflow(
     warnings.push({ category: 'Corporate actions', message: msg });
   }
   await runSignalEnricher({ date });
+  log.info('pipeline: enrich complete, starting regime classification');
   try {
     const snap = await ingestYahooSnapshots(getDb(), { date });
     if (snap.failed > 0) {
