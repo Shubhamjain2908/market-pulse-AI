@@ -3,71 +3,31 @@
 **Gate:** No strategy moves to implementation until overall paper trade expectancy is positive over 30+ deduped closed
 trades. Currently NOT met.
 
-**Built:** Market Regime Filter · Adaptive Trailing Stop · Multi-Factor Momentum (momentum_mf)
+**Built:** Market Regime Filter · Adaptive Trailing Stop · Multi-Factor Momentum (momentum_mf) · Quality-GARP (`quality_garp`, v1) · Catalyst-Driven Entry (`catalyst_entry`, v1)
 
 **Fundamentals backfill:** COMPLETE (2026-05-28). 236 symbols, audit gate passed.
 
 ---
 
+## Shipped — Quality-GARP (v1, 2026-05-28)
+
+**Live:** `quality_garp` dispatcher in [`stock-screener.ts`](src/analysers/stock-screener.ts) + [`getQualityGarpFundamentals`](src/db/queries.ts) (yahoo annual/snapshot + promoter join). Gates: PE≤35, PB≤6, 2yr ROE≥18%, rev growth≥15%, RSI<45, within 5% of SMA50, no promoter selling; ETF exclusion; regime **BULL 1.0× / CHOPPY 0.75×**. Thesis Quality-GARP block (sector, PEG context, moat). README: [Quality-GARP screener](README.md#quality-garp-screener).
+
+**v2 backlog:** 3-year ROE streak; PEG<1.2 screener gate; `operating_margin_pct` column + OPM stability gate; Dec-FY `as_of` edge cases.
+
+---
+
+## Shipped — Catalyst-Driven Entry (v1, 2026-05-28)
+
+**Live:** `catalyst_entry` screen + [`catalyst-screener.ts`](src/analysers/catalyst-screener.ts); earnings 5–14 days out; `close > sma_50` OR within 15% of 52W low; `BULL_TRENDING` gate only; thesis catalyst block + **confidence ≤ 6**; `paper_trades` `stop_type='fixed'` at 96%/108%; `max_hold_days = days_to_earnings + 2` (**calendar** days). README: [Catalyst-driven entry](README.md#catalyst-driven-entry-pre-earnings).
+
+**v2 backlog:** analyst estimate revision feed; concall keyword triggers; sector-event proximity; trading-session `max_hold_days` from `quotes` (fixes holiday/weekend early `TIME_EXIT`).
+
+---
+
 ## Unbuilt Strategies
 
-### 1. Catalyst-Driven Entry
-
-**Category:** Stock picking + AI | **Effort:** Easy | **Horizon:** Short–medium | **Build time:** 1–2 weeks
-**Stack needed:** Earnings calendar + news ingestor — both already present
-
-**Entry signals:**
-
-- Earnings date within 5–14 days
-- Analyst estimate revision > 3% up or down
-- Concall keyword trigger ("order inflow", "guidance raise")
-- Sector event proximity (RBI policy, budget day)
-
-**Lifecycle:** Enter 3–5 days before catalyst. Exit within 2 days post-event. Stop: −4% from entry.
-
-**AI role:** Summarise what consensus expects, flag if setup is contrarian. 2-sentence entry thesis.
-
-**Notes:** Earnings blackout logic already exists in momentum_mf (±3 days block). Catalyst entry is the inverse — enter
-*because* of the upcoming event. Reuse `earnings_calendar` table. Low data dependency, can be scoped and built during
-BEAR regime — paper trades queue and fire on next BULL entry.
-Known limitation (v1): `max_hold_days = days_to_earnings + 2` uses calendar days. A long weekend or NSE holiday immediately post-event may trigger `TIME_EXIT` before the post-event price move completes. Upgrade to trading-session count in v2 using `quotes` table date sequence.
-
----
-
-### 2. Quality-GARP Screener
-
-**Category:** Stock picking + Quantitative | **Effort:** Medium | **Horizon:** Long (6–18 months) | **Build time:** 2
-weeks
-**Stack needed:** `fundamentals` table — NOW POPULATED (2026-05-28 backfill complete)
-
-**Entry signals:**
-
-- ROE > 18% for 3 consecutive years
-- Revenue CAGR > 15% (3-year)
-- Operating margin stable or expanding
-- PEG < 1.2 (forward earnings)
-- Promoter holding stable or increasing
-
-**Lifecycle:** Enter on technical dip (RSI < 45, near SMA50). Hold 6–18 months. TRIM at 2× entry. EXIT if quarterly
-earnings disappoint 2 consecutive times.
-
-**AI role:** Compare to sector peers on every metric. Identify the moat — what makes this company's margin profile
-sustainable.
-
-**Data gaps to handle before building:**
-
-- `operating_margin` not in `fundamentals` schema — OPM proxy: use `profit_growth_yoy` or add migration for
-  `operating_margin_pct` column populated from Yahoo `operatingMargins` in `ticker.info`
-- Dec FY symbols (VBL, ACC, AMBUJACEM) have Dec 31 `as_of` dates — screener must not require strict Mar 31 year-end
-- `peg` only in `yahoo_snapshot` (today's value) — not historical. Quality-GARP PEG filter uses snapshot value only.
-- `promoter_holding_pct` on annual rows is NULL — must JOIN to latest `nse_shareholding` or `screener` row for this
-  signal
-
-**Status: UNBLOCKED as of 2026-05-28. Next to build.**
-
----
-
-### 3. Earnings Reversal Play
+### 1. Earnings Reversal Play
 
 **Category:** Stock picking + Quantitative | **Effort:** Medium | **Horizon:** Medium–long | **Build time:** 2–3 weeks
 **Stack needed:** Historical quarterly EPS data — needs Tickertape API or Screener scraping (NOT currently ingested)
@@ -89,7 +49,7 @@ Engine (item 5 below) for full signal quality. Lowest priority until data source
 
 ---
 
-### 4. Sector Rotation
+### 2. Sector Rotation
 
 **Category:** Stock picking + Quantitative + AI | **Effort:** Hard | **Horizon:** Medium | **Build time:** 3–4 weeks
 **Stack needed:** Sector-level price series (derivable from `quotes` + `symbols.sector`), FII sector-level flow data (
@@ -111,7 +71,7 @@ not currently ingested)
 
 ---
 
-### 5. Concall Intelligence Engine
+### 3. Concall Intelligence Engine
 
 **Category:** Stock picking + AI | **Effort:** Medium | **Horizon:** Long-term alpha enrichment | **Build time:** 2–3
 weeks
@@ -135,7 +95,7 @@ High alpha potential, medium data engineering effort.
 
 ---
 
-### 6. Dynamic Position Sizer
+### 4. Dynamic Position Sizer
 
 **Category:** Position lifecycle | **Effort:** Easy | **Horizon:** Ongoing / portfolio-wide | **Build time:** 1 week
 **Stack needed:** ATR from `signals` table (present) + portfolio value from Kite (present)
@@ -160,11 +120,10 @@ This is the natural next build *after* GTT activates. All data dependencies alre
 
 | Priority | Strategy                                | Status             | Blocker                                     |
 |----------|-----------------------------------------|--------------------|---------------------------------------------|
-| 1        | Catalyst-Driven Entry                   | **Ready to build** | None — build during BEAR regime             |
-| 2        | yahoo_snapshot daily refresh monitoring | Operational        | Watch 429 rate first week                   |
-| 3        | Quality-GARP OPM gate (v2)              | Blocked            | operating_margin_pct migration + backfill   |
-| 4        | Quality-GARP 3yr ROE (v2)               | Blocked            | Extend TARGET_YEARS to 2021, fix avg_equity |
-| 5        | Dynamic Position Sizer                  | Waiting            | GTT gate must be active first               |
-| 6        | Concall Intelligence Engine             | Blocked            | BSE/Screener PDF scraper needed             |
-| 7        | Earnings Reversal Play                  | Blocked            | Quarterly EPS data + concall engine         |
-| 8        | Sector Rotation                         | Blocked            | Sector-level FII flow data source           |
+| 1        | Quality-GARP v2 (OPM + 3yr ROE + PEG gate) | **Shipped v1**  | operating_margin_pct migration; 3yr ROE; PEG<1.2 in screener |
+| 2        | Catalyst-Driven Entry (v2: session hold) | **Shipped v1**     | Calendar-day hold → trading-session count   |
+| 3        | yahoo_snapshot daily refresh monitoring | Operational        | Watch 429 rate first week                   |
+| 4        | Dynamic Position Sizer                  | Waiting            | GTT gate must be active first               |
+| 5        | Concall Intelligence Engine             | Blocked            | BSE/Screener PDF scraper needed             |
+| 6        | Earnings Reversal Play                  | Blocked            | Quarterly EPS data + concall engine         |
+| 7        | Sector Rotation                         | Blocked            | Sector-level FII flow data source           |

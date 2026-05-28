@@ -88,8 +88,9 @@ CREATE TABLE screens (
   PRIMARY KEY (symbol, date, screen_name)
 );
 CREATE INDEX idx_screens_date_screen ON screens(date, screen_name);
--- Quality-GARP v1 stores value-oriented JSON in screens.matched_criteria
--- (fundamental + technical snapshot plus optional __regime_meta), not only DSL criteria arrays.
+-- Custom screen dispatchers store rich JSON in screens.matched_criteria (not DSL criteria arrays):
+-- quality_garp: latest/prev ROE, rev growth, pe/pb/peg, promoter fields, rsi/sma50/close, optional __regime_meta
+-- catalyst_entry: earnings date, days_to_earnings, atr_14, news/sentiment fields, optional __regime_meta
 CREATE TABLE portfolio (
   symbol     TEXT    NOT NULL,
   qty        REAL    NOT NULL,

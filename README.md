@@ -23,12 +23,26 @@ short, actionable briefing before market open.
 > `mom_false_flag = 1`, portfolio guardrails (rank-decay EXIT, block ADD on
 > false flag), and **Sunday 08:00** rebalance followed by a skip-AI briefing that
 > includes the rebalance summary (`pnpm cli momentum-rebalance --brief` for the
-> same compose + deliver path). **Adaptive trailing stops (paper trades)** shipped end-to-end:
+> same compose + deliver path). **Quality-GARP screener (`quality_garp`)** shipped (v1):
+> fundamentals-backed dispatcher in [`stock-screener.ts`](src/analysers/stock-screener.ts)
+> (2-year ROE ≥ 18%, revenue growth ≥ 15%, PE/PB ceilings, RSI dip + near SMA50, promoter
+> stability), regime gates with **CHOPPY size 0.75×**, full `matched_criteria` on `screens`,
+> and thesis **Quality-GARP context** (sector, PEG snapshot, moat prompt) — candidates flow
+> into gated AI picks (`AI_PICK` paper trades use default trailing stops). See
+> [Quality-GARP screener](#quality-garp-screener). **Adaptive trailing stops (paper trades)** shipped end-to-end:
 > ATR14-based upward-only trailing on `paper_trades`, EOD bar-by-bar evaluator
 > (`runEvaluatePaperTrades`), `trailing_stop_log` audit trail + additive
 > `exit_reason`, HTML **Paper trades · trailing stops** block (above the regime
 > card), optional LLM post-mortem on `STOPPED_OUT`, and integration tests
-> (merge gates + §9.2/§9.3). **Report quality Phase 1**
+> (merge gates + §9.2/§9.3). **Catalyst-driven entry (`catalyst_entry`)** shipped:
+> pre-earnings sleeve (5–14 calendar days to `earnings_calendar.expected_date`),
+> regime-gated custom screener ([`src/analysers/catalyst-screener.ts`](src/analysers/catalyst-screener.ts)
+> + dispatcher in [`stock-screener.ts`](src/analysers/stock-screener.ts)), catalyst thesis context
+> with top-2 news headlines and **code-enforced confidence ≤ 6**, and **`paper_trades` with
+> `stop_type='fixed'`** (96% stop / 108% target, `max_hold_days = days_to_earnings + 2`) —
+> evaluator skips ATR trailing for fixed rows (migration **`0016`**). See
+> [Catalyst-driven entry](#catalyst-driven-entry-pre-earnings) and
+> [Adaptive trailing stops](#adaptive-trailing-stops-paper-trades). **Report quality Phase 1**
 > shipped: NSE holiday/weekend guard (no pointless ingest when cash market is
 > closed), Market Mood shows Nifty Δ / India VIX / dated FII-DII with `[prev]`
 > labels, explicit AI Picks section states (skipped / holiday / empty / all
@@ -45,7 +59,7 @@ short, actionable briefing before market open.
 > screen engine, first-class watchlist alerts, a backtest harness, LLM
 > sentiment scoring, AI thesis generation, and an AI-composed HTML
 > briefing. Supports Cursor Agent, Anthropic, OpenAI, and Vertex AI
-> (Gemini) as LLM backends. See [the roadmap](#roadmap), [Market regime filter](#market-regime-filter-phase-6), [Momentum screener](#momentum-screener-multi-factor), and [Adaptive trailing stops](#adaptive-trailing-stops-paper-trades).
+> (Gemini) as LLM backends. See [the roadmap](#roadmap), [Market regime filter](#market-regime-filter-phase-6), [Momentum screener](#momentum-screener-multi-factor), [Quality-GARP screener](#quality-garp-screener), [Catalyst-driven entry](#catalyst-driven-entry-pre-earnings), and [Adaptive trailing stops](#adaptive-trailing-stops-paper-trades).
 
 ---
 
@@ -61,10 +75,10 @@ What it does daily:
 
 - Pulls overnight F&O data, FII/DII activity, and global cues
 - Classifies the **market regime** from signals (trend, VIX, FII, breadth), optionally asks an LLM for a one-sentence regime narrative, and applies **strategy gates** (which screens and agents run, and at what relative size)
-- Screens your watchlist against rules you control (`config/screens.json`)
+- Screens your watchlist against rules you control (`config/screens.json`), including **Quality-GARP** (fundamentals + technical dip) and **catalyst_entry** (pre-earnings) custom sleeves
 - Summarises any earnings or news for your holdings
 - Surfaces 3–5 actionable ideas, each with a thesis, entry zone, stop, and target (when `ai_picks_generation` is allowed for the current regime)
-- Forward-tests AI picks in **`paper_trades`**: after each `pnpm daily` run, `runEvaluatePaperTrades` walks **bar-by-bar** OHLC vs adaptive trailing rules; outcomes feed the **Signal performance** card; stop activity appears under **Paper trades · trailing stops** in the HTML briefing (previous session’s `trailing_stop_log` + live **near stop** rows)
+- Forward-tests ideas in **`paper_trades`**: after each `pnpm daily` run, `runEvaluatePaperTrades` walks **bar-by-bar** OHLC — **adaptive ATR trailing** for `stop_type='trailing'` (AI picks, portfolio adds, `momentum_mf`) and **static SL/TP/time-stop only** for `stop_type='fixed'` (`catalyst_entry`, no `trailing_stop_log` rows); outcomes feed the **Signal performance** card; trailing activity appears under **Paper trades · trailing stops** when applicable
 - Maintains an optional **multi-factor momentum** book (`momentum_mf` paper trades): weekly ranks and rebalance outputs surface in the briefing’s **Momentum screener** block when applicable; daily workflows reuse merged `mom_*` + technical snapshots for thesis and portfolio analysis
 
 Full product spec: regenerate `market-pulse-ai-spec.docx` by running
@@ -297,7 +311,13 @@ Operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `between` (tuple value),
 `gt_signal` / `lt_signal` (compares two signals — e.g. `close > sma_50`).
 
 Edit [`config/screens.json`](config/screens.json) and re-run
-`pnpm cli screen`. No code changes required.
+`pnpm cli screen`. No code changes required for DSL screens.
+
+**Custom dispatchers** (not the generic engine): **`quality_garp`** and **`catalyst_entry`**
+are listed in `screens.json` for labels/regime seeding but evaluated in
+[`src/analysers/stock-screener.ts`](src/analysers/stock-screener.ts) — dedicated SQL paths,
+regime gates from [`config/strategy-gates.json`](config/strategy-gates.json), and full
+`matched_criteria` persisted to `screens`.
 
 ### Backtest
 
@@ -493,9 +513,112 @@ pnpm cli momentum-rebalance --skip-ranker --brief # one-shot compose + deliver w
 
 ---
 
+## Quality-GARP screener
+
+A **regime-gated**, long-horizon sleeve that combines Yahoo annual/snapshot fundamentals with a technical dip entry. Matches persist to `screens` and feed the **AI thesis** path (standard `AI_PICK` paper trades with trailing stops when a thesis is written) — no separate `signal_type`.
+
+**Config & gates**
+
+- [`config/screens.json`](config/screens.json) — `quality_garp` entry (placeholder DSL criteria; matching is **not** engine-driven).
+- [`config/strategy-gates.json`](config/strategy-gates.json) — seeded via `pnpm regime:seed-gates`: **allowed in `BULL_TRENDING`** (multiplier **1.0**), **allowed in `CHOPPY`** at **0.75×**, blocked in `BEAR_TRENDING` / `CRISIS`.
+
+**Fundamentals** ([`getQualityGarpFundamentals`](src/db/queries.ts))
+
+- Latest two **`yahoo_annual`** rows per symbol: `latest_roe`, `prev_roe`, `latest_rev_growth`.
+- **`yahoo_snapshot`** as of screen date: `pe`, `pb`, `peg`, `market_cap`.
+- Latest **`nse_shareholding` / `screener`** row: `promoter_holding_pct`, `promoter_holding_change_qoq`.
+- Requires fundamentals backfill coverage (see [`strategy-backlog.md`](strategy-backlog.md)).
+
+**Eight evaluation gates** ([`evaluateQualityGarpSymbol`](src/analysers/stock-screener.ts))
+
+| # | Gate |
+|---|------|
+| 1 | Not on ETF/SGB exclusion list |
+| 2 | Fundamentals row present |
+| 3 | `pe` / `pb` non-null; **pe ≤ 35**, **pb ≤ 6** |
+| 4 | **latest & prev ROE ≥ 18%** (2-year floor; v1) |
+| 5 | **latest revenue growth YoY ≥ 15%** |
+| 6 | **RSI14 < 45** (technical dip) |
+| 7 | **\|close − SMA50\| ≤ 5%** |
+| 8 | Promoter QoQ change **fail-open on NULL**; block only on active selling (negative QoQ change) |
+
+Hard-null on `pe`, `pb`, `prev_roe`, `latest_rev_growth`, `sma_50`, `close` blocks the symbol (guardrail). ETF list enforced; **no** `alreadyOwned` filter on the screener itself (thesis generator still skips held / open-paper symbols).
+
+**Thesis** ([`src/agents/thesis-generator.ts`](src/agents/thesis-generator.ts))
+
+- Same-day `quality_garp` screen → **## Quality-GARP context** append (sector from `symbols`, PEG from `matched_criteria`, moat / peer-comparison instructions).
+- If **`mom_false_flag === 1`**, addendum reminds **confidence ≤ 5** (same as momentum guardrail).
+
+**v1 vs spec backlog**
+
+- **Not yet gated in code:** 3-year ROE streak, PEG under 1.2, operating-margin stability (v2: `operating_margin_pct` migration).
+- **PEG** is thesis context only (snapshot); screener does not reject on PEG.
+
+**Orchestration**
+
+- Runs inside **`pnpm cli screen`** / **`pnpm daily`** after regime classification.
+- Dispatcher: [`runQualityGarpScreen`](src/analysers/stock-screener.ts) alongside DSL screens and `catalyst_entry`.
+
+**Verify**
+
+```bash
+pnpm migrate
+pnpm regime:seed-gates
+pnpm cli screen -d YYYY-MM-DD -n quality_garp
+pnpm test tests/analysers/stock-screener.test.ts
+```
+
+---
+
+## Catalyst-driven entry (pre-earnings)
+
+A **regime-gated**, event-driven sleeve that enters **before** earnings (inverse of the momentum sleeve’s earnings blackout). It complements watchlist DSL screens and `momentum_mf` — still paper-only, no order routing.
+
+**Config & gates**
+
+- [`config/screens.json`](config/screens.json) — `catalyst_entry` entry (placeholder DSL criteria; matching is **not** engine-driven).
+- [`config/strategy-gates.json`](config/strategy-gates.json) — seeded via `pnpm regime:seed-gates`: **allowed in `BULL_TRENDING`**, blocked in `CHOPPY` / `BEAR_TRENDING` / `CRISIS` (same pattern as other sleeves).
+
+**Screener** ([`src/analysers/catalyst-screener.ts`](src/analysers/catalyst-screener.ts))
+
+- **`asOf`** comes from **`isoDateIst()`** at the [`stock-screener`](src/analysers/stock-screener.ts) dispatcher (not UTC formatters inside the SQL module).
+- Universe: symbols with `earnings_calendar.expected_date` **5–14 calendar days** after `asOf`.
+- Technical/fundamental joins: latest per-signal `sma_50` / `rsi_14` / `atr_14` (90-day window), NSE close, 52-week low, 7-day news count/sentiment, latest `profit_growth_yoy`.
+- Price gate: **`close > sma_50`** OR within **15%** of 52-week low.
+- Post-query exclusions: ETF list ([`config/etf-exclusions.json`](config/etf-exclusions.json)), **`alreadyOwned`** (live holdings + any **OPEN** `paper_trades` symbol), hard-null skip on `close` / `sma_50`.
+- Regime block logs `catalyst_entry gated by regime` and writes no rows.
+
+**Thesis** ([`src/agents/thesis-generator.ts`](src/agents/thesis-generator.ts))
+
+- When a same-day `catalyst_entry` screen exists, appends **=== CATALYST EVENT CONTEXT ===** (earnings date, days away, SMA50 distance, recent news tone) plus up to **two headlines** from `news` (7-day window).
+- System addendum asks for a **two-sentence** consensus vs contrarian read; post-LLM **`confidenceScore = min(LLM, 6)`** (code-enforced, not prompt-only).
+
+**Paper trades** ([`src/briefing/paper-trade-writer.ts`](src/briefing/paper-trade-writer.ts))
+
+- Same-day `catalyst_entry` screen hit → `signal_type='catalyst_entry'`, **`stop_type='fixed'`**, stop **entry × 0.96**, target **entry × 1.08**, `time_horizon='short'`, **`max_hold_days = days_to_earnings + 2`**, `trailing_multiplier=0`, `atr14_at_entry` from screen criteria.
+- **v1 caveat:** `max_hold_days` uses **calendar** days; long weekends/holidays right after earnings may time-exit before the post-event move (v2: trading-session count from `quotes` — see [`strategy-backlog.md`](strategy-backlog.md)).
+
+**Orchestration**
+
+- Runs inside **`pnpm cli screen`** / **`pnpm daily`** after regime classification (gated screen stage in [`daily-workflow.ts`](src/agents/daily-workflow.ts)).
+- Fixed-stop evaluation: [`evaluate-trades.ts`](src/scripts/evaluate-trades.ts) — shared circuit breaker and SL/TP/time-stop; **no** `computeNewStop()` / `trailing_stop_log` for `stop_type='fixed'`.
+
+**Verify**
+
+```bash
+pnpm migrate   # applies 0016_paper_trades_stop_type on existing DBs
+pnpm regime:seed-gates
+pnpm cli screen -d YYYY-MM-DD
+pnpm cli evaluate -d YYYY-MM-DD
+```
+
+---
+
 ## Adaptive trailing stops (paper trades)
 
-End-to-end feature for **paper** positions created from AI picks / portfolio adds: **ATR14**-driven upward-only trailing, conservative same-day SL+TP handling, and additive **`exit_reason`** without changing the `CLOSED_WIN` / `CLOSED_LOSS` / `CLOSED_TIME` enum.
+End-to-end feature for **paper** positions with **`stop_type='trailing'`** (default): AI picks, portfolio adds, and `momentum_mf` use **ATR14**-driven upward-only trailing, conservative same-day SL+TP handling, and additive **`exit_reason`** without changing the `CLOSED_WIN` / `CLOSED_LOSS` / `CLOSED_TIME` enum.
+
+**`catalyst_entry`** rows use **`stop_type='fixed'`** instead — static levels only; see [Catalyst-driven entry](#catalyst-driven-entry-pre-earnings).
 
 **Production parameters** (authoritative: [`config/momentum-config.json`](config/momentum-config.json), loaded via [`src/config/trailing-stop-sizing.ts`](src/config/trailing-stop-sizing.ts)):
 
@@ -512,10 +635,11 @@ Legacy open trades with `trailing_multiplier = 2.0` in DB are normalized to the 
 
 - [`src/db/migrations/0007_adaptive_trailing_stop.sql`](src/db/migrations/0007_adaptive_trailing_stop.sql) — `paper_trades` trailing columns, `trailing_stop_log`, **`exit_reason`**
 - [`src/db/migrations/0008_trailing_stop_log_notes.sql`](src/db/migrations/0008_trailing_stop_log_notes.sql) — `trailing_stop_log.notes` (e.g. gap-down-through-stop tag)
+- [`src/db/migrations/0016_paper_trades_stop_type.sql`](src/db/migrations/0016_paper_trades_stop_type.sql) — **`stop_type`** `TEXT NOT NULL DEFAULT 'trailing'` (`'trailing' | 'fixed'`); existing OPEN rows stay on the trailing path without backfill
 
 **Evaluation**
 
-- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) + [`src/scripts/trailing-stop-engine.ts`](src/scripts/trailing-stop-engine.ts) — config-driven mults (no inline 2.0/1.5/15%); bar walk from `source_date` to `asOf`; **incremental resume** from the last `trailing_stop_log` bar (non-`STOPPED_OUT`); idempotent log inserts; **`pnpm cli evaluate`** / **`pnpm evaluate`** with **`--skip-ai`**
+- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) + [`src/scripts/trailing-stop-engine.ts`](src/scripts/trailing-stop-engine.ts) — branches on **`stop_type`**: **trailing** path uses config-driven mults (no inline 2.0/1.5/15%), bar walk from `source_date` to `asOf`, **incremental resume** from the last `trailing_stop_log` bar (non-`STOPPED_OUT`), idempotent log inserts; **fixed** path skips trailing math/logs and evaluates persisted `stop_loss` / `target` / `max_hold_days` under the same **circuit breaker**; **`pnpm cli evaluate`** / **`pnpm evaluate`** with **`--skip-ai`**
 - [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` after the briefing is composed (same ordering as before)
 
 **Briefing**
@@ -542,7 +666,7 @@ market-pulse-ai/
     agents/         # one module per pipeline stage (incl. regime-agent, stock-screener, thesis-generator)
     ingestors/      # data-source connectors (NSE, Yahoo, Screener, Kite, ...)
     enrichers/      # signal computation: technical (Phase 1), sentiment (Phase 3), regime signals (Phase 6), momentum signals (mom_*)
-    analysers/      # screen engine (Phase 2), regime classifier (Phase 6)
+    analysers/      # screen engine (Phase 2), catalyst/quality_garp dispatchers, regime classifier (Phase 6)
     briefing/       # HTML composer + delivery; AI narrative (Phase 3); regime card (Phase 6); momentum-card + trailing-stop-card
     db/             # schema.sql + migrations + prepared queries
     llm/            # LlmProvider interface + adapters
@@ -619,7 +743,9 @@ Holiday dates live in [`src/market/nse-calendar.ts`](src/market/nse-calendar.ts)
 | 5     | Real-time + Kite     | ✅ shipped    | Kite Connect HTTP client + interactive login; portfolio sync + per-holding LLM HOLD/ADD/TRIM/EXIT analyser; intraday LTP scanner; 4 new screens; single-command `pnpm daily` |
 | 6     | Market regime filter | ✅ shipped    | `regime_daily` + `regime_strategy_gate`; signal enricher + deterministic classifier; regime agent + briefing card; gated screens + gated AI thesis; seed/config via `strategy-gates.json` |
 | —     | Momentum screener (multi-factor) | ✅ shipped | `momentum-config.json` / `momentum-universe.json`; `mom_*` signals + ranker + rebalance → `paper_trades` (`momentum_mf`); merged latest-per-name signal map; thesis snapshot + confidence cap when false-flag; portfolio guardrails; **`momentum-card`** + Sunday **`--brief`** / scheduler delivery |
-| —     | Adaptive trailing stops (paper trades) | ✅ shipped | Migrations `0007`/`0008`; `runEvaluatePaperTrades` + `trailing_stop_log`; briefing **Paper trades · trailing stops** (above regime); optional LLM post-mortem on `STOPPED_OUT`; tests in `tests/scripts/evaluate-trades.test.ts` + `tests/briefing/trailing-stop-card.test.ts` |
+| —     | Quality-GARP screener (`quality_garp`) | ✅ shipped (v1) | `getQualityGarpFundamentals` + 8-gate dispatcher in `stock-screener.ts`; regime gates (CHOPPY 0.75×); thesis Quality-GARP context; `tests/analysers/stock-screener.test.ts` |
+| —     | Adaptive trailing stops (paper trades) | ✅ shipped | Migrations `0007`/`0008`/`0016` (`stop_type`); `runEvaluatePaperTrades` + `trailing_stop_log` (trailing only); briefing **Paper trades · trailing stops** (above regime); optional LLM post-mortem on `STOPPED_OUT`; fixed path for `catalyst_entry`; tests in `tests/scripts/evaluate-trades.test.ts` + `tests/briefing/trailing-stop-card.test.ts` |
+| —     | Catalyst-driven entry (`catalyst_entry`) | ✅ shipped | `catalyst-screener` + stock-screener dispatcher; regime gates in `strategy-gates.json`; thesis catalyst context + confidence ≤ 6; fixed-stop paper trades; `tests/analysers/catalyst-screener.test.ts` |
 
 ---
 
