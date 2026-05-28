@@ -1,7 +1,13 @@
 {
   "description": "Seed matrix for regime_strategy_gate: which strategies run in each regime and position-sizing multipliers. Edit and run `pnpm regime:seed-gates`. Screen names match config/screens.json; meta-strategies (ai_picks_generation, portfolio_exit_signals, trailing_stop_update) gate agents outside the screener.",
   "meta": {
-    "futureStrategies": ["quality_garp", "earnings_reversal", "sector_rotation", "catalyst_driven"]
+    "futureStrategies": [
+      "quality_garp",
+      "earnings_reversal",
+      "sector_rotation",
+      "catalyst_driven",
+      "catalyst_entry"
+    ]
   },
   "rows": [
     {
@@ -118,6 +124,35 @@
       "allowed": false,
       "sizeMultiplier": 0,
       "notes": "No entries"
+    },
+
+    {
+      "strategyId": "catalyst_entry",
+      "regime": "BULL_TRENDING",
+      "allowed": true,
+      "sizeMultiplier": 1.0,
+      "notes": "event-driven entries allowed only in strong trend"
+    },
+    {
+      "strategyId": "catalyst_entry",
+      "regime": "CHOPPY",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": "blocked: event risk in directionless tape"
+    },
+    {
+      "strategyId": "catalyst_entry",
+      "regime": "BEAR_TRENDING",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": "no entries"
+    },
+    {
+      "strategyId": "catalyst_entry",
+      "regime": "CRISIS",
+      "allowed": false,
+      "sizeMultiplier": 0,
+      "notes": "no entries"
     },
 
     {
