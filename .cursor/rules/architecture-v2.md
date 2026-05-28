@@ -30,7 +30,7 @@
 ## 2. Pipeline Flow (Sequential, EOD, Daily 8:45 AM IST)
 
 ```
-Ingest → Corporate actions → Enrich → Regime Classify → Screen → AI Thesis → Portfolio Evaluate → Briefing
+Ingest → Corporate actions → Enrich → Yahoo snapshot → Regime Classify → Screen → AI Thesis → Portfolio Evaluate → Briefing
 ```
 
 Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evaluation runs **before** the briefing composer so closed trades appear in the brief.
@@ -40,6 +40,7 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 | **Ingest** | `src/agents/daily-ingestor.ts` | Quote batch (often Yahoo), NSE FII/DII, RSS news, optional Yahoo sector metadata on symbols; failures per capability are logged and do not abort the run. |
 | **Corporate actions** | `src/ingestors/corporate-actions.ts` | After ingest, before enrich: for symbols with OPEN `paper_trades`, pull Yahoo split events (`chart`, `events: 'split'` — same ratios as bonus-as-split). Last 5 IST calendar days → `corporate_actions` row + divide OPEN notionals (`entry_price`, `stop_loss`, `target`, `highest_close_since_entry`, `atr14_at_entry`); append one-time SPLIT audit to `trailing_stop_log.notes` per trade. Idempotent via `INSERT OR IGNORE` + `run().changes`. |
 | **Enrich** | `src/enrichers/technical.ts` + `momentum-signals.ts` | SMA20/50/200, EMA9/21, RSI14, ATR14, Volume Ratio, 52W High/Low%. Plus daily momentum factors: `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`. |
+| **Yahoo snapshot** | `src/ingestors/yahoo-snapshot-ingestor.ts` | After enrich: batched `quoteSummary` valuation fields → `fundamentals` (`source = yahoo_snapshot` on insert; `ON CONFLICT` updates valuation columns only, preserving screener-owned fields and existing `source`). Fail-open. |
 | **Regime Classify** | `src/agents/regime-agent.ts` | 8 signals scored −2 to +2. 3-day persistence. CRISIS fires immediately. Writes to `regime_daily`. Runs before all strategies. |
 | **Screen** | `src/analysers/stock-screener.ts` | Loads `config/screens.json`. Checks `regime_strategy_gate`. Writes passing symbols to `screens`. |
 | **AI Thesis** | `src/agents/thesis-generator.ts` | Per screen pass: sends technicals + fundamentals + news + regime context to LLM. Returns structured JSON. Skips symbols in live portfolio (`alreadyOwned`) and any symbol with an OPEN `paper_trades` row (any `signal_type`). |
