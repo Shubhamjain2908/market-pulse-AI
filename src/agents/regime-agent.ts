@@ -8,8 +8,8 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import {
   type PreparedRegimeDaily,
-  type RunRegimeClassifierOptions,
   prepareRegimeDaily,
+  type RunRegimeClassifierOptions,
 } from '../analysers/regime-classifier.js';
 import { getDb } from '../db/connection.js';
 import { insertRegimeRow } from '../db/regime-queries.js';

@@ -5,8 +5,8 @@ import { getQualityGarpFundamentals, upsertScreenResults } from '../db/queries.j
 import { isoDateIst } from '../ingestors/base/dates.js';
 import type { ScreenDefinition, ScreenResult } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
-import { runScreenEngine } from './engine.js';
 import type { ScreenEngineResult } from './engine.js';
+import { runScreenEngine } from './engine.js';
 import { DbSignalProvider, type SignalProvider } from './signal-provider.js';
 
 export interface StockScreenerOptions {

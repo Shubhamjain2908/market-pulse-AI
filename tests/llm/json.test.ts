@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { LlmJsonValidationError, extractJson, parseAndValidate } from '../../src/llm/json.js';
+import { extractJson, LlmJsonValidationError, parseAndValidate } from '../../src/llm/json.js';
 
 describe('llm/json', () => {
   describe('extractJson', () => {

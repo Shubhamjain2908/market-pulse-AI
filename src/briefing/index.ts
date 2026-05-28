@@ -1,13 +1,13 @@
-export { composeBriefing, type ComposeBriefingOptions, type ComposedBriefing } from './composer.js';
+export { type ComposeBriefingOptions, type ComposedBriefing, composeBriefing } from './composer.js';
+export { deliverToEmail, type EmailDeliveryResult } from './delivery/email.js';
+export { deliverToFile, type FileDeliveryResult } from './delivery/file.js';
+export { deliverBriefing } from './dispatch.js';
 export {
-  THEME,
-  renderBriefing,
   type BriefingData,
   type MarketMood,
   type MoverRow,
   type NewsRow,
+  renderBriefing,
+  THEME,
   type WatchlistAlert,
 } from './template.js';
-export { deliverToFile, type FileDeliveryResult } from './delivery/file.js';
-export { deliverToEmail, type EmailDeliveryResult } from './delivery/email.js';
-export { deliverBriefing } from './dispatch.js';

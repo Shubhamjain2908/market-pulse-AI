@@ -14,7 +14,7 @@ import { isYahooMissingSymbolError } from '../../market/yahoo-errors.js';
 import { toYahooFinanceTicker } from '../../market/yahoo-ticker.js';
 import type { RawQuote } from '../../types/domain.js';
 import { isoDateIst } from '../base/dates.js';
-import type { IngestResult, Ingestor, IngestorCapability, IngestorContext } from '../types.js';
+import type { Ingestor, IngestorCapability, IngestorContext, IngestResult } from '../types.js';
 
 const log = child({ component: 'yahoo-ingestor' });
 const DEFAULT_LOOKBACK_DAYS = 260; // ~52 trading weeks plus a buffer

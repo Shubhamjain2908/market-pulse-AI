@@ -6,19 +6,19 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 
-import { THESIS_JSON_SYSTEM_PROMPT, buildStockContext } from '../agents/thesis-generator.js';
+import { buildStockContext, THESIS_JSON_SYSTEM_PROMPT } from '../agents/thesis-generator.js';
 import type { MomentumRebalanceSummary } from '../briefing/momentum-card.js';
 import { parseInrPriceMidpoint } from '../briefing/paper-trade-parsers.js';
 import { classifySector } from '../briefing/sector-classifier.js';
 import { loadMomentumConfig, loadPortfolio, loadSectorMap } from '../config/loaders.js';
 import { getDb } from '../db/index.js';
 import {
-  type PaperTradeRow,
-  type UpsertThesisRow,
   closePaperTrade,
   getNseCloseOnOrBefore,
   getOpenPaperTradesForSignal,
   insertPaperTradeIfAbsent,
+  type PaperTradeRow,
+  type UpsertThesisRow,
   upsertMomentumRebalanceBriefing,
   upsertThesis,
 } from '../db/queries.js';

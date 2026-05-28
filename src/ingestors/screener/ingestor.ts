@@ -12,8 +12,8 @@ import { RATE_LIMITS } from '../../constants.js';
 import { child } from '../../logger.js';
 import { skipScreenerFundamentalsFetch } from '../../market/screener-symbol-skip.js';
 import type { Fundamentals } from '../../types/domain.js';
-import { type HttpClient, createHttpClient } from '../base/http-client.js';
-import type { IngestResult, Ingestor, IngestorCapability, IngestorContext } from '../types.js';
+import { createHttpClient, type HttpClient } from '../base/http-client.js';
+import type { Ingestor, IngestorCapability, IngestorContext, IngestResult } from '../types.js';
 import { parseScreenerHtml } from './parser.js';
 
 const log = child({ component: 'screener-ingestor' });

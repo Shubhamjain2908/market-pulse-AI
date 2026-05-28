@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computeSignalsForLastBar,
   type OHLCVBar,
   SIGNAL_WINDOW_LEN,
-  computeSignalsForLastBar,
 } from '../../src/backtest/signals.js';
 
 function linBars(start: string, n: number, startPx: number, step: number): OHLCVBar[] {

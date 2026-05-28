@@ -12,10 +12,10 @@ import { z } from 'zod';
 import { config } from '../config/env.js';
 import { loadEtfExclusions, loadMomentumConfig } from '../config/loaders.js';
 import {
-  type PortfolioAnalysisRow,
-  type PortfolioHoldingRow,
   getDb,
   getLatestHoldings,
+  type PortfolioAnalysisRow,
+  type PortfolioHoldingRow,
   upsertPortfolioAnalysis,
 } from '../db/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';

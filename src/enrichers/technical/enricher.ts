@@ -18,7 +18,7 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import { getDb, upsertSignals } from '../../db/index.js';
 import { child } from '../../logger.js';
 import type { RawQuote, Signal } from '../../types/domain.js';
-import { type Bar, atr, ema, fiftyTwoWeek, rsi, sma, volumeRatio } from './indicators.js';
+import { atr, type Bar, ema, fiftyTwoWeek, rsi, sma, volumeRatio } from './indicators.js';
 
 const log = child({ component: 'technical-enricher' });
 
