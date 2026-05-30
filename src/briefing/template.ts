@@ -191,6 +191,8 @@ export interface BriefingData {
   regimeBlock?: string;
   /** Momentum screener block (rank monitor + decay alerts); between screener and watchlist. */
   momentumBlock?: string;
+  /** ETF iNAV premium/discount alerts for held symbols (NSE `/api/etf`). */
+  etfPricingBlock?: string;
   /** Non-fatal warnings to display in a yellow banner at the top of the briefing. */
   warnings?: WarningEntry[];
 }
@@ -206,6 +208,7 @@ export function renderBriefing(data: BriefingData): string {
     ${data.regimeBlock ?? ''}
     ${renderGlobalCues(data.globalCues)}
     ${renderPortfolio(data.portfolio)}
+    ${data.etfPricingBlock ?? ''}
     ${renderScreenMatches(data.screenMatches)}
     ${data.momentumBlock ?? ''}
     ${renderWatchlistAlerts(data.watchlistAlerts)}

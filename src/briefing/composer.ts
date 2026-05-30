@@ -40,6 +40,7 @@ import { gatherGlobalCues } from '../market/global-cues.js';
 import { latestQuoteClose, sessionChangeVsPriorClose } from '../market/quote-change.js';
 import { lastOpenOnOrBefore, previousOpenTradingDay } from '../market/trading-days.js';
 import type { ScreenDefinition } from '../types/domain.js';
+import { renderEtfPricingBlock } from './etf-pricing-card.js';
 import { type MomentumRebalanceSummary, renderMomentumBriefingBlock } from './momentum-card.js';
 import { recordPaperTrades } from './paper-trade-writer.js';
 import {
@@ -253,6 +254,7 @@ export async function composeBriefing(
     getMomentumRebalanceBriefingForCalendarDate(date, db) ??
     undefined;
   const momentumBlock = renderMomentumBriefingBlock(date, db, momentumSummary) || undefined;
+  const etfPricingBlock = renderEtfPricingBlock(date, db) || undefined;
 
   let regimeBlock: string | undefined;
   const regimeRow = getRegimeForCalendarDate(date, db);
@@ -311,6 +313,7 @@ export async function composeBriefing(
     trailingStopBlock,
     regimeBlock,
     momentumBlock,
+    etfPricingBlock,
     warnings: warnings.length > 0 ? warnings : undefined,
   };
 
