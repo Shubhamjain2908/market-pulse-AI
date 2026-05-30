@@ -66,6 +66,7 @@ describe('regime-card HTML', () => {
       expect(html).toContain('strategies active');
       expect(html).toContain('Trend');
       expect(html).toContain('VIX');
+      expect(html).not.toContain('regime-flow-attribution');
     });
   }
 

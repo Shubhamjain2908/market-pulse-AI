@@ -1005,6 +1005,15 @@ function baseStyles(): string {
     }
     .regime-tile-label { color: ${c.muted}; text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; }
     .regime-tile-value { font-weight: 700; margin-top: 2px; }
+    .regime-flow-attribution {
+      margin: 0 0 10px;
+      padding: 8px 10px;
+      border-left: 3px solid ${c.border};
+      background: rgba(255,255,255,0.45);
+      border-radius: 0 6px 6px 0;
+    }
+    .regime-flow-label { margin: 0 0 4px; font-size: 13px; font-weight: 600; line-height: 1.4; }
+    .regime-flow-narrative { margin: 0; font-size: 12px; line-height: 1.45; }
     .regime-narrative { margin: 0 0 8px; font-size: 14px; line-height: 1.55; }
     .regime-gate-summary { margin: 0; font-size: 12px; }
     .muted { color: ${c.muted}; font-size: 13px; }
