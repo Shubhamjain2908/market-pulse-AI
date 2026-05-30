@@ -30,7 +30,7 @@
 ## 2. Pipeline Flow (Sequential, EOD, Daily 8:45 AM IST)
 
 ```
-Ingest → Corporate actions → Enrich → Yahoo snapshot → Regime Classify → Screen → AI Thesis → Portfolio Evaluate → Briefing
+Ingest → Corporate actions → Enrich → Yahoo snapshot → NSE ETF iNAV → Regime Classify → Screen → AI Thesis → Portfolio Evaluate → Briefing
 ```
 
 Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evaluation runs **before** the briefing composer so closed trades appear in the brief.
@@ -41,12 +41,13 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 | **Corporate actions** | `src/ingestors/corporate-actions.ts` | After ingest, before enrich: for symbols with OPEN `paper_trades`, pull Yahoo split events (`chart`, `events: 'split'` — same ratios as bonus-as-split). Last 5 IST calendar days → `corporate_actions` row + divide OPEN notionals (`entry_price`, `stop_loss`, `target`, `highest_close_since_entry`, `atr14_at_entry`); append one-time SPLIT audit to `trailing_stop_log.notes` per trade. Idempotent via `INSERT OR IGNORE` + `run().changes`. |
 | **Enrich** | `src/enrichers/technical.ts` + `momentum-signals.ts` | SMA20/50/200, EMA9/21, RSI14, ATR14, Volume Ratio, 52W High/Low%. Plus daily momentum factors: `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`. |
 | **Yahoo snapshot** | `src/ingestors/yahoo-snapshot-ingestor.ts` | After enrich: batched `quoteSummary` valuation fields → `fundamentals` (`source = yahoo_snapshot` on insert; `ON CONFLICT` updates valuation columns only, preserving screener-owned fields and existing `source`). Fail-open. |
+| **ETF iNAV** | `src/ingestors/inav-fetcher.ts` | After Yahoo snapshot, before regime: NSE `/api/etf` → `inav_snapshots` for symbols in `config/etf-exclusions.json`. Fail-open (warn + skip on NSE failure). |
 | **Regime Classify** | `src/agents/regime-agent.ts` | 8 signals scored −2 to +2. 3-day persistence. CRISIS fires immediately. Writes to `regime_daily`. Runs before all strategies. |
 | **Screen** | `src/analysers/stock-screener.ts` | Loads `config/screens.json`. DSL screens via `engine.ts`; **`quality_garp`** and **`catalyst_entry`** use dedicated dispatchers (`getQualityGarpFundamentals` + 8 gates; `runCatalystScreener`). Checks `regime_strategy_gate`. Writes passing symbols to `screens`. |
 | **AI Thesis** | `src/agents/thesis-generator.ts` | Per screen pass: sends technicals + fundamentals + news + regime context to LLM. Returns structured JSON. Skips symbols in live portfolio (`alreadyOwned`) and any symbol with an OPEN `paper_trades` row (any `signal_type`). |
 | **Portfolio review** | `src/agents/portfolio-sync.ts` + `portfolio-analyser.ts` | When AI is enabled and portfolio is not skipped: after thesis, optional Kite sync (earlier in the same run) feeds `portfolio_holdings`; analyser writes `portfolio_analysis` (full LLM, lite snapshot, or **stale-holdings placeholders** — see §4). |
 | **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). `stop_type='trailing'` follows adaptive ATR trailing; `stop_type='fixed'` bypasses trailing math/logs and evaluates stops/targets at static levels. New bars only after the latest non-`STOPPED_OUT` `trailing_stop_log` row (exclusive `source_date` bound via `getSymbolBars`), so a raised persisted stop is not replayed against already-evaluated history. **Circuit breaker:** if `bar.open < 0.7 ×` prior session’s NSE `close` (`date < bar.date`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag. |
-| **Briefing** | `src/briefing/composer.ts` | `renderBriefing()` → `juice()` for Gmail-safe inline CSS (600px table layout). Regime card + change banner; **FII/DII flow attribution** (`getFlowAttribution` + rule-based `classifyFlowAttribution` in composer — 5 cash sessions, directional patterns only; BALANCED suppressed). Delivered via Nodemailer → Gmail SMTP. |
+| **Briefing** | `src/briefing/composer.ts` | `renderBriefing()` → `juice()` for Gmail-safe inline CSS (600px table layout). Regime card + change banner; **FII/DII flow attribution**; **ETF iNAV pricing** block for held ETFs (`etf-pricing-card.ts`, WARN/NOTE thresholds). Delivered via Nodemailer → Gmail SMTP. |
 
 NOTE: Screener.in fundamentals ingest is not currently operational. fundamentals table is empty pending backfill build (see §3.5).
 

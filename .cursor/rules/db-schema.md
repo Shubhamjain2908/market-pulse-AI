@@ -66,6 +66,16 @@ CREATE TABLE fii_dii (
   ingested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (date, segment)
 );
+CREATE TABLE inav_snapshots (
+  symbol                 TEXT NOT NULL,
+  date                   TEXT NOT NULL,
+  inav                   REAL NOT NULL,
+  last_price             REAL NOT NULL,
+  premium_discount_pct   REAL NOT NULL,
+  captured_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (symbol, date)
+);
+CREATE INDEX idx_inav_snapshots_date ON inav_snapshots(date);
 CREATE TABLE signals (
   symbol     TEXT NOT NULL,
   date       TEXT NOT NULL,

@@ -74,7 +74,7 @@ one focused email per morning.
 
 What it does daily:
 
-- Pulls overnight F&O data, FII/DII activity, and global cues
+- Pulls overnight F&O data, FII/DII activity, NSE ETF iNAV snapshots (held ETF universe), and global cues
 - Classifies the **market regime** from signals (trend, VIX, FII, breadth), optionally asks an LLM for a one-sentence regime narrative, and applies **strategy gates** (which screens and agents run, and at what relative size)
 - Screens your watchlist against rules you control (`config/screens.json`), including **Quality-GARP** (fundamentals + technical dip) and **catalyst_entry** (pre-earnings) custom sleeves
 - Summarises any earnings or news for your holdings
@@ -451,6 +451,7 @@ A **meta-layer** on top of the existing pipeline: each open session gets a singl
 - **Risk tooling** (`portfolio_exit_signals`, `trailing_stop_update`) stays on across regimes per config.
 - **Briefing**: [`src/briefing/regime-card.ts`](src/briefing/regime-card.ts) renders a card + optional change banner; [`src/briefing/composer.ts`](src/briefing/composer.ts) loads `regime_daily` for the briefing session date (including weekend/holiday handling via last open session).
 - **FII/DII flow attribution** (rule-based, no LLM): [`getFlowAttribution`](src/db/queries.ts) sums the last up to **five cash-segment trading sessions** on or before the briefing date; [`classifyFlowAttribution`](src/briefing/composer.ts) maps rolling FII/DII nets (₹ crore) to **INSTITUTIONAL_ROTATION**, **BROAD_EXIT**, or **FII_ACCUMULATION** (thresholds in composer). **BALANCED** and windows with **&lt; 3 sessions** are suppressed. The block sits in the regime card **between the score tiles and the regime narrative**, with table + inline styles for email (juice-inlined from [`renderBriefing`](src/briefing/template.ts)).
+- **ETF iNAV pricing** (rule-based, fail-open): [`fetchInavSnapshots`](src/ingestors/inav-fetcher.ts) runs after Yahoo snapshot ingest (before regime classify), reads NSE [`/api/etf`](https://www.nseindia.com/api/etf) for symbols in [`config/etf-exclusions.json`](config/etf-exclusions.json), persists [`inav_snapshots`](src/db/migrations/0018_inav_snapshots.sql). Briefing **ETF Pricing** section ([`etf-pricing-card.ts`](src/briefing/etf-pricing-card.ts)) shows **WARN** when held ETF premium **&gt; 0.5%**, **NOTE** when discount **&gt; 0.25%**; mid-band and missing NSE data produce no section.
 
 **Orchestration**
 
