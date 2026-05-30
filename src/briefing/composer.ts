@@ -40,6 +40,7 @@ import { gatherGlobalCues } from '../market/global-cues.js';
 import { latestQuoteClose, sessionChangeVsPriorClose } from '../market/quote-change.js';
 import { lastOpenOnOrBefore, previousOpenTradingDay } from '../market/trading-days.js';
 import type { ScreenDefinition } from '../types/domain.js';
+import { renderCotGoldMacroLine } from './cot-gold-line.js';
 import { renderEtfPricingBlock } from './etf-pricing-card.js';
 import { type MomentumRebalanceSummary, renderMomentumBriefingBlock } from './momentum-card.js';
 import { recordPaperTrades } from './paper-trade-writer.js';
@@ -271,7 +272,13 @@ export async function composeBriefing(
     });
     const flowSnapshot = getFlowAttribution(db, date);
     const flowAttribution = flowSnapshot ? classifyFlowAttribution(flowSnapshot) : null;
-    const card = renderRegimeCard(regimeRow, gateSummary, flowAttribution);
+    const cotGoldLine = renderCotGoldMacroLine(db);
+    const card = renderRegimeCard(
+      regimeRow,
+      gateSummary,
+      flowAttribution,
+      cotGoldLine || undefined,
+    );
     regimeBlock = `${banner}${card}`;
   }
 
