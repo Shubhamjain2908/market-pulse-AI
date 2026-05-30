@@ -108,6 +108,8 @@ export async function fetchInavSnapshots(
     return { date, attempted: 0, written: 0, skipped: 0, failed: false };
   }
 
+  // TODO: reuse NseIngestor's primed HttpClient (see src/ingestors/nse/ingestor.ts) to avoid a
+  // second primeNseCookies handshake per daily run. Safe to defer — once-daily, per-IP soft limits.
   const client =
     opts.client ??
     createHttpClient({

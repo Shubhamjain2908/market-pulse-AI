@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   alertsFromSnapshots,
+  buildEtfPricingAlerts,
   classifyEtfPricingAlert,
 } from '../../src/briefing/etf-pricing-card.js';
 import type { InavSnapshotRow } from '../../src/db/queries.js';
@@ -17,6 +18,12 @@ describe('classifyEtfPricingAlert', () => {
   it('suppresses between-band noise', () => {
     expect(classifyEtfPricingAlert(0.3)).toBeNull();
     expect(classifyEtfPricingAlert(-0.1)).toBeNull();
+  });
+});
+
+describe('buildEtfPricingAlerts', () => {
+  it('returns no alerts when holdings are stale', () => {
+    expect(buildEtfPricingAlerts('2026-05-30', {} as never, true)).toEqual([]);
   });
 });
 

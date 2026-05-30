@@ -40,7 +40,13 @@ export function classifyEtfPricingAlert(
 }
 
 /** Held ETFs (portfolio ∩ etf-exclusions) with actionable premium/discount lines. */
-export function buildEtfPricingAlerts(date: string, db: DatabaseType): EtfPricingAlertRow[] {
+export function buildEtfPricingAlerts(
+  date: string,
+  db: DatabaseType,
+  staleHoldings: boolean,
+): EtfPricingAlertRow[] {
+  if (staleHoldings) return [];
+
   const etfSet = new Set(loadEtfExclusions().map((s) => s.toUpperCase()));
   const held = getLatestHoldings(db)
     .map((h) => h.symbol.toUpperCase())
@@ -89,8 +95,12 @@ function lineForRow(row: EtfPricingAlertRow): string {
 /**
  * HTML section or empty string when no held ETF crosses WARN/NOTE thresholds.
  */
-export function renderEtfPricingBlock(date: string, db: DatabaseType): string {
-  const alerts = buildEtfPricingAlerts(date, db);
+export function renderEtfPricingBlock(
+  date: string,
+  db: DatabaseType,
+  staleHoldings: boolean,
+): string {
+  const alerts = buildEtfPricingAlerts(date, db, staleHoldings);
   if (alerts.length === 0) return '';
 
   const c = THEME;

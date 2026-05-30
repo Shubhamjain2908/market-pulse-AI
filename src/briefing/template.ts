@@ -121,6 +121,8 @@ export interface PortfolioSummary {
   riskRollup?: PortfolioRiskRollup;
   /** Kite holdings `as_of` predates the expected session — AI review was skipped. */
   staleHoldingsWarning?: string;
+  /** Same predicate as `staleHoldingsWarning` — suppress ETF iNAV alerts when true. */
+  staleHoldings?: boolean;
 }
 
 export interface ScreenMatch {

@@ -254,7 +254,8 @@ export async function composeBriefing(
     getMomentumRebalanceBriefingForCalendarDate(date, db) ??
     undefined;
   const momentumBlock = renderMomentumBriefingBlock(date, db, momentumSummary) || undefined;
-  const etfPricingBlock = renderEtfPricingBlock(date, db) || undefined;
+  const etfPricingBlock =
+    renderEtfPricingBlock(date, db, portfolio?.staleHoldings ?? false) || undefined;
 
   let regimeBlock: string | undefined;
   const regimeRow = getRegimeForCalendarDate(date, db);
@@ -653,10 +654,10 @@ function gatherPortfolio(date: string, db: DatabaseType): PortfolioSummary | und
   const expectedSession = lastOpenOnOrBefore(date) ?? date;
   const snapAsOf = holdings[0]?.asOf;
   const hasKiteHolding = holdings.some((h) => h.source === 'kite');
-  const staleHoldingsWarning =
-    hasKiteHolding && snapAsOf && snapAsOf < expectedSession
-      ? `Holdings snapshot as_of ${snapAsOf} is before the expected session ${expectedSession} (IST). Refresh your Kite token and portfolio sync — AI per-name review was skipped.`
-      : undefined;
+  const staleHoldings = Boolean(hasKiteHolding && snapAsOf && snapAsOf < expectedSession);
+  const staleHoldingsWarning = staleHoldings
+    ? `Holdings snapshot as_of ${snapAsOf} is before the expected session ${expectedSession} (IST). Refresh your Kite token and portfolio sync — AI per-name review was skipped.`
+    : undefined;
 
   return {
     totalValue,
@@ -668,6 +669,7 @@ function gatherPortfolio(date: string, db: DatabaseType): PortfolioSummary | und
     positions,
     riskRollup,
     staleHoldingsWarning,
+    staleHoldings,
   };
 }
 
