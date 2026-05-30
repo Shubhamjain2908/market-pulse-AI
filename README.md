@@ -221,6 +221,7 @@ pnpm cli scan              # one-shot intraday LTP refresh + live alerts
 pnpm cli schedule          # start built-in croner schedule (Asia/Kolkata):
                            # weekdays 08:45 + 16:30, Saturday 08:00,
                            # Sunday 06:00 (Yahoo momentum earnings calendar),
+                           # Sunday 07:45 (COMEX gold COT via pnpm cot:gold),
                            # Sunday 08:00 (momentum rank + rebalance + skip-AI briefing w/ rebalance summary + deliver)
 pnpm cli schedule --run-now
 
@@ -452,6 +453,7 @@ A **meta-layer** on top of the existing pipeline: each open session gets a singl
 - **Briefing**: [`src/briefing/regime-card.ts`](src/briefing/regime-card.ts) renders a card + optional change banner; [`src/briefing/composer.ts`](src/briefing/composer.ts) loads `regime_daily` for the briefing session date (including weekend/holiday handling via last open session).
 - **FII/DII flow attribution** (rule-based, no LLM): [`getFlowAttribution`](src/db/queries.ts) sums the last up to **five cash-segment trading sessions** on or before the briefing date; [`classifyFlowAttribution`](src/briefing/composer.ts) maps rolling FII/DII nets (₹ crore) to **INSTITUTIONAL_ROTATION**, **BROAD_EXIT**, or **FII_ACCUMULATION** (thresholds in composer). **BALANCED** and windows with **&lt; 3 sessions** are suppressed. The block sits in the regime card **between the score tiles and the regime narrative**, with table + inline styles for email (juice-inlined from [`renderBriefing`](src/briefing/template.ts)).
 - **ETF iNAV pricing** (rule-based, fail-open): [`fetchInavSnapshots`](src/ingestors/inav-fetcher.ts) runs after Yahoo snapshot ingest (before regime classify), reads NSE [`/api/etf`](https://www.nseindia.com/api/etf) for symbols in [`config/etf-exclusions.json`](config/etf-exclusions.json), persists [`inav_snapshots`](src/db/migrations/0018_inav_snapshots.sql). Briefing **ETF Pricing** section ([`etf-pricing-card.ts`](src/briefing/etf-pricing-card.ts)) shows **WARN** when held ETF premium **&gt; 0.5%**, **NOTE** when discount **&gt; 0.25%**; mid-band and missing NSE data produce no section.
+- **COMEX gold COT** (weekly, fail-open): [`pnpm cot:gold`](scripts/cot-gold-fetch.ts) pulls CFTC disaggregated [`f_disagg.txt`](https://www.cftc.gov/dea/newcot/f_disagg.txt) (COMEX / `CMX` gold; managed-money as non-commercial proxy), stores [`cot_gold`](src/db/migrations/0019_cot_gold.sql). Regime card shows one line when **CROWDED_LONG** (net/OI **&gt; 35%**) or **CROWDED_SHORT** (**&lt; 10%**); **NEUTRAL** suppressed. Scheduled **Sunday 07:45 IST** before momentum rebalance.
 
 **Orchestration**
 

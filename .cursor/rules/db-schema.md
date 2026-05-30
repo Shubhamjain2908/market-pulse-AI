@@ -76,6 +76,15 @@ CREATE TABLE inav_snapshots (
   PRIMARY KEY (symbol, date)
 );
 CREATE INDEX idx_inav_snapshots_date ON inav_snapshots(date);
+CREATE TABLE cot_gold (
+  report_date       TEXT NOT NULL PRIMARY KEY,
+  mm_long           INTEGER NOT NULL,
+  mm_short          INTEGER NOT NULL,
+  mm_net            INTEGER NOT NULL,
+  open_interest     INTEGER NOT NULL,
+  mm_net_oi_ratio   REAL NOT NULL,
+  ingested_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE signals (
   symbol     TEXT NOT NULL,
   date       TEXT NOT NULL,
