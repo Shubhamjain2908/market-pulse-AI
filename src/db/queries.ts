@@ -289,6 +289,66 @@ export function getFlowAttribution(db: DatabaseType, asOf: string): FlowAttribut
 }
 
 // ---------------------------------------------------------------------------
+// ETF iNAV snapshots (NSE /api/etf)
+// ---------------------------------------------------------------------------
+
+export interface InavSnapshotRow {
+  symbol: string;
+  date: string;
+  inav: number;
+  lastPrice: number;
+  premiumDiscountPct: number;
+  capturedAt: string;
+}
+
+export function upsertInavSnapshots(rows: InavSnapshotRow[], db: DatabaseType = getDb()): number {
+  if (rows.length === 0) return 0;
+  const stmt = db.prepare(`
+    INSERT INTO inav_snapshots (
+      symbol, date, inav, last_price, premium_discount_pct, captured_at
+    )
+    VALUES (
+      @symbol, @date, @inav, @lastPrice, @premiumDiscountPct, @capturedAt
+    )
+    ON CONFLICT(symbol, date) DO UPDATE SET
+      inav                 = excluded.inav,
+      last_price           = excluded.last_price,
+      premium_discount_pct = excluded.premium_discount_pct,
+      captured_at          = excluded.captured_at
+  `);
+  const tx = db.transaction((batch: InavSnapshotRow[]) => {
+    for (const r of batch) stmt.run(r);
+  });
+  tx(rows);
+  return rows.length;
+}
+
+export function getInavSnapshotsForDate(
+  date: string,
+  symbols: string[],
+  db: DatabaseType = getDb(),
+): InavSnapshotRow[] {
+  if (symbols.length === 0) return [];
+  const upper = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  const placeholders = upper.map(() => '?').join(', ');
+  return db
+    .prepare(
+      `
+      SELECT
+        symbol,
+        date,
+        inav,
+        last_price AS lastPrice,
+        premium_discount_pct AS premiumDiscountPct,
+        captured_at AS capturedAt
+      FROM inav_snapshots
+      WHERE date = ? AND symbol IN (${placeholders})
+    `,
+    )
+    .all(date, ...upper) as InavSnapshotRow[];
+}
+
+// ---------------------------------------------------------------------------
 // Signals
 // ---------------------------------------------------------------------------
 

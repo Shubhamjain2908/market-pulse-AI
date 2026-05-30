@@ -139,6 +139,20 @@ CREATE TABLE IF NOT EXISTS briefings (
 CREATE INDEX IF NOT EXISTS idx_briefings_date ON briefings(date);
 
 -- -----------------------------------------------------------------------
+-- ETF iNAV snapshots (NSE /api/etf) — migration 0018
+-- -----------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inav_snapshots (
+  symbol                 TEXT NOT NULL,
+  date                   TEXT NOT NULL,
+  inav                   REAL NOT NULL,
+  last_price             REAL NOT NULL,
+  premium_discount_pct   REAL NOT NULL,
+  captured_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (symbol, date)
+);
+CREATE INDEX IF NOT EXISTS idx_inav_snapshots_date ON inav_snapshots(date);
+
+-- -----------------------------------------------------------------------
 -- 9. Symbol universe - master list, populated from NSE 500 + watchlist
 -- -----------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS symbols (
