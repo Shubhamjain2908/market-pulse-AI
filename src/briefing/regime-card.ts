@@ -81,6 +81,7 @@ export function renderRegimeCard(
   row: RegimeRow,
   gateSummary: RegimeGateSummary,
   flowAttribution?: RegimeFlowAttribution | null,
+  cotGoldMacroLine?: string,
 ): string {
   const pal = REGIME_PALETTE[row.regime];
   const narrative = row.narrative?.trim() || 'No narrative stored for this session.';
@@ -130,6 +131,7 @@ export function renderRegimeCard(
     </div>
     <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout regime-tiles-table" style="margin-bottom:12px;"><tr>${tiles}</tr></table>
     ${flowAttribution ? renderFlowAttributionBlock(flowAttribution) : ''}
+    ${cotGoldMacroLine ?? ''}
     <p class="regime-narrative">${esc(narrative)}</p>
     <p class="regime-gate-summary muted">${esc(gateLine)}</p>
   </section>`;

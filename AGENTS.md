@@ -39,6 +39,6 @@
 - Quality gate before handoff: `pnpm typecheck && pnpm test && pnpm lint`.
 
 ## Scheduler and Tests
-- Scheduler in `src/scheduler/market-scheduler.ts` (Asia/Kolkata): weekdays 08:45/16:30, Saturday 08:00, Sunday 06:00 earnings refresh, Sunday 08:00 momentum rebalance + skip-AI briefing delivery.
+- Scheduler in `src/scheduler/market-scheduler.ts` (Asia/Kolkata): weekdays 08:45/16:30, Saturday 08:00, Sunday 06:00 earnings refresh, Sunday 07:45 COMEX gold COT (`pnpm cot:gold`), Sunday 08:00 momentum rebalance + skip-AI briefing delivery.
 - Keep schedule changes synchronized between code and docs in `README.md`.
 - Tests default to `NODE_ENV=test` and `LLM_PROVIDER=mock` (`tests/setup.ts`); add tests in the nearest domain folder for gating/briefing-sensitive changes.

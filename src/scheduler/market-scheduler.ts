@@ -6,6 +6,7 @@
  *  - Weekdays 16:30
  *  - Saturday 08:00
  *  - Sunday 06:00 — Yahoo momentum earnings calendar refresh (weekly)
+ *  - Sunday 07:45 — COMEX gold COT ingest (CFTC disaggregated file)
  *  - Sunday 08:00 — momentum rank + rebalance (paper_trades), then skip-AI briefing with rebalance summary (delivered per BRIEFING_DELIVERY)
  */
 
@@ -16,6 +17,7 @@ import { deliverBriefing } from '../briefing/dispatch.js';
 import { config } from '../config/env.js';
 import { getMomentumUniverseSymbols } from '../config/loaders.js';
 import { MARKET_TIMEZONE } from '../constants.js';
+import { fetchGoldCot } from '../cot/fetch-gold-cot.js';
 import { closeDb, getDb, migrate } from '../db/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
@@ -49,6 +51,11 @@ export function startScheduler(): SchedulerHandle {
     { timezone: MARKET_TIMEZONE, protect: true },
     () => void runSundayEarningsRefresh(),
   );
+  const sundayCotGold = new Cron(
+    '45 7 * * 0',
+    { timezone: MARKET_TIMEZONE, protect: true },
+    () => void runSundayCotGoldFetch(),
+  );
   const sundayMomentumRebalance = new Cron(
     '0 8 * * 0',
     { timezone: MARKET_TIMEZONE, protect: true },
@@ -58,7 +65,14 @@ export function startScheduler(): SchedulerHandle {
   log.info(
     {
       timezone: MARKET_TIMEZONE,
-      schedules: ['45 8 * * 1-5', '30 16 * * 1-5', '0 8 * * 6', '0 6 * * 0', '0 8 * * 0'],
+      schedules: [
+        '45 8 * * 1-5',
+        '30 16 * * 1-5',
+        '0 8 * * 6',
+        '0 6 * * 0',
+        '45 7 * * 0',
+        '0 8 * * 0',
+      ],
       delivery: config.BRIEFING_DELIVERY,
     },
     'scheduler started',
@@ -70,6 +84,7 @@ export function startScheduler(): SchedulerHandle {
       weekdayClose.stop();
       saturdayMorning.stop();
       sundayEarnings.stop();
+      sundayCotGold.stop();
       sundayMomentumRebalance.stop();
       log.info('scheduler stopped');
     },
@@ -119,6 +134,33 @@ async function runSundayMomentumRebalance(): Promise<void> {
     log.error(
       { tag: 'sun-0800', health: 'error', durationMs: Date.now() - t0, err },
       'Sunday momentum rebalance failed',
+    );
+  } finally {
+    closeDb();
+  }
+}
+
+async function runSundayCotGoldFetch(): Promise<void> {
+  const t0 = Date.now();
+  log.info({ tag: 'sun-0745', health: 'started' }, 'Sunday COMEX gold COT fetch started');
+  try {
+    migrate();
+    const result = await fetchGoldCot(getDb());
+    log.info(
+      {
+        tag: 'sun-0745',
+        health: result.ok ? 'ok' : 'warn',
+        durationMs: Date.now() - t0,
+        inserted: result.inserted,
+        reportDate: result.row?.reportDate,
+        classification: result.row?.classification,
+      },
+      'Sunday COMEX gold COT fetch finished',
+    );
+  } catch (err) {
+    log.error(
+      { tag: 'sun-0745', health: 'error', durationMs: Date.now() - t0, err },
+      'Sunday COMEX gold COT fetch failed',
     );
   } finally {
     closeDb();

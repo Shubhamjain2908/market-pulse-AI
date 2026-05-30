@@ -153,6 +153,19 @@ CREATE TABLE IF NOT EXISTS inav_snapshots (
 CREATE INDEX IF NOT EXISTS idx_inav_snapshots_date ON inav_snapshots(date);
 
 -- -----------------------------------------------------------------------
+-- COMEX gold COT (CFTC disaggregated) — migration 0019
+-- -----------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS cot_gold (
+  report_date       TEXT NOT NULL PRIMARY KEY,
+  mm_long           INTEGER NOT NULL,
+  mm_short          INTEGER NOT NULL,
+  mm_net            INTEGER NOT NULL,
+  open_interest     INTEGER NOT NULL,
+  mm_net_oi_ratio   REAL NOT NULL,
+  ingested_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- -----------------------------------------------------------------------
 -- 9. Symbol universe - master list, populated from NSE 500 + watchlist
 -- -----------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS symbols (

@@ -34,6 +34,7 @@
     "regime:audit-history": "tsx scripts/audit-regime-history.mts",
     "momentum:backfill-universe": "tsx scripts/backfill-momentum-universe.mts",
     "momentum:refresh-earnings": "tsx scripts/refresh-earnings-calendar.mts",
+    "cot:gold": "tsx scripts/cot-gold-fetch.ts",
     "momentum:rank": "tsx src/cli.ts momentum-rank",
     "momentum:rebalance": "tsx src/cli.ts momentum-rebalance",
     "backtest:option-a": "tsx src/backtest/runner.ts",
