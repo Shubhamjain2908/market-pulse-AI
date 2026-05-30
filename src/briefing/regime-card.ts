@@ -4,6 +4,7 @@
 
 import type { RegimeGateSummaryRow } from '../db/regime-queries.js';
 import type { Regime, RegimeRow } from '../types/regime.js';
+import { THEME } from './template.js';
 
 function esc(s: string | number | undefined | null): string {
   if (s == null) return '';
@@ -59,7 +60,28 @@ export interface RegimeGateSummary {
   totalRows: number;
 }
 
-export function renderRegimeCard(row: RegimeRow, gateSummary: RegimeGateSummary): string {
+/** Rule-based FII/DII 5-session flow label shown between score tiles and regime narrative. */
+export interface RegimeFlowAttribution {
+  label: string;
+  narrative: string;
+}
+
+function renderFlowAttributionBlock(flow: RegimeFlowAttribution): string {
+  const c = THEME;
+  return `
+    <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout regime-flow-attribution" style="margin:0 0 10px;" aria-label="FII/DII flow attribution"><tr>
+      <td style="padding:8px 10px;border-left:3px solid ${c.border};background:rgba(255,255,255,0.45);border-radius:0 6px 6px 0;">
+        <p class="regime-flow-label" style="margin:0 0 4px;font-size:13px;font-weight:600;line-height:1.4;color:${c.text};">${esc(flow.label)}</p>
+        <p class="regime-flow-narrative" style="margin:0;font-size:12px;line-height:1.45;color:${c.muted};">${esc(flow.narrative)}</p>
+      </td>
+    </tr></table>`;
+}
+
+export function renderRegimeCard(
+  row: RegimeRow,
+  gateSummary: RegimeGateSummary,
+  flowAttribution?: RegimeFlowAttribution | null,
+): string {
   const pal = REGIME_PALETTE[row.regime];
   const narrative = row.narrative?.trim() || 'No narrative stored for this session.';
   const active = gateSummary.active.length;
@@ -107,6 +129,7 @@ export function renderRegimeCard(row: RegimeRow, gateSummary: RegimeGateSummary)
       </tr></table>
     </div>
     <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout regime-tiles-table" style="margin-bottom:12px;"><tr>${tiles}</tr></table>
+    ${flowAttribution ? renderFlowAttributionBlock(flowAttribution) : ''}
     <p class="regime-narrative">${esc(narrative)}</p>
     <p class="regime-gate-summary muted">${esc(gateLine)}</p>
   </section>`;

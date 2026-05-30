@@ -259,6 +259,35 @@ export function upsertFiiDii(rows: FiiDiiRow[], db: DatabaseType = getDb()): num
   return rows.length;
 }
 
+/** Rolling cash-segment FII/DII nets for flow-attribution (up to 5 sessions on or before `asOf`). */
+export interface FlowAttributionSnapshot {
+  fiiNetSum: number;
+  diiNetSum: number;
+  sessionCount: number;
+}
+
+export function getFlowAttribution(db: DatabaseType, asOf: string): FlowAttributionSnapshot | null {
+  const rows = db
+    .prepare(
+      `
+      SELECT fii_net AS fiiNet, dii_net AS diiNet
+      FROM fii_dii
+      WHERE segment = 'cash' AND date <= ?
+      ORDER BY date DESC
+      LIMIT 5
+    `,
+    )
+    .all(asOf) as Array<{ fiiNet: number; diiNet: number }>;
+
+  if (rows.length === 0) return null;
+
+  return {
+    fiiNetSum: rows.reduce((s, r) => s + r.fiiNet, 0),
+    diiNetSum: rows.reduce((s, r) => s + r.diiNet, 0),
+    sessionCount: rows.length,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Signals
 // ---------------------------------------------------------------------------

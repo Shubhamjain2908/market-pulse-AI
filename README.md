@@ -12,7 +12,8 @@ short, actionable briefing before market open.
 > BEAR_TRENDING / CHOPPY / CRISIS) from multi-factor signals, optional LLM
 > one-line narrative (plain text; templated fallback on failure),
 > `regime_daily` + `regime_strategy_gate` tables, per-screen and per-agent
-> gating with size multipliers, regime card + change banner in the HTML briefing,
+> gating with size multipliers, regime card + change banner + rule-based FII/DII
+> flow attribution (5-session cash, no extra LLM) in the HTML briefing,
 > and wiring in `pnpm daily` / `pnpm run-all` before screening and thesis
 > generation. **Momentum screener (multi-factor)** shipped: `mom_*` signals +
 > weekly ranker / rebalance into `paper_trades` (`momentum_mf`), regime-gated
@@ -449,6 +450,7 @@ A **meta-layer** on top of the existing pipeline: each open session gets a singl
 - **Stock screener** passes through the active regime; **thesis generator** skips `ai_picks_generation` when the gate says so ([`src/agents/thesis-generator.ts`](src/agents/thesis-generator.ts)).
 - **Risk tooling** (`portfolio_exit_signals`, `trailing_stop_update`) stays on across regimes per config.
 - **Briefing**: [`src/briefing/regime-card.ts`](src/briefing/regime-card.ts) renders a card + optional change banner; [`src/briefing/composer.ts`](src/briefing/composer.ts) loads `regime_daily` for the briefing session date (including weekend/holiday handling via last open session).
+- **FII/DII flow attribution** (rule-based, no LLM): [`getFlowAttribution`](src/db/queries.ts) sums the last up to **five cash-segment trading sessions** on or before the briefing date; [`classifyFlowAttribution`](src/briefing/composer.ts) maps rolling FII/DII nets (₹ crore) to **INSTITUTIONAL_ROTATION**, **BROAD_EXIT**, or **FII_ACCUMULATION** (thresholds in composer). **BALANCED** and windows with **&lt; 3 sessions** are suppressed. The block sits in the regime card **between the score tiles and the regime narrative**, with table + inline styles for email (juice-inlined from [`renderBriefing`](src/briefing/template.ts)).
 
 **Orchestration**
 

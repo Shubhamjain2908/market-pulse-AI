@@ -24,6 +24,8 @@ import {
   type PortfolioHoldingRow,
 } from '../db/index.js';
 import {
+  type FlowAttributionSnapshot,
+  getFlowAttribution,
   getMomentumRebalanceBriefingForCalendarDate,
   getPaperTradeStats,
   getSymbolSectors,
@@ -40,7 +42,11 @@ import { lastOpenOnOrBefore, previousOpenTradingDay } from '../market/trading-da
 import type { ScreenDefinition } from '../types/domain.js';
 import { type MomentumRebalanceSummary, renderMomentumBriefingBlock } from './momentum-card.js';
 import { recordPaperTrades } from './paper-trade-writer.js';
-import { renderRegimeCard, renderRegimeChangeBanner } from './regime-card.js';
+import {
+  type RegimeFlowAttribution,
+  renderRegimeCard,
+  renderRegimeChangeBanner,
+} from './regime-card.js';
 import { classifySector } from './sector-classifier.js';
 import {
   type AiPicksSectionStatus,
@@ -59,6 +65,72 @@ import {
 import { renderTrailingStopBriefingBlock } from './trailing-stop-card.js';
 
 const log = child({ component: 'briefing-composer' });
+
+/** FII/DII flow-attribution thresholds (₹ crore, cash segment, rolling window). */
+const FLOW_ATTR_WINDOW_SESSIONS = 5;
+/** Fewer cash rows → suppress block (stale/partial ingest). */
+const FLOW_ATTR_MIN_SESSIONS = 3;
+const FLOW_ATTR_FII_SELL_SUM_CR = -500;
+const FLOW_ATTR_FII_BUY_SUM_CR = 500;
+const FLOW_ATTR_DII_BUY_SUM_CR = 300;
+const FLOW_ATTR_DII_SELL_SUM_CR = -200;
+
+type FlowAttributionPattern =
+  | 'INSTITUTIONAL_ROTATION'
+  | 'BROAD_EXIT'
+  | 'FII_ACCUMULATION'
+  | 'BALANCED';
+
+function formatFlowCr(n: number): string {
+  const sign = n >= 0 ? '+' : '';
+  return `${sign}₹${n.toFixed(0)}`;
+}
+
+export function classifyFlowAttribution(
+  snapshot: FlowAttributionSnapshot,
+): RegimeFlowAttribution | null {
+  const { fiiNetSum, diiNetSum, sessionCount } = snapshot;
+  if (sessionCount < FLOW_ATTR_MIN_SESSIONS) return null;
+
+  const windowLabel =
+    sessionCount >= FLOW_ATTR_WINDOW_SESSIONS
+      ? `${FLOW_ATTR_WINDOW_SESSIONS}-session`
+      : `${sessionCount}-session`;
+  const partialNote =
+    sessionCount < FLOW_ATTR_WINDOW_SESSIONS ? `Based on ${sessionCount} cash sessions — ` : '';
+  const sums = `FII ${formatFlowCr(fiiNetSum)}, DII ${formatFlowCr(diiNetSum)} (${windowLabel} cash).`;
+
+  let pattern: FlowAttributionPattern = 'BALANCED';
+  if (fiiNetSum < FLOW_ATTR_FII_SELL_SUM_CR && diiNetSum > FLOW_ATTR_DII_BUY_SUM_CR) {
+    pattern = 'INSTITUTIONAL_ROTATION';
+  } else if (fiiNetSum < FLOW_ATTR_FII_SELL_SUM_CR && diiNetSum < FLOW_ATTR_DII_SELL_SUM_CR) {
+    pattern = 'BROAD_EXIT';
+  } else if (fiiNetSum > FLOW_ATTR_FII_BUY_SUM_CR && diiNetSum < 0) {
+    pattern = 'FII_ACCUMULATION';
+  }
+
+  if (pattern === 'BALANCED') return null;
+
+  switch (pattern) {
+    case 'INSTITUTIONAL_ROTATION':
+      return {
+        label: 'Institutional rotation — foreigners net sellers, domestic buyers absorbing.',
+        narrative: `${partialNote}${sums} Overseas outflows are being offset by DII support rather than broad capitulation.`,
+      };
+    case 'BROAD_EXIT':
+      return {
+        label: 'Broad exit — both FII and DII are net sellers over the window.',
+        narrative: `${partialNote}${sums} Liquidity is leaving from both sleeves; treat risk-off positioning as the base case.`,
+      };
+    case 'FII_ACCUMULATION':
+      return {
+        label: 'FII accumulation — foreign buyers while domestic institutions step back.',
+        narrative: `${partialNote}${sums} Offshore demand is positive without matching domestic follow-through.`,
+      };
+    default:
+      return null;
+  }
+}
 
 export interface ComposeBriefingOptions {
   /** ISO date (YYYY-MM-DD) for the briefing. Defaults to today IST. */
@@ -194,7 +266,9 @@ export async function composeBriefing(
     const banner = renderRegimeChangeBanner(regimeRow, {
       prevScoreTotal: prevRow?.scoreTotal ?? null,
     });
-    const card = renderRegimeCard(regimeRow, gateSummary);
+    const flowSnapshot = getFlowAttribution(db, date);
+    const flowAttribution = flowSnapshot ? classifyFlowAttribution(flowSnapshot) : null;
+    const card = renderRegimeCard(regimeRow, gateSummary, flowAttribution);
     regimeBlock = `${banner}${card}`;
   }
 
