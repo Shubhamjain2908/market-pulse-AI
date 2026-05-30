@@ -3,7 +3,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
-import { type CotGoldClassification, classifyCotGoldRatio } from '../cot/gold-cot.js';
+import { type CotGoldClassification, classifyCotGoldPosition } from '../cot/gold-cot.js';
 import { getLatestCotGold } from '../db/queries.js';
 import { THEME } from './template.js';
 
@@ -22,7 +22,7 @@ export function renderCotGoldMacroLine(db: DatabaseType): string {
   const row = getLatestCotGold(db);
   if (!row) return '';
 
-  const classification = classifyCotGoldRatio(row.mmNetOiRatio);
+  const classification = classifyCotGoldPosition(row.mmNet, row.mmNetOiRatio);
   if (classification === 'NEUTRAL') return '';
 
   const c = THEME;

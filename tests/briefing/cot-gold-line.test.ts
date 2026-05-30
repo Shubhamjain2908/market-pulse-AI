@@ -44,6 +44,24 @@ describe('renderCotGoldMacroLine', () => {
     expect(renderCotGoldMacroLine(db)).toBe('');
   });
 
+  it('renders crowded short when managed money is net short', () => {
+    insertCotGoldIgnore(
+      {
+        reportDate: '2026-05-13',
+        mmLong: 50,
+        mmShort: 80,
+        mmNet: -30,
+        openInterest: 200,
+        mmNetOiRatio: -0.15,
+        ingestedAt: '2026-05-13T07:45:00.000Z',
+      },
+      db,
+    );
+    const html = renderCotGoldMacroLine(db);
+    expect(html).toContain('CROWDED SHORT');
+    expect(html).toContain('-15.0%');
+  });
+
   it('renders crowded long line', () => {
     insertCotGoldIgnore(
       {
