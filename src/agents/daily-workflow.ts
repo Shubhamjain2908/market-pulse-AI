@@ -13,6 +13,7 @@ import { getDb } from '../db/index.js';
 import { enrichSentiment } from '../enrichers/sentiment/enricher.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { applyCorporateActionsFromYahooSplits } from '../ingestors/corporate-actions.js';
+import { fetchInavSnapshots } from '../ingestors/inav-fetcher.js';
 import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { ingestYahooSnapshots } from '../ingestors/yahoo-snapshot-ingestor.js';
 import { child } from '../logger.js';
@@ -156,7 +157,7 @@ export async function runDailyWorkflow(
     warnings.push({ category: 'Corporate actions', message: msg });
   }
   await runSignalEnricher({ date });
-  log.info('pipeline: enrich complete, starting regime classification');
+  log.info('pipeline: enrich complete, starting yahoo snapshot ingest');
   try {
     const snap = await ingestYahooSnapshots(getDb(), { date });
     if (snap.failed > 0) {
@@ -170,6 +171,18 @@ export async function runDailyWorkflow(
       'yahoo snapshot ingest failed unexpectedly; continuing workflow',
     );
   }
+  try {
+    const inav = await fetchInavSnapshots({ date, db: getDb() });
+    if (inav.failed) {
+      log.warn({ date }, 'inav snapshot ingest skipped after NSE failure');
+    }
+  } catch (err) {
+    log.warn(
+      { err: (err as Error).message },
+      'inav snapshot ingest failed unexpectedly; continuing',
+    );
+  }
+  log.info('pipeline: inav snapshots complete, starting regime classification');
   const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
   const momRegimeExits = applyMomentumRegimeGateExits({
     calendarDate: date,
