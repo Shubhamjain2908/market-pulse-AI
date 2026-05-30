@@ -349,6 +349,57 @@ export function getInavSnapshotsForDate(
 }
 
 // ---------------------------------------------------------------------------
+// COMEX gold COT (CFTC disaggregated)
+// ---------------------------------------------------------------------------
+
+export interface CotGoldRow {
+  reportDate: string;
+  mmLong: number;
+  mmShort: number;
+  mmNet: number;
+  openInterest: number;
+  mmNetOiRatio: number;
+  ingestedAt: string;
+}
+
+export function insertCotGoldIgnore(row: CotGoldRow, db: DatabaseType = getDb()): boolean {
+  const result = db
+    .prepare(
+      `
+      INSERT OR IGNORE INTO cot_gold (
+        report_date, mm_long, mm_short, mm_net, open_interest, mm_net_oi_ratio, ingested_at
+      )
+      VALUES (
+        @reportDate, @mmLong, @mmShort, @mmNet, @openInterest, @mmNetOiRatio, @ingestedAt
+      )
+    `,
+    )
+    .run(row);
+  return result.changes > 0;
+}
+
+export function getLatestCotGold(db: DatabaseType = getDb()): CotGoldRow | null {
+  const row = db
+    .prepare(
+      `
+      SELECT
+        report_date AS reportDate,
+        mm_long AS mmLong,
+        mm_short AS mmShort,
+        mm_net AS mmNet,
+        open_interest AS openInterest,
+        mm_net_oi_ratio AS mmNetOiRatio,
+        ingested_at AS ingestedAt
+      FROM cot_gold
+      ORDER BY report_date DESC
+      LIMIT 1
+    `,
+    )
+    .get();
+  return (row as CotGoldRow | undefined) ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Signals
 // ---------------------------------------------------------------------------
 
