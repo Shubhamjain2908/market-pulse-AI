@@ -613,12 +613,18 @@ function rankCandidates(date: string, universe: string[], db: DatabaseType): Can
 // External signal holdings context (thesis user message only; table optional)
 // ---------------------------------------------------------------------------
 
+/** Display-name cache for ext-signal config; stable for one Node process / daily run. */
 let extSignalConfigCache: ExtSignalProviderFile | null = null;
 
 function loadExtSignalConfig(): ExtSignalProviderFile {
   if (extSignalConfigCache) return extSignalConfigCache;
   extSignalConfigCache = loadExtSignalProvider();
   return extSignalConfigCache;
+}
+
+/** Tests only — separate from `loaders.clearConfigCache()`. */
+export function resetExtSignalConfigCacheForTests(): void {
+  extSignalConfigCache = null;
 }
 
 function getExtSignalContext(db: DatabaseType, symbol: string, asOf: string): string | null {
