@@ -62,4 +62,10 @@ export const DEFAULT_FEEDS: FeedDefinition[] = [
     marketWide: true,
     userAgent: POLITE_BOT_UA,
   },
+  {
+    id: 'hindu-business-line',
+    label: 'The Hindu Business Line',
+    url: 'https://www.thehindubusinessline.com/feeder/default.rss',
+    marketWide: true,
+  },
 ];
