@@ -8,7 +8,11 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { config } from '../config/env.js';
-import { loadWatchlist } from '../config/loaders.js';
+import {
+  type ExtSignalProviderFile,
+  loadExtSignalProvider,
+  loadWatchlist,
+} from '../config/loaders.js';
 import { getDb, getLatestHoldings, isStrategyAllowed } from '../db/index.js';
 import {
   getDistinctOpenPaperTradeSymbols,
@@ -606,6 +610,56 @@ function rankCandidates(date: string, universe: string[], db: DatabaseType): Can
 }
 
 // ---------------------------------------------------------------------------
+// External signal holdings context (thesis user message only; table optional)
+// ---------------------------------------------------------------------------
+
+/** Display-name cache for ext-signal config; stable for one Node process / daily run. */
+let extSignalConfigCache: ExtSignalProviderFile | null = null;
+
+function loadExtSignalConfig(): ExtSignalProviderFile {
+  if (extSignalConfigCache) return extSignalConfigCache;
+  extSignalConfigCache = loadExtSignalProvider();
+  return extSignalConfigCache;
+}
+
+/** Tests only — separate from `loaders.clearConfigCache()`. */
+export function resetExtSignalConfigCacheForTests(): void {
+  extSignalConfigCache = null;
+}
+
+function getExtSignalContext(db: DatabaseType, symbol: string, asOf: string): string | null {
+  try {
+    const rows = db
+      .prepare(
+        `
+      SELECT strategy_name, weight_pct
+      FROM ext_signal_holdings
+      WHERE symbol = ? AND as_of = ?
+    `,
+      )
+      .all(symbol, asOf) as Array<{ strategy_name: string; weight_pct: number }>;
+
+    if (rows.length === 0) return null;
+
+    const config = loadExtSignalConfig();
+    const lines = rows.map((r) => {
+      const strat = config.strategies.find((s) => s.name === r.strategy_name);
+      const label = strat?.display_name ?? r.strategy_name;
+      return `${label} (${r.weight_pct.toFixed(1)}% weight)`;
+    });
+
+    return [
+      '## External signal (corroborating only)',
+      `This symbol appears in the following external model portfolios as of ${asOf}: ${lines.join(', ')}.`,
+      'Treat as weak corroboration only — not a primary thesis input.',
+      'Do not reference or name the signal source in the thesis output.',
+    ].join('\n');
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Context builder — assembles everything the LLM needs for a single stock
 // ---------------------------------------------------------------------------
 
@@ -752,6 +806,9 @@ export function buildStockContext(
         );
       }
     }
+
+    const extCtx = getExtSignalContext(db, symbol, date);
+    if (extCtx) sections.push(`\n${extCtx}`);
   }
 
   return sections.join('\n');

@@ -25,6 +25,7 @@
  *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
  *   mp schedule          Start croner jobs (08:45 / 16:30 weekdays, Sat 08:00, Sun 06:00 earnings)
  *   mp llm-smoke         Quick live LLM text+JSON sanity check for current provider
+ *   mp ext-signal-smoke  Live ext-signal ingest + portfolio overlap report
  *   mp doctor            Print runtime/config diagnostics
  *   mp regime            Full regime agent (classify + LLM narrative → regime_daily)
  *   mp regime:classify   Deterministic regime only (narrative null)
@@ -74,6 +75,7 @@ import { syncSymbolSectorsFromYahoo } from './market/yahoo-sectors.js';
 import { runMomentumRanker } from './rankers/momentum-ranker.js';
 import { startScheduler } from './scheduler/market-scheduler.js';
 import { runEvaluatePaperTrades } from './scripts/evaluate-trades.js';
+import { runExtSignalSmoke } from './scripts/ext-signal-smoke.js';
 import {
   runMomentumRebalance,
   toMomentumRebalanceBriefingSummary,
@@ -728,6 +730,38 @@ program
   });
 
 program
+  .command('ext-signal-smoke')
+  .description(
+    'sync portfolio, ingest external signal holdings, print overlap vs your holdings (live API)',
+  )
+  .option(
+    '--skip-portfolio-sync',
+    'use latest portfolio_holdings snapshot instead of running portfolio sync',
+  )
+  .action(async (opts: { skipPortfolioSync?: boolean }) => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+    try {
+      const result = await runExtSignalSmoke({
+        date,
+        skipPortfolioSync: Boolean(opts.skipPortfolioSync),
+      });
+      console.log(JSON.stringify(result, null, 2));
+      if (result.ingest.skipped) {
+        logger.error({ skipReason: result.ingest.skipReason }, 'ext-signal-smoke skipped');
+        process.exitCode = 1;
+        return;
+      }
+      if (result.ingest.strategiesSucceeded === 0) {
+        logger.error('ext-signal-smoke: no strategies ingested successfully');
+        process.exitCode = 1;
+      }
+    } finally {
+      closeDb();
+    }
+  });
+
+program
   .command('llm-smoke')
   .description('quick live LLM text + JSON smoke check for active provider')
   .action(async () => {
@@ -792,6 +826,8 @@ program
         smtp: redact(config.SMTP_USER),
         slack: redact(config.SLACK_WEBHOOK_URL),
         telegram: redact(config.TELEGRAM_BOT_TOKEN),
+        extSignalEndpoint: redact(process.env.EXT_SIGNAL_ENDPOINT),
+        extSignalApiKey: redact(process.env.EXT_SIGNAL_API_KEY),
         vertexProject: config.GOOGLE_VERTEX_PROJECT ? 'set' : 'missing',
       },
     };

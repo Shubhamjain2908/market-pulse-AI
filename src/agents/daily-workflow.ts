@@ -13,6 +13,7 @@ import { getDb } from '../db/index.js';
 import { enrichSentiment } from '../enrichers/sentiment/enricher.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { applyCorporateActionsFromYahooSplits } from '../ingestors/corporate-actions.js';
+import { runExtSignalHoldingsIngestor } from '../ingestors/ext-signal-holdings-ingestor.js';
 import { fetchInavSnapshots } from '../ingestors/inav-fetcher.js';
 import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { ingestYahooSnapshots } from '../ingestors/yahoo-snapshot-ingestor.js';
@@ -170,6 +171,11 @@ export async function runDailyWorkflow(
       { err: (err as Error).message },
       'yahoo snapshot ingest failed unexpectedly; continuing workflow',
     );
+  }
+  try {
+    await runExtSignalHoldingsIngestor(getDb());
+  } catch (err) {
+    log.warn({ err }, 'ext signal holdings ingestor failed — continuing');
   }
   try {
     const inav = await fetchInavSnapshots({ date, db: getDb() });

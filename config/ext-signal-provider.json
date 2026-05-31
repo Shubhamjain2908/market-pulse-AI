@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "strategies": [
+    {
+      "name": "momentum_blend_monthly_rebalance",
+      "display_name": "Multi-Horizon Momentum Blend"
+    },
+    {
+      "name": "DCF_Compounder_Stack",
+      "display_name": "DCF Compounder Stack"
+    }
+  ]
+}

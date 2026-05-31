@@ -11,6 +11,7 @@ import type { Portfolio, ScreenDefinition } from '../types/domain.js';
 import { PortfolioSchema, ScreenDefinitionSchema } from '../types/domain.js';
 import type { StrategyGatesFile } from '../types/regime.js';
 import { RegimeSchema, StrategyGatesFileSchema } from '../types/regime.js';
+import { PROJECT_ROOT } from './project-paths.js';
 
 const cache = new Map<string, unknown>();
 
@@ -149,6 +150,36 @@ export function getMomentumUniverseSymbols(opts: LoaderOptions = {}): string[] {
 export function loadMomentumConfig(opts: LoaderOptions = {}): MomentumConfig {
   const path = opts.path ?? resolve(process.cwd(), 'config/momentum-config.json');
   return readJsonConfig(path, MomentumConfigSchema, opts.fresh);
+}
+
+const ExtSignalProviderFileSchema = z.object({
+  enabled: z.boolean(),
+  strategies: z.array(
+    z.object({
+      name: z.string().min(1),
+      display_name: z.string().min(1),
+    }),
+  ),
+});
+export type ExtSignalProviderFile = z.infer<typeof ExtSignalProviderFileSchema>;
+
+const EXT_SIGNAL_PROVIDER_DISABLED: ExtSignalProviderFile = {
+  enabled: false,
+  strategies: [],
+};
+
+/**
+ * External signal provider config (`config/ext-signal-provider.json`).
+ * MCP endpoint and API key come from `EXT_SIGNAL_ENDPOINT` / `EXT_SIGNAL_API_KEY` in `.env`.
+ * Missing or invalid file → disabled with empty strategies (fail-open).
+ */
+export function loadExtSignalProvider(opts: LoaderOptions = {}): ExtSignalProviderFile {
+  const path = opts.path ?? resolve(PROJECT_ROOT, 'config/ext-signal-provider.json');
+  try {
+    return readJsonConfig(path, ExtSignalProviderFileSchema, opts.fresh);
+  } catch {
+    return EXT_SIGNAL_PROVIDER_DISABLED;
+  }
 }
 
 /** Configurable symbol list where RSI/volume heuristics should be ignored. */
