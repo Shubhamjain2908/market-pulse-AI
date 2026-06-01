@@ -31,16 +31,39 @@ const API_HEADERS = {
   'sec-fetch-site': 'same-origin',
 } as const;
 
-const NseEtfRowSchema = z.object({
-  symbol: z.string(),
-  navValue: z.union([z.string(), z.number()]),
-  lastPrice: z.union([z.string(), z.number()]),
-});
-
-const NseEtfResponseSchema = z.union([
-  z.array(NseEtfRowSchema),
-  z.object({ data: z.array(NseEtfRowSchema) }),
+/** Envelope only — row fields are coerced per-row (NSE sends `nav: null` on some listings). */
+const NseEtfEnvelopeSchema = z.union([
+  z.array(z.unknown()),
+  z.object({ data: z.array(z.unknown()) }).passthrough(),
 ]);
+
+function toNseEtfRowInput(item: unknown): NseEtfRowInput | null {
+  if (!item || typeof item !== 'object') return null;
+  const rec = item as Record<string, unknown>;
+  if (typeof rec.symbol !== 'string') return null;
+  const symbol = rec.symbol.trim();
+  if (!symbol) return null;
+  return {
+    symbol,
+    navValue: rec.navValue,
+    nav: rec.nav,
+    lastPrice: rec.lastPrice,
+    ltP: rec.ltP,
+  };
+}
+
+/** Parse NSE ETF API body; returns rows or null when envelope shape is invalid. */
+export function parseNseEtfApiResponse(raw: unknown): NseEtfRowInput[] | null {
+  const parsed = NseEtfEnvelopeSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const items = Array.isArray(parsed.data) ? parsed.data : parsed.data.data;
+  const rows: NseEtfRowInput[] = [];
+  for (const item of items) {
+    const row = toNseEtfRowInput(item);
+    if (row) rows.push(row);
+  }
+  return rows;
+}
 
 export interface FetchInavSnapshotsOptions {
   date?: string;
@@ -63,8 +86,27 @@ export function computePremiumDiscountPct(inav: number, lastPrice: number): numb
   return ((lastPrice - inav) / inav) * 100;
 }
 
+export type NseEtfRowInput = {
+  symbol: string;
+  navValue?: unknown;
+  nav?: unknown;
+  lastPrice?: unknown;
+  ltP?: unknown;
+};
+
+/** Resolve iNAV and last price from NSE field aliases (`nav`/`ltP` vs camelCase). */
+export function pickNseEtfNavAndLast(row: NseEtfRowInput): {
+  inav: number | null;
+  lastPrice: number | null;
+} {
+  return {
+    inav: toFiniteNumber(row.navValue ?? row.nav),
+    lastPrice: toFiniteNumber(row.lastPrice ?? row.ltP),
+  };
+}
+
 export function mapNseEtfRows(
-  rows: Array<{ symbol: string; navValue: unknown; lastPrice: unknown }>,
+  rows: NseEtfRowInput[],
   universe: ReadonlySet<string>,
   date: string,
 ): InavSnapshotRow[] {
@@ -75,8 +117,7 @@ export function mapNseEtfRows(
     const symbol = row.symbol.trim().toUpperCase();
     if (!universe.has(symbol)) continue;
 
-    const inav = toFiniteNumber(row.navValue);
-    const lastPrice = toFiniteNumber(row.lastPrice);
+    const { inav, lastPrice } = pickNseEtfNavAndLast(row);
     if (inav == null || lastPrice == null || inav <= 0) continue;
 
     out.push({
@@ -125,16 +166,17 @@ export async function fetchInavSnapshots(
       headers: API_HEADERS,
     });
 
-    const parsed = NseEtfResponseSchema.safeParse(raw);
-    if (!parsed.success) {
+    const rows = parseNseEtfApiResponse(raw);
+    if (!rows) {
       log.warn(
-        { issues: parsed.error.issues.slice(0, 3), preview: JSON.stringify(raw).slice(0, 300) },
+        {
+          preview: JSON.stringify(raw).slice(0, 300),
+          typeofRaw: typeof raw,
+        },
         'nse etf response failed validation',
       );
       return { date, attempted, written: 0, skipped: attempted, failed: true };
     }
-
-    const rows = Array.isArray(parsed.data) ? parsed.data : parsed.data.data;
     const mapped = mapNseEtfRows(rows, universe, date);
     const written = upsertInavSnapshots(mapped, db);
     const skipped = attempted - written;
