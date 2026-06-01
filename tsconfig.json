@@ -15,7 +15,8 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    "noEmit": true
+    "noEmit": true,
+    "incremental": true
   },
   "include": ["src/**/*", "tests/**/*", "scripts/**/*", "deploy/**/*.ts", "vitest.config.ts"],
   "exclude": ["node_modules", "dist", "data"]
