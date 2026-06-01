@@ -24,8 +24,8 @@ importers:
         specifier: ^14.0.3
         version: 14.0.3
       croner:
-        specifier: ^9.0.0
-        version: 9.1.0
+        specifier: ^10.0.1
+        version: 10.0.1
       dotenv:
         specifier: ^16.4.5
         version: 16.6.1
@@ -949,8 +949,8 @@ packages:
     resolution: {integrity: sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==}
     engines: {node: '>= 0.6'}
 
-  croner@9.1.0:
-    resolution: {integrity: sha512-p9nwwR4qyT5W996vBZhdvBCnMhicY5ytZkR4D1Xj0wuTDEiMnjwR57Q3RXYY/s0EpX6Ay3vgIcfaR+ewGHsi+g==}
+  croner@10.0.1:
+    resolution: {integrity: sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g==}
     engines: {node: '>=18.0'}
 
   css-select@5.2.2:
@@ -2690,7 +2690,7 @@ snapshots:
 
   cookie@0.7.2: {}
 
-  croner@9.1.0: {}
+  croner@10.0.1: {}
 
   css-select@5.2.2:
     dependencies:
