@@ -772,7 +772,7 @@ program
       system: 'You are a concise assistant.',
       user: 'Reply with exactly: PONG',
       temperature: 0,
-      maxOutputTokens: 32,
+      maxOutputTokens: 64,
     });
     console.log(`text: ${text.text}`);
 
@@ -787,7 +787,7 @@ program
       schema: SmokeSchema,
       maxRetries: 0,
       temperature: 0,
-      maxOutputTokens: 64,
+      maxOutputTokens: 256,
     });
     console.log(`json: ${JSON.stringify(json.data)}`);
     console.log('LLM smoke test passed.');

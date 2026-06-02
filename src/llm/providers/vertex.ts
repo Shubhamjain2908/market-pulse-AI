@@ -9,7 +9,7 @@
  * lifecycle"). Defaults in env point at the current Gemini 2.5 family.
  */
 
-import type { GenerateContentResponse } from '@google/genai';
+import type { GenerateContentParameters, GenerateContentResponse } from '@google/genai';
 import { FinishReason, GoogleGenAI, HarmBlockThreshold, HarmCategory } from '@google/genai';
 import { config } from '../../config/env.js';
 import { parseAndValidate } from '../json.js';
@@ -67,7 +67,7 @@ export class VertexProvider implements LlmProvider {
   async generateText(opts: GenerateTextOptions): Promise<LlmTextResult> {
     const started = Date.now();
 
-    const result = await this.ai.models.generateContent({
+    const result = await this.generateContentWithThoughtFallback({
       model: this.model,
       contents: opts.user,
       config: {
@@ -105,7 +105,7 @@ export class VertexProvider implements LlmProvider {
           : `${opts.user}\n\nIMPORTANT: Return ONLY a single valid JSON object matching the schema. No markdown fences, no commentary.`;
 
       try {
-        const result = await this.ai.models.generateContent({
+        const result = await this.generateContentWithThoughtFallback({
           model: this.model,
           contents: userPrompt,
           config: {
@@ -141,6 +141,27 @@ export class VertexProvider implements LlmProvider {
     throw lastErr instanceof Error
       ? lastErr
       : new Error(`Vertex JSON generation failed after retries: ${lastRaw.slice(0, 300)}`);
+  }
+
+  private async generateContentWithThoughtFallback(
+    params: GenerateContentParameters,
+  ): Promise<GenerateContentResponse> {
+    const result = await this.ai.models.generateContent(params);
+    if (!shouldRetryWithoutThinking(result)) {
+      return result;
+    }
+
+    return this.ai.models.generateContent({
+      ...params,
+      config: {
+        ...(params.config ?? {}),
+        thinkingConfig: {
+          ...(params.config?.thinkingConfig ?? {}),
+          includeThoughts: false,
+          thinkingBudget: 0,
+        },
+      },
+    });
   }
 }
 
@@ -185,4 +206,18 @@ function extractResponseText(
   }
 
   throw new Error('Vertex returned no text content in the response.');
+}
+
+function shouldRetryWithoutThinking(result: GenerateContentResponse): boolean {
+  const text = result.text?.trim();
+  if (text) {
+    return false;
+  }
+
+  const primeCandidate = result.candidates?.[0];
+  if (!primeCandidate || primeCandidate.finishReason !== FinishReason.MAX_TOKENS) {
+    return false;
+  }
+
+  return (result.usageMetadata?.thoughtsTokenCount ?? 0) > 0;
 }
