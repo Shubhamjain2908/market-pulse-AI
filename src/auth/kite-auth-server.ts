@@ -9,6 +9,7 @@ import { child } from '../logger.js';
 const log = child({ component: 'kite-auth-server' });
 const app = express();
 const kite = new KiteClient();
+const CUE_DASHBOARD_HTML_PATH = '/home/ubuntu/cue/dist/dashboard.html';
 
 app.get('/auth/kite', (_req, res) => {
   const loginUrl = kite.loginUrl();
@@ -64,6 +65,22 @@ app.get('/auth/status', (_req, res) => {
     valid,
     token_preview: token ? maskToken(token) : '',
     expires: expiry.label,
+  });
+});
+
+app.get('/auth/cue-dashboard', (_req, res) => {
+  res.sendFile(CUE_DASHBOARD_HTML_PATH, (err?: NodeJS.ErrnoException) => {
+    if (!err) return;
+    if (err.code === 'ENOENT') {
+      log.warn(
+        { path: CUE_DASHBOARD_HTML_PATH },
+        'cue dashboard html file not found while serving /auth/cue-dashboard',
+      );
+      res.status(200).send(renderCueDashboardFallbackPage(CUE_DASHBOARD_HTML_PATH));
+      return;
+    }
+    log.error({ err, path: CUE_DASHBOARD_HTML_PATH }, 'failed to serve cue dashboard html');
+    res.status(200).send(renderCueDashboardFallbackPage(CUE_DASHBOARD_HTML_PATH));
   });
 });
 
@@ -214,6 +231,36 @@ function renderErrorPage(reason: string): string {
       <p>Could not exchange the request token. Please retry login.</p>
       <div class="error"><b>Reason:</b> ${escapeHtml(reason)}</div>
       <p><a href="/auth/kite">Try again</a></p>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
+function renderCueDashboardFallbackPage(sourcePath: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CUE Dashboard (Fallback)</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8fafc; color: #1e293b; }
+    .wrap { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+    .card { width: min(640px, 100%); background: #fff; border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.08); padding: 22px; border: 1px solid #e2e8f0; }
+    h1 { margin: 0 0 8px; font-size: 1.25rem; }
+    p { margin: 8px 0; color: #334155; }
+    code { background: #f1f5f9; border-radius: 6px; padding: 2px 6px; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card">
+      <h1>CUE dashboard is temporarily unavailable</h1>
+      <p>The static dashboard file could not be loaded from:</p>
+      <p><code>${escapeHtml(sourcePath)}</code></p>
+      <p>This fallback page keeps <code>/auth/cue-dashboard</code> responsive even when the file is missing.</p>
     </section>
   </main>
 </body>
