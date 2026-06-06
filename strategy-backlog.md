@@ -3,17 +3,17 @@
 **Gate:** No strategy moves to implementation until overall paper trade expectancy is positive over 30+ deduped closed
 trades. Currently NOT met.
 
-**Built:** Market Regime Filter · Adaptive Trailing Stop · Multi-Factor Momentum (momentum_mf) · Quality-GARP (`quality_garp`, v1) · Catalyst-Driven Entry (`catalyst_entry`, v1)
+**Built:** Market Regime Filter · Adaptive Trailing Stop · Multi-Factor Momentum (momentum_mf) · Quality-GARP (`quality_garp`, v2) · Catalyst-Driven Entry (`catalyst_entry`, v1)
 
-**Fundamentals backfill:** COMPLETE (2026-05-28). 236 symbols, audit gate passed.
+**Fundamentals backfill:** COMPLETE (2026-06-06). 241 symbols annual, Yahoo snapshot + screener refresh via `pnpm fundamentals:refresh`.
 
 ---
 
-## Shipped — Quality-GARP (v1, 2026-05-28)
+## Shipped — Quality-GARP (v2, 2026-06-06)
 
-**Live:** `quality_garp` dispatcher in [`stock-screener.ts`](src/analysers/stock-screener.ts) + [`getQualityGarpFundamentals`](src/db/queries.ts) (yahoo annual/snapshot + promoter join). Gates: PE≤35, PB≤6, 2yr ROE≥18%, rev growth≥15%, RSI<45, within 5% of SMA50, no promoter selling; ETF exclusion; regime **BULL 1.0× / CHOPPY 0.75×**. Thesis Quality-GARP block (sector, PEG context, moat). README: [Quality-GARP screener](README.md#quality-garp-screener).
+**Live:** `quality_garp` dispatcher in [`stock-screener.ts`](src/analysers/stock-screener.ts) + [`getQualityGarpFundamentals`](src/db/queries.ts) (yahoo annual ×3 + snapshot/screener coalesce + promoter join). Gates: PE≤35, PB≤6, **3yr ROE≥18%**, **ROCE≥20%**, **D/E<0.5**, **PEG<1.2**, RSI<45, within 5% of SMA50, no promoter selling; ETF exclusion; regime **BULL 1.0× / CHOPPY 0.75×**. Refresh: `pnpm fundamentals:refresh`. README: [Quality-GARP screener](README.md#quality-garp-screener).
 
-**v2 backlog:** 3-year ROE streak; PEG<1.2 screener gate; `operating_margin_pct` column + OPM stability gate; Dec-FY `as_of` edge cases.
+**v2 backlog (deferred):** `operating_margin_pct` column + OPM stability gate; Dec-FY `as_of` edge cases.
 
 ---
 
@@ -120,7 +120,7 @@ This is the natural next build *after* GTT activates. All data dependencies alre
 
 | Priority | Strategy                                | Status             | Blocker                                     |
 |----------|-----------------------------------------|--------------------|---------------------------------------------|
-| 1        | Quality-GARP v2 (OPM + 3yr ROE + PEG gate) | **Shipped v1**  | operating_margin_pct migration; 3yr ROE; PEG<1.2 in screener |
+| 1        | Quality-GARP v2 (OPM gate)                 | **Shipped v2**  | operating_margin_pct migration; Dec-FY as_of edge cases     |
 | 2        | Catalyst-Driven Entry (v2: session hold) | **Shipped v1**     | Calendar-day hold → trading-session count   |
 | 3        | yahoo_snapshot daily refresh monitoring | Operational        | Watch 429 rate first week                   |
 | 4        | Dynamic Position Sizer                  | Waiting            | GTT gate must be active first               |

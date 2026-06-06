@@ -149,10 +149,13 @@ export interface QualityGarpFundamentalRow {
   symbol: string;
   latestRoe: number | null;
   prevRoe: number | null;
+  thirdRoe: number | null;
+  latestRoce: number | null;
   latestRevGrowth: number | null;
   pe: number | null;
   pb: number | null;
   peg: number | null;
+  debtToEquity: number | null;
   marketCap: number | null;
   promoterHoldingPct: number | null;
   promoterHoldingChangeQoQ: number | null;
@@ -167,10 +170,19 @@ export function getQualityGarpFundamentals(
     .prepare(
       `
       WITH AnnualRanked AS (
-        SELECT symbol, roe, revenue_growth_yoy, as_of,
+        SELECT symbol, roe, roce, revenue_growth_yoy, as_of,
           ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY as_of DESC) AS rn
         FROM fundamentals
-        WHERE source = 'yahoo_annual' AND roe IS NOT NULL
+        WHERE source = 'yahoo_annual'
+      ),
+      SnapshotRanked AS (
+        SELECT symbol, pe, pb, peg, market_cap, debt_to_equity, source,
+          ROW_NUMBER() OVER (
+            PARTITION BY symbol
+            ORDER BY CASE source WHEN 'yahoo_snapshot' THEN 0 WHEN 'screener' THEN 1 ELSE 2 END
+          ) AS rn
+        FROM fundamentals
+        WHERE as_of = ? AND source IN ('yahoo_snapshot', 'screener')
       ),
       PromoterLatest AS (
         SELECT symbol, promoter_holding_pct, promoter_holding_change_qoq,
@@ -183,18 +195,20 @@ export function getQualityGarpFundamentals(
         a1.symbol                                 AS symbol,
         a1.roe                                    AS latestRoe,
         a2.roe                                    AS prevRoe,
+        a3.roe                                    AS thirdRoe,
+        a1.roce                                   AS latestRoce,
         a1.revenue_growth_yoy                     AS latestRevGrowth,
         s.pe                                      AS pe,
         s.pb                                      AS pb,
         s.peg                                     AS peg,
+        s.debt_to_equity                          AS debtToEquity,
         s.market_cap                              AS marketCap,
         p.promoter_holding_pct                    AS promoterHoldingPct,
         p.promoter_holding_change_qoq             AS promoterHoldingChangeQoQ
       FROM AnnualRanked a1
       LEFT JOIN AnnualRanked  a2 ON a1.symbol = a2.symbol AND a2.rn = 2
-      LEFT JOIN fundamentals   s ON a1.symbol = s.symbol
-                                 AND s.source = 'yahoo_snapshot'
-                                 AND s.as_of = ?
+      LEFT JOIN AnnualRanked  a3 ON a1.symbol = a3.symbol AND a3.rn = 3
+      LEFT JOIN SnapshotRanked s ON a1.symbol = s.symbol AND s.rn = 1
       LEFT JOIN PromoterLatest p ON a1.symbol = p.symbol AND p.rn = 1
       WHERE a1.rn = 1
         AND s.pe IS NOT NULL
