@@ -20,6 +20,11 @@ import { DbSignalProvider, type SignalProvider } from './signal-provider.js';
 const log = child({ component: 'stock-screener-analyser' });
 const QUALITY_GARP_SCREEN = 'quality_garp';
 const CATALYST_ENTRY_SCREEN = 'catalyst_entry';
+const QUALITY_GARP_TOTAL_GATES = 10;
+const QUALITY_GARP_ROCE_MIN = 0.2;
+const QUALITY_GARP_DE_MAX = 0.5;
+const QUALITY_GARP_PEG_MAX = 1.2;
+const QUALITY_GARP_ROE_MIN = 0.18;
 
 export interface StockScreenerOptions {
   date?: string;
@@ -35,10 +40,13 @@ interface QualityGarpMatchedCriteria {
   [key: string]: unknown;
   latest_roe: number;
   prev_roe: number;
-  latest_rev_growth: number;
+  third_roe: number;
+  latest_roce: number;
+  latest_rev_growth: number | null;
   pe: number;
   pb: number;
-  peg: number | null;
+  peg: number;
+  debt_to_equity: number;
   market_cap: number | null;
   promoter_holding_pct: number | null;
   promoter_holding_change_qoq: number | null;
@@ -178,7 +186,7 @@ function runQualityGarpScreen(
       provider,
       etfExclusions,
     );
-    const totalCriteria = 8;
+    const totalCriteria = QUALITY_GARP_TOTAL_GATES;
 
     evaluations.push({
       symbol,
@@ -282,6 +290,10 @@ function runCatalystEntryScreen(
   return { matches: results.length, partial: 0, evaluations };
 }
 
+function gateScore(matchedCount: number): number {
+  return matchedCount / QUALITY_GARP_TOTAL_GATES;
+}
+
 function evaluateQualityGarpSymbol(
   symbol: string,
   date: string,
@@ -293,79 +305,96 @@ function evaluateQualityGarpSymbol(
 
   // Gate 1: ETF/SGB exclusion list
   if (etfExclusions.has(symbol)) {
-    return { passed: false, score: matchedCount / 8, matchedCount };
+    return { passed: false, score: gateScore(matchedCount), matchedCount };
   }
   matchedCount++;
 
   if (!fundamentals) {
-    return { passed: false, score: matchedCount / 8, matchedCount };
+    return { passed: false, score: gateScore(matchedCount), matchedCount };
   }
 
   // Gate 2: hard valuation null guard
   if (fundamentals.pe == null || fundamentals.pb == null) {
-    return { passed: false, score: matchedCount / 8, matchedCount };
+    return { passed: false, score: gateScore(matchedCount), matchedCount };
   }
   matchedCount++;
 
   // Gate 3: valuation ceilings
   if (fundamentals.pe > 35 || fundamentals.pb > 6) {
-    return { passed: false, score: matchedCount / 8, matchedCount };
+    return { passed: false, score: gateScore(matchedCount), matchedCount };
   }
   matchedCount++;
 
-  // Gate 4: 2-year ROE floor; requires prev_roe
+  // Gate 4: 3-year ROE floor (yahoo_annual decimals)
   if (
     fundamentals.latestRoe == null ||
     fundamentals.prevRoe == null ||
-    fundamentals.latestRoe < 0.18 ||
-    fundamentals.prevRoe < 0.18
+    fundamentals.thirdRoe == null ||
+    fundamentals.latestRoe < QUALITY_GARP_ROE_MIN ||
+    fundamentals.prevRoe < QUALITY_GARP_ROE_MIN ||
+    fundamentals.thirdRoe < QUALITY_GARP_ROE_MIN
   ) {
-    return { passed: false, score: matchedCount / 8, matchedCount };
+    return { passed: false, score: gateScore(matchedCount), matchedCount };
   }
   matchedCount++;
 
-  // Gate 5: latest revenue growth floor
-  if (fundamentals.latestRevGrowth == null || fundamentals.latestRevGrowth < 0.15) {
-    return { passed: false, score: matchedCount / 8, matchedCount };
+  // Gate 5: ROCE quality floor
+  if (fundamentals.latestRoce == null || fundamentals.latestRoce < QUALITY_GARP_ROCE_MIN) {
+    return { passed: false, score: gateScore(matchedCount), matchedCount };
   }
   matchedCount++;
 
-  // Gate 6: technical dip via RSI
+  // Gate 6: conservative leverage
+  if (fundamentals.debtToEquity == null || fundamentals.debtToEquity >= QUALITY_GARP_DE_MAX) {
+    return { passed: false, score: gateScore(matchedCount), matchedCount };
+  }
+  matchedCount++;
+
+  // Gate 7: growth at reasonable price
+  if (fundamentals.peg == null || fundamentals.peg >= QUALITY_GARP_PEG_MAX) {
+    return { passed: false, score: gateScore(matchedCount), matchedCount };
+  }
+  matchedCount++;
+
+  // Gate 8: technical dip via RSI
   const rsi14 = provider.get(symbol, date, 'rsi_14');
   if (rsi14 == null || rsi14 >= 45) {
-    return { passed: false, score: matchedCount / 8, matchedCount };
+    return { passed: false, score: gateScore(matchedCount), matchedCount };
   }
   matchedCount++;
 
-  // Gate 7: within 5% of SMA50
+  // Gate 9: within 5% of SMA50
   const sma50 = provider.get(symbol, date, 'sma_50');
   const close = provider.get(symbol, date, 'close');
   if (sma50 == null || close == null || sma50 === 0) {
-    return { passed: false, score: matchedCount / 8, matchedCount };
+    return { passed: false, score: gateScore(matchedCount), matchedCount };
   }
   const pctFromSma50 = Math.abs(((close - sma50) / sma50) * 100);
   if (pctFromSma50 > 5) {
-    return { passed: false, score: matchedCount / 8, matchedCount };
+    return { passed: false, score: gateScore(matchedCount), matchedCount };
   }
   matchedCount++;
 
-  // Gate 8: fail-open on NULL promoter change; block only active selling
+  // Gate 10: fail-open on NULL promoter change; block only active selling
   if (fundamentals.promoterHoldingChangeQoQ != null && fundamentals.promoterHoldingChangeQoQ < 0) {
-    return { passed: false, score: matchedCount / 8, matchedCount };
+    return { passed: false, score: gateScore(matchedCount), matchedCount };
   }
   matchedCount++;
 
   return {
     passed: true,
-    score: matchedCount / 8,
+    score: gateScore(matchedCount),
     matchedCount,
     matchedCriteria: {
       latest_roe: fundamentals.latestRoe,
       prev_roe: fundamentals.prevRoe,
+      third_roe: fundamentals.thirdRoe,
+      latest_roce: fundamentals.latestRoce,
       latest_rev_growth: fundamentals.latestRevGrowth,
       pe: fundamentals.pe,
       pb: fundamentals.pb,
       peg: fundamentals.peg,
+      debt_to_equity: fundamentals.debtToEquity,
       market_cap: fundamentals.marketCap,
       promoter_holding_pct: fundamentals.promoterHoldingPct,
       promoter_holding_change_qoq: fundamentals.promoterHoldingChangeQoQ,

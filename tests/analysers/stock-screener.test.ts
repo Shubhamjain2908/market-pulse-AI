@@ -8,18 +8,19 @@ import { seedStrategyGates } from '../../src/db/regime-queries.js';
 function insertQualityBaseRows(db: DatabaseType, symbol: string, asOf = '2026-05-28'): void {
   db.prepare(
     `
-    INSERT INTO fundamentals (symbol, as_of, roe, revenue_growth_yoy, source)
-    VALUES (?, '2025-03-31', 0.21, 0.16, 'yahoo_annual'),
-           (?, '2024-03-31', 0.19, 0.14, 'yahoo_annual')
+    INSERT INTO fundamentals (symbol, as_of, roe, roce, revenue_growth_yoy, source)
+    VALUES (?, '2025-03-31', 0.21, 0.24, 0.16, 'yahoo_annual'),
+           (?, '2024-03-31', 0.19, 0.22, 0.14, 'yahoo_annual'),
+           (?, '2023-03-31', 0.2, 0.21, 0.12, 'yahoo_annual')
   `,
-  ).run(symbol, symbol);
+  ).run(symbol, symbol, symbol);
 
   db.prepare(
     `
     INSERT INTO fundamentals (
-      symbol, as_of, pe, pb, peg, market_cap,
+      symbol, as_of, pe, pb, peg, debt_to_equity, market_cap,
       source
-    ) VALUES (?, ?, 22.4, 3.1, NULL, 1823000000000, 'yahoo_snapshot')
+    ) VALUES (?, ?, 22.4, 3.1, 0.95, 0.12, 1823000000000, 'yahoo_snapshot')
   `,
   ).run(symbol, asOf);
 
@@ -71,7 +72,10 @@ describe('stock screener analyser: quality_garp', () => {
     const payload = JSON.parse(row?.matchedCriteria ?? '{}') as Record<string, unknown>;
     expect(payload.latest_roe).toBe(0.21);
     expect(payload.prev_roe).toBe(0.19);
-    expect(payload.peg).toBeNull();
+    expect(payload.third_roe).toBe(0.2);
+    expect(payload.latest_roce).toBe(0.24);
+    expect(payload.debt_to_equity).toBe(0.12);
+    expect(payload.peg).toBe(0.95);
     expect(payload.pct_from_sma50).toBeCloseTo(1.2676, 3);
     expect(payload.__regime_meta).toEqual({
       regime: 'CHOPPY',
@@ -80,21 +84,22 @@ describe('stock screener analyser: quality_garp', () => {
     });
   });
 
-  it('excludes symbol when prev_roe is missing', () => {
+  it('excludes symbol when third_roe is missing', () => {
     const db = new Database(':memory:');
     migrate(db);
     seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
 
     db.prepare(
       `
-      INSERT INTO fundamentals (symbol, as_of, roe, revenue_growth_yoy, source)
-      VALUES ('ONEYEAR', '2025-03-31', 0.25, 0.2, 'yahoo_annual')
+      INSERT INTO fundamentals (symbol, as_of, roe, roce, revenue_growth_yoy, source)
+      VALUES ('ONEYEAR', '2025-03-31', 0.25, 0.22, 0.2, 'yahoo_annual'),
+             ('ONEYEAR', '2024-03-31', 0.24, 0.21, 0.18, 'yahoo_annual')
     `,
     ).run();
     db.prepare(
       `
-      INSERT INTO fundamentals (symbol, as_of, pe, pb, source)
-      VALUES ('ONEYEAR', '2026-05-28', 20, 2.5, 'yahoo_snapshot')
+      INSERT INTO fundamentals (symbol, as_of, pe, pb, peg, debt_to_equity, source)
+      VALUES ('ONEYEAR', '2026-05-28', 20, 2.5, 0.9, 0.1, 'yahoo_snapshot')
     `,
     ).run();
     db.prepare(
