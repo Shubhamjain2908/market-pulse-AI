@@ -18,6 +18,8 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+import { QUALITY_GARP_SCREEN } from '../analysers/quality-garp-gates.js';
+import { resolveQualityGarpSymbols } from '../analysers/quality-garp-universe.js';
 import { DbSignalProvider } from '../analysers/signal-provider.js';
 import { runStockScreenAnalyser } from '../analysers/stock-screener.js';
 import { loadScreens, loadWatchlist } from '../config/loaders.js';
@@ -67,15 +69,10 @@ function resolveBacktestSymbols(
   opts: BacktestOptions,
   db: DatabaseType,
 ): string[] {
-  if (opts.symbols) return opts.symbols.map((s) => s.toUpperCase());
-  if (screen.name === 'quality_garp') {
-    return (
-      db
-        .prepare(`SELECT DISTINCT symbol FROM fundamentals WHERE source = 'yahoo_annual'`)
-        .pluck()
-        .all() as string[]
-    ).map((s) => s.toUpperCase());
+  if (screen.name === QUALITY_GARP_SCREEN) {
+    return resolveQualityGarpSymbols(db, opts.symbols).symbols;
   }
+  if (opts.symbols) return opts.symbols.map((s) => s.toUpperCase());
   return loadWatchlist().symbols.map((s) => s.toUpperCase());
 }
 
@@ -114,11 +111,12 @@ export function runBacktest(opts: BacktestOptions, db: DatabaseType = getDb()): 
       const evalResult = runStockScreenAnalyser(
         {
           date,
-          symbols: screenSymbols,
+          // quality_garp resolves yahoo_annual internally unless opts.symbols override
+          symbols: screen.name === QUALITY_GARP_SCREEN && !opts.symbols ? undefined : screenSymbols,
           screens: [screen],
           provider,
           persist: false,
-          pointInTimeFundamentals: screen.name === 'quality_garp',
+          pointInTimeFundamentals: screen.name === QUALITY_GARP_SCREEN,
         },
         db,
       );

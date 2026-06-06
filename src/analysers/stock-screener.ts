@@ -34,6 +34,10 @@ import {
   QUALITY_GARP_SMA50_PCT_MAX,
   QUALITY_GARP_TOTAL_GATES,
 } from './quality-garp-gates.js';
+import {
+  type QualityGarpUniverseScope,
+  resolveQualityGarpSymbols,
+} from './quality-garp-universe.js';
 import { DbSignalProvider, type SignalProvider } from './signal-provider.js';
 
 const log = child({ component: 'stock-screener-analyser' });
@@ -133,10 +137,12 @@ export function runStockScreenAnalyser(
   }
 
   if (qualityScreen) {
+    const qualityUniverse = resolveQualityGarpSymbols(db, opts.symbols);
     const qualityResult = runQualityGarpScreen(
       {
         date,
-        symbols,
+        symbols: qualityUniverse.symbols,
+        universeScope: qualityUniverse.universeScope,
         provider,
         persist,
         regime: opts.regime,
@@ -184,6 +190,7 @@ function runQualityGarpScreen(
   opts: {
     date: string;
     symbols: string[];
+    universeScope: QualityGarpUniverseScope;
     provider: SignalProvider;
     persist: boolean;
     regime?: Regime;
@@ -198,7 +205,16 @@ function runQualityGarpScreen(
   funnel: QualityGarpFunnelCounts;
   evaluations: ScreenEngineResult['evaluations'];
 } {
-  const { date, symbols, provider, persist, regime, etfExclusions, pointInTimeFundamentals } = opts;
+  const {
+    date,
+    symbols,
+    universeScope,
+    provider,
+    persist,
+    regime,
+    etfExclusions,
+    pointInTimeFundamentals,
+  } = opts;
   const funnel = createEmptyQualityGarpFunnel();
   funnel.universe = symbols.length;
 
@@ -279,6 +295,7 @@ function runQualityGarpScreen(
       date,
       screen: QUALITY_GARP_SCREEN,
       matches,
+      universe_scope: universeScope,
       regime,
       funnel,
       recordedAt: new Date().toISOString(),

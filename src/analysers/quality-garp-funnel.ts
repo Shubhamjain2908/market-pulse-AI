@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { config } from '../config/env.js';
 import { child } from '../logger.js';
 import type { Regime } from '../types/regime.js';
+import type { QualityGarpUniverseScope } from './quality-garp-universe.js';
 
 const log = child({ component: 'quality-garp-funnel' });
 
@@ -43,6 +44,8 @@ export interface QualityGarpFunnelRecord {
   date: string;
   screen: 'quality_garp';
   matches: number;
+  /** Symbol resolution source — compare funnel counts to audit/backtest. */
+  universe_scope: QualityGarpUniverseScope;
   regime?: Regime;
   funnel: QualityGarpFunnelCounts;
   recordedAt: string;
@@ -86,7 +89,12 @@ export function persistQualityGarpFunnel(record: QualityGarpFunnelRecord): void 
   mkdirSync(dirname(path), { recursive: true });
   appendFileSync(path, `${JSON.stringify(record)}\n`, 'utf8');
   log.info(
-    { date: record.date, matches: record.matches, funnel: record.funnel },
+    {
+      date: record.date,
+      matches: record.matches,
+      universe_scope: record.universe_scope,
+      funnel: record.funnel,
+    },
     'quality_garp funnel',
   );
 }
@@ -109,11 +117,15 @@ export function readQualityGarpFunnelForDate(date: string): QualityGarpFunnelRec
   return latest;
 }
 
-export function formatQualityGarpFunnelSummary(funnel: QualityGarpFunnelCounts): string {
+export function formatQualityGarpFunnelSummary(
+  funnel: QualityGarpFunnelCounts,
+  universeScope?: QualityGarpUniverseScope,
+): string {
   const preRsi =
     funnel.valuation + funnel.roe_3yr + funnel.roce + funnel.debt + funnel.peg_null + funnel.peg;
+  const scopeLabel = universeScope ? ` [${universeScope}, n=${funnel.universe}]` : '';
   return [
-    `Quality-GARP: 0 matches (${funnel.candidates_pe_pb} PE/PB candidates).`,
+    `Quality-GARP: 0 matches (${funnel.candidates_pe_pb} PE/PB candidates${scopeLabel}).`,
     `Pre-RSI eliminations: valuation ${funnel.valuation}, 3yr ROE ${funnel.roe_3yr},`,
     `ROCE ${funnel.roce}, D/E ${funnel.debt}, PEG null ${funnel.peg_null}, PEG fail ${funnel.peg}.`,
     `Technical: RSI ${funnel.rsi}, SMA50 ${funnel.sma50}, promoter ${funnel.promoter}.`,

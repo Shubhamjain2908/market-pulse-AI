@@ -295,7 +295,7 @@ export async function composeBriefing(
     if (funnelRecord) {
       warnings.push({
         category: 'Quality-GARP funnel',
-        message: formatQualityGarpFunnelSummary(funnelRecord.funnel),
+        message: formatQualityGarpFunnelSummary(funnelRecord.funnel, funnelRecord.universe_scope),
       });
     }
   }

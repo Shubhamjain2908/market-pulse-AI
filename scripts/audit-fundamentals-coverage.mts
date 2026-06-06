@@ -185,9 +185,12 @@ console.log(snapshotCoverage);
 console.log('\nAnnual (yahoo_annual latest):');
 console.log(annualCoverage);
 console.log('\nROCE coverage (yahoo_annual, latest per symbol):');
+console.log(`  Annual universe: ${annualCoverage.annual_symbols} symbols`);
 console.log(`  Passing  (≥${QUALITY_GARP_ROCE_MIN * 100}%): ${roceSplit.roce_passing}`);
 console.log(`  Failing  (<${QUALITY_GARP_ROCE_MIN * 100}%): ${roceSplit.roce_below_threshold}`);
-console.log(`  No data  (NULL): ${roceSplit.roce_null}`);
+console.log(
+  `  No data  (NULL): ${roceSplit.roce_null} (within annual rows — Yahoo omitted ROCE, not missing annual)`,
+);
 console.log('\nSnapshot staleness buckets:');
 for (const row of staleness) console.log(`  ${row.bucket}: ${row.symbols}`);
 console.log('\nGate funnel (fundamentals only, pre-RSI/SMA50):');

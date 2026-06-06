@@ -553,7 +553,9 @@ Hard-null on `pe`, `pb`, `third_roe`, `latest_roce`, `debt_to_equity`, `peg`, `s
 
 **Refresh fundamentals:** `pnpm fundamentals:refresh` (Python annual backfill + screener + Yahoo snapshot). Coverage audit: `pnpm fundamentals:audit`.
 
-**Backtest replay:** `pnpm cli backtest -n quality_garp` uses point-in-time fundamentals (`as_of <= date`) and the full `yahoo_annual` universe. Live screen keeps exact-date snapshots. Long-window replay needs historical snapshot rows (currently Apr–Jun 2026 only).
+**Universe:** live `cli screen` and backtest both evaluate all symbols with `yahoo_annual` rows (~241), not the watchlist. Funnel log (`data/quality_garp_funnel.jsonl`) records `universe_scope` per run.
+
+**Backtest replay:** `pnpm cli backtest -n quality_garp` uses point-in-time fundamentals (`as_of <= date`). Live screen keeps exact-date snapshots. Long-window replay needs historical snapshot rows (currently Apr–Jun 2026 only).
 
 **Thesis** ([`src/agents/thesis-generator.ts`](src/agents/thesis-generator.ts))
 
