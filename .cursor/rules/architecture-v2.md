@@ -45,13 +45,13 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 | **ETF iNAV** | `src/ingestors/inav-fetcher.ts` | After Yahoo snapshot, before regime: NSE `/api/etf` → `inav_snapshots` for symbols in `config/etf-exclusions.json`. Fail-open (warn + skip on NSE failure). |
 | **COMEX gold COT** | `src/cot/fetch-gold-cot.ts`, `scripts/cot-gold-fetch.ts` | Weekly CFTC `f_disagg.txt` → `cot_gold`; Sunday 07:45 IST cron + `pnpm cot:gold`. Regime briefing line when crowded long/short only. |
 | **Regime Classify** | `src/agents/regime-agent.ts` | 8 signals scored −2 to +2. 3-day persistence. CRISIS fires immediately. Writes to `regime_daily`. Runs before all strategies. |
-| **Screen** | `src/analysers/stock-screener.ts` | Loads `config/screens.json`. DSL screens via `engine.ts`; **`quality_garp`** and **`catalyst_entry`** use dedicated dispatchers (`getQualityGarpFundamentals` + 8 gates; `runCatalystScreener`). Checks `regime_strategy_gate`. Writes passing symbols to `screens`. |
+| **Screen** | `src/analysers/stock-screener.ts` | Loads `config/screens.json`. DSL screens via `engine.ts`; **`quality_garp`** and **`catalyst_entry`** use dedicated dispatchers (`getQualityGarpFundamentals` + 10 v2 gates; `runCatalystScreener`). Checks `regime_strategy_gate`. Writes passing symbols to `screens`. |
 | **AI Thesis** | `src/agents/thesis-generator.ts` | Per screen pass: sends technicals + fundamentals + news + regime context to LLM. Returns structured JSON. Skips symbols in live portfolio (`alreadyOwned`) and any symbol with an OPEN `paper_trades` row (any `signal_type`). |
 | **Portfolio review** | `src/agents/portfolio-sync.ts` + `portfolio-analyser.ts` | When AI is enabled and portfolio is not skipped: after thesis, optional Kite sync (earlier in the same run) feeds `portfolio_holdings`; analyser writes `portfolio_analysis` (full LLM, lite snapshot, or **stale-holdings placeholders** — see §4). |
 | **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). `stop_type='trailing'` follows adaptive ATR trailing; `stop_type='fixed'` bypasses trailing math/logs and evaluates stops/targets at static levels. New bars only after the latest non-`STOPPED_OUT` `trailing_stop_log` row (exclusive `source_date` bound via `getSymbolBars`), so a raised persisted stop is not replayed against already-evaluated history. **Circuit breaker:** if `bar.open < 0.7 ×` prior session’s NSE `close` (`date < bar.date`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag. |
 | **Briefing** | `src/briefing/composer.ts` | `renderBriefing()` → `juice()` for Gmail-safe inline CSS (600px table layout). Regime card + change banner; **FII/DII flow attribution**; **ETF iNAV pricing** block for held ETFs (`etf-pricing-card.ts`, WARN/NOTE thresholds). Delivered via Nodemailer → Gmail SMTP. |
 
-NOTE: Screener.in fundamentals ingest is not currently operational. fundamentals table is empty pending backfill build (see §3.5).
+NOTE: Fundamentals refresh is operational via `pnpm fundamentals:refresh` (Python annual + screener + Yahoo snapshot; see §3.5).
 
 ---
 
@@ -168,10 +168,10 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 - Sector cap: max 3 stocks per NSE sector
 - Earnings blackout: block entries within ±3 trading days of earnings (from `earnings_calendar` table, sourced via Yahoo Finance)
 
-### 3.5 Fundamentals backfill & Quality-GARP v1
-Status: **v1 shipped (2026-05-28)** — Python backfill complete (236 symbols, audit passed). **`quality_garp`** live in `stock-screener.ts` via `getQualityGarpFundamentals` (yahoo annual + snapshot + promoter join).
+### 3.5 Fundamentals backfill & Quality-GARP v2
+Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates Python annual backfill (241 symbols), screener ingest, then Yahoo snapshot (yahoo wins on `(symbol, as_of)` conflict). **`quality_garp`** gates: 3yr ROE≥18%, ROCE≥20%, D/E<0.5, PEG<1.2, PE/PB ceilings, RSI+SMA50 dip, promoter selling block.
 
-**v2 backlog:** `operating_margin_pct` migration; 3-year ROE gate; PEG < 1.2 screener filter; optional Screener.in quarterly depth beyond current Yahoo paths.
+**Deferred:** `operating_margin_pct` migration + OPM stability gate; Dec-FY `as_of` edge cases.
 
 ---
 

@@ -119,7 +119,7 @@ CREATE TABLE screens (
 );
 CREATE INDEX idx_screens_date_screen ON screens(date, screen_name);
 -- Custom screen dispatchers store rich JSON in screens.matched_criteria (not DSL criteria arrays):
--- quality_garp: latest/prev ROE, rev growth, pe/pb/peg, promoter fields, rsi/sma50/close, optional __regime_meta
+-- quality_garp: latest/prev/third ROE, latest ROCE, pe/pb/peg, debt_to_equity, promoter fields, rsi/sma50/close, optional __regime_meta
 -- catalyst_entry: earnings date, days_to_earnings, atr_14, news/sentiment fields, optional __regime_meta
 CREATE TABLE portfolio (
   symbol     TEXT    NOT NULL,
@@ -331,7 +331,7 @@ CREATE TABLE regime_strategy_gate (
 );
 CREATE INDEX idx_regime_strategy_gate_regime ON regime_strategy_gate(regime);
 -- `quality_garp` regime rows are seeded from config/strategy-gates.json.
--- OPM migration/backfill remains deferred to v2 (no schema delta in this release).
+-- operating_margin_pct migration remains deferred (no schema delta in quality_garp v2).
 CREATE TABLE trailing_stop_log (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   trade_id        INTEGER NOT NULL REFERENCES paper_trades(id),

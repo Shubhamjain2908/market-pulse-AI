@@ -529,35 +529,38 @@ A **regime-gated**, long-horizon sleeve that combines Yahoo annual/snapshot fund
 
 **Fundamentals** ([`getQualityGarpFundamentals`](src/db/queries.ts))
 
-- Latest two **`yahoo_annual`** rows per symbol: `latest_roe`, `prev_roe`, `latest_rev_growth`.
-- **`yahoo_snapshot`** as of screen date: `pe`, `pb`, `peg`, `market_cap`.
+- Latest three **`yahoo_annual`** rows per symbol: `latest_roe`, `prev_roe`, `third_roe`, `latest_roce`, `latest_rev_growth`.
+- **`yahoo_snapshot`** / screener coalesce as of screen date: `pe`, `pb`, `peg`, `debt_to_equity`, `market_cap`.
 - Latest **`nse_shareholding` / `screener`** row: `promoter_holding_pct`, `promoter_holding_change_qoq`.
 - Requires fundamentals backfill coverage (see [`strategy-backlog.md`](strategy-backlog.md)).
 
-**Eight evaluation gates** ([`evaluateQualityGarpSymbol`](src/analysers/stock-screener.ts))
+**Ten evaluation gates (v2)** ([`evaluateQualityGarpSymbol`](src/analysers/stock-screener.ts))
 
 | # | Gate |
 |---|------|
 | 1 | Not on ETF/SGB exclusion list |
 | 2 | Fundamentals row present |
 | 3 | `pe` / `pb` non-null; **pe ≤ 35**, **pb ≤ 6** |
-| 4 | **latest & prev ROE ≥ 18%** (2-year floor; v1) |
-| 5 | **latest revenue growth YoY ≥ 15%** |
-| 6 | **RSI14 < 45** (technical dip) |
-| 7 | **\|close − SMA50\| ≤ 5%** |
-| 8 | Promoter QoQ change **fail-open on NULL**; block only on active selling (negative QoQ change) |
+| 4 | **3-year ROE ≥ 18%** (`latest`, `prev`, `third` annual rows) |
+| 5 | **latest ROCE ≥ 20%** |
+| 6 | **debt_to_equity < 0.5** |
+| 7 | **PEG < 1.2** (derived when Yahoo omits `trailingPegRatio`) |
+| 8 | **RSI14 < 45** (technical dip) |
+| 9 | **\|close − SMA50\| ≤ 5%** |
+| 10 | Promoter QoQ change **fail-open on NULL**; block only on active selling |
 
-Hard-null on `pe`, `pb`, `prev_roe`, `latest_rev_growth`, `sma_50`, `close` blocks the symbol (guardrail). ETF list enforced; **no** `alreadyOwned` filter on the screener itself (thesis generator still skips held / open-paper symbols).
+Hard-null on `pe`, `pb`, `third_roe`, `latest_roce`, `debt_to_equity`, `peg`, `sma_50`, `close` blocks the symbol (guardrail). ETF list enforced; **no** `alreadyOwned` filter on the screener itself (thesis generator still skips held / open-paper symbols).
+
+**Refresh fundamentals:** `pnpm fundamentals:refresh` (Python annual backfill + screener + Yahoo snapshot).
 
 **Thesis** ([`src/agents/thesis-generator.ts`](src/agents/thesis-generator.ts))
 
 - Same-day `quality_garp` screen → **## Quality-GARP context** append (sector from `symbols`, PEG from `matched_criteria`, moat / peer-comparison instructions).
 - If **`mom_false_flag === 1`**, addendum reminds **confidence ≤ 5** (same as momentum guardrail).
 
-**v1 vs spec backlog**
+**v2 backlog (not yet gated)**
 
-- **Not yet gated in code:** 3-year ROE streak, PEG under 1.2, operating-margin stability (v2: `operating_margin_pct` migration).
-- **PEG** is thesis context only (snapshot); screener does not reject on PEG.
+- Operating-margin stability (`operating_margin_pct` migration); Dec-FY `as_of` edge cases.
 
 **Orchestration**
 
