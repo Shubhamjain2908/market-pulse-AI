@@ -62,9 +62,25 @@ export interface BacktestSummary {
   totalRuns: number;
 }
 
+function resolveBacktestSymbols(
+  screen: ScreenDefinition,
+  opts: BacktestOptions,
+  db: DatabaseType,
+): string[] {
+  if (opts.symbols) return opts.symbols.map((s) => s.toUpperCase());
+  if (screen.name === 'quality_garp') {
+    return (
+      db
+        .prepare(`SELECT DISTINCT symbol FROM fundamentals WHERE source = 'yahoo_annual'`)
+        .pluck()
+        .all() as string[]
+    ).map((s) => s.toUpperCase());
+  }
+  return loadWatchlist().symbols.map((s) => s.toUpperCase());
+}
+
 export function runBacktest(opts: BacktestOptions, db: DatabaseType = getDb()): BacktestSummary {
   const holdDays = opts.holdDays ?? 10;
-  const symbols = (opts.symbols ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
   const allScreens = opts.screens ?? loadScreens();
   const screens = opts.screenName
     ? allScreens.filter((s) => s.name === opts.screenName)
@@ -82,23 +98,28 @@ export function runBacktest(opts: BacktestOptions, db: DatabaseType = getDb()): 
     return { results: [], totalRuns: 0 };
   }
 
-  // Pre-load the closing-price series once per symbol so each screen pass
-  // can build trades quickly.
-  const barsBySymbol = loadBars(symbols, opts.startDate, db);
-
   const provider = new DbSignalProvider(db);
   const results: BacktestRun[] = [];
 
   for (const screen of screens) {
+    const screenSymbols = resolveBacktestSymbols(screen, opts, db);
+    const barsBySymbol = loadBars(screenSymbols, opts.startDate, db);
     const trades: Trade[] = [];
     log.info(
-      { screen: screen.name, dates: tradingDates.length, symbols: symbols.length },
+      { screen: screen.name, dates: tradingDates.length, symbols: screenSymbols.length },
       'backtesting screen',
     );
 
     for (const date of tradingDates) {
       const evalResult = runStockScreenAnalyser(
-        { date, symbols, screens: [screen], provider, persist: false },
+        {
+          date,
+          symbols: screenSymbols,
+          screens: [screen],
+          provider,
+          persist: false,
+          pointInTimeFundamentals: screen.name === 'quality_garp',
+        },
         db,
       );
       const matched = evalResult.evaluations.filter((e) => e.passed);
@@ -109,14 +130,14 @@ export function runBacktest(opts: BacktestOptions, db: DatabaseType = getDb()): 
     }
 
     const metrics = aggregate(trades);
-    const runId = persistRun(screen, opts, holdDays, symbols.length, metrics, trades, db);
+    const runId = persistRun(screen, opts, holdDays, screenSymbols.length, metrics, trades, db);
     results.push({
       runId,
       screenName: screen.name,
       startDate: opts.startDate,
       endDate: opts.endDate,
       holdDays,
-      symbolsCount: symbols.length,
+      symbolsCount: screenSymbols.length,
       metrics,
       trades,
     });

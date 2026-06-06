@@ -161,62 +161,108 @@ export interface QualityGarpFundamentalRow {
   promoterHoldingChangeQoQ: number | null;
 }
 
+export interface QualityGarpFundamentalsOptions {
+  /** Backtest replay: annual/snapshot rows with as_of <= screen date. Default false (live exact-match). */
+  pointInTime?: boolean;
+}
+
+const QUALITY_GARP_FUNDAMENTALS_SELECT = `
+  SELECT
+    a1.symbol                                 AS symbol,
+    a1.roe                                    AS latestRoe,
+    a2.roe                                    AS prevRoe,
+    a3.roe                                    AS thirdRoe,
+    a1.roce                                   AS latestRoce,
+    a1.revenue_growth_yoy                     AS latestRevGrowth,
+    s.pe                                      AS pe,
+    s.pb                                      AS pb,
+    s.peg                                     AS peg,
+    s.debt_to_equity                          AS debtToEquity,
+    s.market_cap                              AS marketCap,
+    p.promoter_holding_pct                    AS promoterHoldingPct,
+    p.promoter_holding_change_qoq             AS promoterHoldingChangeQoQ
+  FROM AnnualRanked a1
+  LEFT JOIN AnnualRanked  a2 ON a1.symbol = a2.symbol AND a2.rn = 2
+  LEFT JOIN AnnualRanked  a3 ON a1.symbol = a3.symbol AND a3.rn = 3
+  LEFT JOIN SnapshotRanked s ON a1.symbol = s.symbol AND s.rn = 1
+  LEFT JOIN PromoterLatest p ON a1.symbol = p.symbol AND p.rn = 1
+  WHERE a1.rn = 1
+    AND s.pe IS NOT NULL
+    AND s.pb IS NOT NULL
+`;
+
+const QUALITY_GARP_FUNDAMENTALS_LIVE_SQL = `
+  WITH AnnualRanked AS (
+    SELECT symbol, roe, roce, revenue_growth_yoy, as_of,
+      ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY as_of DESC) AS rn
+    FROM fundamentals
+    WHERE source = 'yahoo_annual'
+  ),
+  SnapshotRanked AS (
+    SELECT symbol, pe, pb, peg, market_cap, debt_to_equity, source,
+      ROW_NUMBER() OVER (
+        PARTITION BY symbol
+        ORDER BY CASE source WHEN 'yahoo_snapshot' THEN 0 WHEN 'screener' THEN 1 ELSE 2 END
+      ) AS rn
+    FROM fundamentals
+    WHERE as_of = ? AND source IN ('yahoo_snapshot', 'screener')
+  ),
+  PromoterLatest AS (
+    SELECT symbol, promoter_holding_pct, promoter_holding_change_qoq,
+      ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY as_of DESC) AS rn
+    FROM fundamentals
+    WHERE source IN ('nse_shareholding', 'screener')
+      AND promoter_holding_pct IS NOT NULL
+  )
+  ${QUALITY_GARP_FUNDAMENTALS_SELECT}
+`;
+
+const QUALITY_GARP_FUNDAMENTALS_PIT_SQL = `
+  WITH AnnualEligible AS (
+    SELECT symbol, roe, roce, revenue_growth_yoy, as_of,
+      ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY as_of DESC) AS rn
+    FROM fundamentals
+    WHERE source = 'yahoo_annual' AND as_of <= ?
+  ),
+  AnnualRanked AS (
+    SELECT symbol, roe, roce, revenue_growth_yoy, as_of, rn
+    FROM AnnualEligible
+  ),
+  SnapshotEligible AS (
+    SELECT symbol, pe, pb, peg, market_cap, debt_to_equity, source, as_of,
+      ROW_NUMBER() OVER (
+        PARTITION BY symbol
+        ORDER BY as_of DESC,
+          CASE source WHEN 'yahoo_snapshot' THEN 0 WHEN 'screener' THEN 1 ELSE 2 END
+      ) AS rn
+    FROM fundamentals
+    WHERE source IN ('yahoo_snapshot', 'screener') AND as_of <= ?
+  ),
+  SnapshotRanked AS (
+    SELECT symbol, pe, pb, peg, market_cap, debt_to_equity, source, rn
+    FROM SnapshotEligible
+    WHERE rn = 1
+  ),
+  PromoterLatest AS (
+    SELECT symbol, promoter_holding_pct, promoter_holding_change_qoq,
+      ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY as_of DESC) AS rn
+    FROM fundamentals
+    WHERE source IN ('nse_shareholding', 'screener')
+      AND promoter_holding_pct IS NOT NULL
+  )
+  ${QUALITY_GARP_FUNDAMENTALS_SELECT}
+`;
+
 /** One-shot candidate fundamentals snapshot used by Quality-GARP screen evaluation. */
 export function getQualityGarpFundamentals(
   asOfDate: string,
   db: DatabaseType = getDb(),
+  opts: QualityGarpFundamentalsOptions = {},
 ): QualityGarpFundamentalRow[] {
-  const rows = db
-    .prepare(
-      `
-      WITH AnnualRanked AS (
-        SELECT symbol, roe, roce, revenue_growth_yoy, as_of,
-          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY as_of DESC) AS rn
-        FROM fundamentals
-        WHERE source = 'yahoo_annual'
-      ),
-      SnapshotRanked AS (
-        SELECT symbol, pe, pb, peg, market_cap, debt_to_equity, source,
-          ROW_NUMBER() OVER (
-            PARTITION BY symbol
-            ORDER BY CASE source WHEN 'yahoo_snapshot' THEN 0 WHEN 'screener' THEN 1 ELSE 2 END
-          ) AS rn
-        FROM fundamentals
-        WHERE as_of = ? AND source IN ('yahoo_snapshot', 'screener')
-      ),
-      PromoterLatest AS (
-        SELECT symbol, promoter_holding_pct, promoter_holding_change_qoq,
-          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY as_of DESC) AS rn
-        FROM fundamentals
-        WHERE source IN ('nse_shareholding', 'screener')
-          AND promoter_holding_pct IS NOT NULL
-      )
-      SELECT
-        a1.symbol                                 AS symbol,
-        a1.roe                                    AS latestRoe,
-        a2.roe                                    AS prevRoe,
-        a3.roe                                    AS thirdRoe,
-        a1.roce                                   AS latestRoce,
-        a1.revenue_growth_yoy                     AS latestRevGrowth,
-        s.pe                                      AS pe,
-        s.pb                                      AS pb,
-        s.peg                                     AS peg,
-        s.debt_to_equity                          AS debtToEquity,
-        s.market_cap                              AS marketCap,
-        p.promoter_holding_pct                    AS promoterHoldingPct,
-        p.promoter_holding_change_qoq             AS promoterHoldingChangeQoQ
-      FROM AnnualRanked a1
-      LEFT JOIN AnnualRanked  a2 ON a1.symbol = a2.symbol AND a2.rn = 2
-      LEFT JOIN AnnualRanked  a3 ON a1.symbol = a3.symbol AND a3.rn = 3
-      LEFT JOIN SnapshotRanked s ON a1.symbol = s.symbol AND s.rn = 1
-      LEFT JOIN PromoterLatest p ON a1.symbol = p.symbol AND p.rn = 1
-      WHERE a1.rn = 1
-        AND s.pe IS NOT NULL
-        AND s.pb IS NOT NULL
-    `,
-    )
-    .all(asOfDate) as QualityGarpFundamentalRow[];
-  return rows;
+  const pointInTime = opts.pointInTime === true;
+  const sql = pointInTime ? QUALITY_GARP_FUNDAMENTALS_PIT_SQL : QUALITY_GARP_FUNDAMENTALS_LIVE_SQL;
+  const binds = pointInTime ? [asOfDate, asOfDate] : [asOfDate];
+  return db.prepare(sql).all(...binds) as QualityGarpFundamentalRow[];
 }
 
 // ---------------------------------------------------------------------------
