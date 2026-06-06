@@ -221,6 +221,7 @@ def collect_annual_rows(symbol: str, ticker: yf.Ticker) -> List[Dict[str, Any]]:
         avg_equity = None
         if equity is not None and prev_equity is not None:
             avg_equity = (equity + prev_equity) / 2.0
+        roe_denom = avg_equity if avg_equity is not None else equity
 
         as_of = date_to_iso(col)
         if not as_of:
@@ -234,7 +235,7 @@ def collect_annual_rows(symbol: str, ticker: yf.Ticker) -> List[Dict[str, Any]]:
                 "pe": None,
                 "pb": None,
                 "peg": None,
-                "roe": safe_div(net_income, avg_equity),
+                "roe": safe_div(net_income, roe_denom),
                 "roce": safe_div(ebit, (total_assets - current_liabilities) if total_assets is not None and current_liabilities is not None else None),
                 "revenue_growth_yoy": growth(revenue, prev_revenue),
                 "profit_growth_yoy": growth(net_income, prev_profit),
@@ -249,18 +250,31 @@ def collect_annual_rows(symbol: str, ticker: yf.Ticker) -> List[Dict[str, Any]]:
     return annual_rows
 
 
+def derive_peg_ratio(pe: Optional[float], earnings_growth: Optional[float]) -> Optional[float]:
+    if pe is None or earnings_growth is None or earnings_growth <= 0:
+        return None
+    growth_pct = earnings_growth * 100
+    if growth_pct < 0.5:
+        return None
+    peg = pe / growth_pct
+    return round(peg, 6) if peg > 0 else None
+
+
 def collect_snapshot_row(symbol: str, ticker: yf.Ticker) -> Dict[str, Any]:
     info = ticker.info or {}
     d2e_raw = to_float(info.get("debtToEquity"))
     debt_to_equity = round(d2e_raw / 100, 6) if d2e_raw is not None else None
+    pe = to_float(info.get("trailingPE"))
+    earnings_growth = to_float(info.get("earningsGrowth"))
+    peg = to_float(info.get("pegRatio")) or derive_peg_ratio(pe, earnings_growth)
 
     row = {
         "symbol": symbol,
         "as_of": dt.date.today().isoformat(),
         "market_cap": to_float(info.get("marketCap")),
-        "pe": to_float(info.get("trailingPE")),
+        "pe": pe,
         "pb": to_float(info.get("priceToBook")),
-        "peg": to_float(info.get("pegRatio")),
+        "peg": peg,
         "roe": to_float(info.get("returnOnEquity")),
         "roce": None,
         "revenue_growth_yoy": to_float(info.get("revenueGrowth")),
