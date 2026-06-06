@@ -77,6 +77,7 @@ export function parseScreenerHtml(html: string, opts: ParseScreenerOptions): Fun
     marketCap: parseRupeeCrore(get(ratios, 'market cap')),
     pe: parseFloatLoose(get(ratios, 'stock p/e', 'p/e')),
     pb: parseFloatLoose(get(ratios, 'price to book value', 'p/b')),
+    peg: parseFloatLoose(get(ratios, 'peg ratio', 'peg')),
     roe: parseFloatLoose(get(ratios, 'roe', 'return on equity')),
     roce: parseFloatLoose(get(ratios, 'roce', 'return on capital employed')),
     revenueGrowthYoY,
