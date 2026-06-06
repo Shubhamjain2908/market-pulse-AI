@@ -149,6 +149,7 @@ export interface QualityGarpFundamentalRow {
   symbol: string;
   latestRoe: number | null;
   prevRoe: number | null;
+  thirdRoe: number | null;
   latestRoce: number | null;
   latestRevGrowth: number | null;
   pe: number | null;
@@ -194,6 +195,7 @@ export function getQualityGarpFundamentals(
         a1.symbol                                 AS symbol,
         a1.roe                                    AS latestRoe,
         a2.roe                                    AS prevRoe,
+        a3.roe                                    AS thirdRoe,
         a1.roce                                   AS latestRoce,
         a1.revenue_growth_yoy                     AS latestRevGrowth,
         s.pe                                      AS pe,
@@ -205,6 +207,7 @@ export function getQualityGarpFundamentals(
         p.promoter_holding_change_qoq             AS promoterHoldingChangeQoQ
       FROM AnnualRanked a1
       LEFT JOIN AnnualRanked  a2 ON a1.symbol = a2.symbol AND a2.rn = 2
+      LEFT JOIN AnnualRanked  a3 ON a1.symbol = a3.symbol AND a3.rn = 3
       LEFT JOIN SnapshotRanked s ON a1.symbol = s.symbol AND s.rn = 1
       LEFT JOIN PromoterLatest p ON a1.symbol = p.symbol AND p.rn = 1
       WHERE a1.rn = 1
