@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  derivePegRatio,
   mapQuoteSummaryToSnapshot,
   normalizeDebtToEquity,
   toFiniteNumber,
@@ -45,6 +46,21 @@ describe('yahoo-snapshot-ingestor mapping', () => {
       roe: 0.12,
       debtToEquity: 0.325,
     });
+  });
+
+  it('derivePegRatio computes PE / (earningsGrowth × 100)', () => {
+    expect(derivePegRatio(15.576, 0.118)).toBeCloseTo(15.576 / 11.8, 4);
+    expect(derivePegRatio(20, -0.1)).toBeNull();
+    expect(derivePegRatio(null, 0.1)).toBeNull();
+  });
+
+  it('mapQuoteSummaryToSnapshot derives PEG when trailingPegRatio missing', () => {
+    const row = mapQuoteSummaryToSnapshot('INFY', '2026-06-06', {
+      summaryDetail: { trailingPE: 15.576223, marketCap: 1e12 },
+      defaultKeyStatistics: { priceToBook: 5.2 },
+      financialData: { returnOnEquity: 0.31, debtToEquity: 9.8, earningsGrowth: 0.118 },
+    });
+    expect(row?.peg).toBeCloseTo(15.576223 / 11.8, 3);
   });
 
   it('mapQuoteSummaryToSnapshot falls back to price.trailingPE', () => {

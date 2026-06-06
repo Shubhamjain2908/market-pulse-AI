@@ -52,20 +52,39 @@ export function normalizeDebtToEquity(raw: unknown): number | null {
   return n / 100;
 }
 
+/**
+ * PEG when Yahoo omits `trailingPegRatio` (common on `.NS` quoteSummary as of 2026).
+ * `earningsGrowth` is a decimal fraction (0.12 = 12% YoY).
+ */
+export function derivePegRatio(pe: number | null, earningsGrowth: number | null): number | null {
+  if (pe === null || earningsGrowth === null || earningsGrowth <= 0) return null;
+  const growthPct = earningsGrowth * 100;
+  if (growthPct < 0.5) return null;
+  const peg = pe / growthPct;
+  return Number.isFinite(peg) && peg > 0 ? peg : null;
+}
+
 export function mapQuoteSummaryToSnapshot(
   symbol: string,
   asOf: string,
   summary: {
     summaryDetail?: { trailingPE?: unknown; marketCap?: unknown; dividendYield?: unknown };
     defaultKeyStatistics?: { priceToBook?: unknown; trailingPegRatio?: unknown };
-    financialData?: { returnOnEquity?: unknown; debtToEquity?: unknown };
+    financialData?: {
+      returnOnEquity?: unknown;
+      debtToEquity?: unknown;
+      earningsGrowth?: unknown;
+    };
     price?: { trailingPE?: unknown };
   },
 ): YahooSnapshotFields | null {
   const pe =
     toFiniteNumber(summary.summaryDetail?.trailingPE) ?? toFiniteNumber(summary.price?.trailingPE);
   const pb = toFiniteNumber(summary.defaultKeyStatistics?.priceToBook);
-  const peg = toFiniteNumber(summary.defaultKeyStatistics?.trailingPegRatio);
+  const earningsGrowth = toFiniteNumber(summary.financialData?.earningsGrowth);
+  const peg =
+    toFiniteNumber(summary.defaultKeyStatistics?.trailingPegRatio) ??
+    derivePegRatio(pe, earningsGrowth);
   const marketCap = toFiniteNumber(summary.summaryDetail?.marketCap);
   const dividendYield = toFiniteNumber(summary.summaryDetail?.dividendYield);
   const roe = toFiniteNumber(summary.financialData?.returnOnEquity);
@@ -113,6 +132,7 @@ function writeSnapshotRows(db: DatabaseType, rows: YahooSnapshotFields[]): numbe
       roe            = excluded.roe,
       debt_to_equity = excluded.debt_to_equity,
       dividend_yield = excluded.dividend_yield,
+      source         = excluded.source,
       ingested_at    = excluded.ingested_at
   `);
 
