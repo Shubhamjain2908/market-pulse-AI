@@ -7,6 +7,7 @@
  */
 
 import { runAlertScan, runStockScreenAnalyser } from '../analysers/index.js';
+import type { QualityGarpFunnelCounts } from '../analysers/quality-garp-funnel.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 import type { Regime } from '../types/regime.js';
@@ -27,6 +28,7 @@ export interface ScreenRunResult {
   screensApplied: string[];
   matchesByScreen: Record<string, number>;
   partialByScreen: Record<string, number>;
+  funnelByScreen?: Record<string, QualityGarpFunnelCounts>;
   alertsCount: number;
 }
 
@@ -46,6 +48,7 @@ export async function runStockScreener(opts: ScreenRunOptions = {}): Promise<Scr
       screens: engineResult.screensApplied,
       matches: engineResult.matchesByScreen,
       partial: engineResult.partialByScreen,
+      funnel: engineResult.funnelByScreen,
       alerts: alertResult.alerts.length,
     },
     'screening complete',
@@ -56,6 +59,7 @@ export async function runStockScreener(opts: ScreenRunOptions = {}): Promise<Scr
     screensApplied: engineResult.screensApplied,
     matchesByScreen: engineResult.matchesByScreen,
     partialByScreen: engineResult.partialByScreen,
+    funnelByScreen: engineResult.funnelByScreen,
     alertsCount: alertResult.alerts.length,
   };
 }

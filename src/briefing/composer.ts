@@ -12,6 +12,11 @@ import juice from 'juice';
 import { technicalSummaryLine } from '../agents/portfolio-trigger.js';
 import { getThesisRankMeta } from '../agents/thesis-generator.js';
 import { getAlertsForDate } from '../analysers/alerts.js';
+import {
+  formatQualityGarpFunnelSummary,
+  readQualityGarpFunnelForDate,
+} from '../analysers/quality-garp-funnel.js';
+import { QUALITY_GARP_SCREEN } from '../analysers/quality-garp-gates.js';
 import { config } from '../config/env.js';
 import { loadScreens, loadSectorMap, loadWatchlist } from '../config/loaders.js';
 import {
@@ -283,6 +288,17 @@ export async function composeBriefing(
   }
 
   const warnings: WarningEntry[] = [...(opts.warnings ?? [])];
+
+  const qualityGarpMatches = screenMatches.find((m) => m.screenName === QUALITY_GARP_SCREEN);
+  if (!qualityGarpMatches || qualityGarpMatches.symbols.length === 0) {
+    const funnelRecord = readQualityGarpFunnelForDate(date);
+    if (funnelRecord) {
+      warnings.push({
+        category: 'Quality-GARP funnel',
+        message: formatQualityGarpFunnelSummary(funnelRecord.funnel),
+      });
+    }
+  }
 
   // Data-gap warnings (FII/DII, news)
   if (!opts.marketClosure) {
