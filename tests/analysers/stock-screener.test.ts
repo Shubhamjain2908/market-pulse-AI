@@ -60,6 +60,7 @@ describe('stock screener analyser: quality_garp', () => {
     );
 
     expect(result.matchesByScreen.quality_garp).toBe(1);
+    expect(result.funnelByScreen?.quality_garp?.passed).toBe(1);
     const row = db
       .prepare(
         `SELECT score, matched_criteria AS matchedCriteria FROM screens
@@ -117,6 +118,7 @@ describe('stock screener analyser: quality_garp', () => {
       db,
     );
     expect(result.matchesByScreen.quality_garp).toBe(0);
+    expect(result.funnelByScreen?.quality_garp?.roe_3yr).toBe(1);
   });
 
   it('excludes ETF symbols from config even when fundamentals pass', () => {
@@ -131,5 +133,6 @@ describe('stock screener analyser: quality_garp', () => {
       db,
     );
     expect(result.matchesByScreen.quality_garp).toBe(0);
+    expect(result.funnelByScreen?.quality_garp?.etf_exclusion).toBe(1);
   });
 });

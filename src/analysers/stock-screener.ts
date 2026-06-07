@@ -15,16 +15,33 @@ import type { Regime } from '../types/regime.js';
 import { runCatalystScreener } from './catalyst-screener.js';
 import type { ScreenEngineResult } from './engine.js';
 import { runScreenEngine } from './engine.js';
+import {
+  createEmptyQualityGarpFunnel,
+  persistQualityGarpFunnel,
+  type QualityGarpFailGate,
+  type QualityGarpFunnelCounts,
+  recordQualityGarpFunnelFailure,
+} from './quality-garp-funnel.js';
+import {
+  QUALITY_GARP_DE_MAX,
+  QUALITY_GARP_PB_MAX,
+  QUALITY_GARP_PE_MAX,
+  QUALITY_GARP_PEG_MAX,
+  QUALITY_GARP_ROCE_MIN,
+  QUALITY_GARP_ROE_MIN,
+  QUALITY_GARP_RSI_MAX,
+  QUALITY_GARP_SCREEN,
+  QUALITY_GARP_SMA50_PCT_MAX,
+  QUALITY_GARP_TOTAL_GATES,
+} from './quality-garp-gates.js';
+import {
+  type QualityGarpUniverseScope,
+  resolveQualityGarpSymbols,
+} from './quality-garp-universe.js';
 import { DbSignalProvider, type SignalProvider } from './signal-provider.js';
 
 const log = child({ component: 'stock-screener-analyser' });
-const QUALITY_GARP_SCREEN = 'quality_garp';
 const CATALYST_ENTRY_SCREEN = 'catalyst_entry';
-const QUALITY_GARP_TOTAL_GATES = 10;
-const QUALITY_GARP_ROCE_MIN = 0.2;
-const QUALITY_GARP_DE_MAX = 0.5;
-const QUALITY_GARP_PEG_MAX = 1.2;
-const QUALITY_GARP_ROE_MIN = 0.18;
 
 export interface StockScreenerOptions {
   date?: string;
@@ -34,6 +51,8 @@ export interface StockScreenerOptions {
   provider?: SignalProvider;
   persist?: boolean;
   regime?: Regime;
+  /** Backtest replay: fundamentals as_of <= screen date. Live paths omit this. */
+  pointInTimeFundamentals?: boolean;
 }
 
 interface QualityGarpMatchedCriteria {
@@ -60,6 +79,7 @@ interface QualityGarpEvaluation {
   passed: boolean;
   score: number;
   matchedCount: number;
+  failedGate?: QualityGarpFailGate;
   matchedCriteria?: QualityGarpMatchedCriteria;
 }
 
@@ -94,6 +114,7 @@ export function runStockScreenAnalyser(
 
   const matchesByScreen: Record<string, number> = {};
   const partialByScreen: Record<string, number> = {};
+  const funnelByScreen: Record<string, QualityGarpFunnelCounts> = {};
   const evaluations = [];
   const screensApplied: string[] = [];
 
@@ -116,12 +137,24 @@ export function runStockScreenAnalyser(
   }
 
   if (qualityScreen) {
+    const qualityUniverse = resolveQualityGarpSymbols(db, opts.symbols);
     const qualityResult = runQualityGarpScreen(
-      { date, symbols, provider, persist, regime: opts.regime, etfExclusions, alreadyOwned },
+      {
+        date,
+        symbols: qualityUniverse.symbols,
+        universeScope: qualityUniverse.universeScope,
+        provider,
+        persist,
+        regime: opts.regime,
+        etfExclusions,
+        alreadyOwned,
+        pointInTimeFundamentals: opts.pointInTimeFundamentals,
+      },
       db,
     );
     matchesByScreen[QUALITY_GARP_SCREEN] = qualityResult.matches;
     partialByScreen[QUALITY_GARP_SCREEN] = qualityResult.partial;
+    funnelByScreen[QUALITY_GARP_SCREEN] = qualityResult.funnel;
     evaluations.push(...qualityResult.evaluations);
     screensApplied.push(QUALITY_GARP_SCREEN);
   }
@@ -148,6 +181,7 @@ export function runStockScreenAnalyser(
     screensApplied,
     matchesByScreen,
     partialByScreen,
+    funnelByScreen: Object.keys(funnelByScreen).length > 0 ? funnelByScreen : undefined,
     evaluations,
   };
 }
@@ -156,21 +190,41 @@ function runQualityGarpScreen(
   opts: {
     date: string;
     symbols: string[];
+    universeScope: QualityGarpUniverseScope;
     provider: SignalProvider;
     persist: boolean;
     regime?: Regime;
     etfExclusions: Set<string>;
     alreadyOwned: Set<string>;
+    pointInTimeFundamentals?: boolean;
   },
   db: DatabaseType,
-): { matches: number; partial: number; evaluations: ScreenEngineResult['evaluations'] } {
-  const { date, symbols, provider, persist, regime, etfExclusions } = opts;
+): {
+  matches: number;
+  partial: number;
+  funnel: QualityGarpFunnelCounts;
+  evaluations: ScreenEngineResult['evaluations'];
+} {
+  const {
+    date,
+    symbols,
+    universeScope,
+    provider,
+    persist,
+    regime,
+    etfExclusions,
+    pointInTimeFundamentals,
+  } = opts;
+  const funnel = createEmptyQualityGarpFunnel();
+  funnel.universe = symbols.length;
 
   if (regime != null && !isStrategyAllowed(QUALITY_GARP_SCREEN, regime, db)) {
-    return { matches: 0, partial: 0, evaluations: [] };
+    return { matches: 0, partial: 0, funnel, evaluations: [] };
   }
 
-  const fundamentals = getQualityGarpFundamentals(date, db);
+  const fundamentals = getQualityGarpFundamentals(date, db, {
+    pointInTime: pointInTimeFundamentals === true,
+  });
   const fundamentalsBySymbol = new Map(fundamentals.map((row) => [row.symbol.toUpperCase(), row]));
 
   const results: ScreenResult[] = [];
@@ -179,6 +233,10 @@ function runQualityGarpScreen(
 
   for (const symbol of symbols) {
     const fundamental = fundamentalsBySymbol.get(symbol);
+    if (fundamental?.pe != null && fundamental.pb != null) {
+      funnel.candidates_pe_pb++;
+    }
+
     const evaluation = evaluateQualityGarpSymbol(
       symbol,
       date,
@@ -187,6 +245,12 @@ function runQualityGarpScreen(
       etfExclusions,
     );
     const totalCriteria = QUALITY_GARP_TOTAL_GATES;
+
+    if (evaluation.passed) {
+      funnel.passed++;
+    } else if (evaluation.failedGate) {
+      recordQualityGarpFunnelFailure(funnel, evaluation.failedGate);
+    }
 
     evaluations.push({
       symbol,
@@ -226,9 +290,22 @@ function runQualityGarpScreen(
     upsertScreenResults(results, db);
   }
 
+  if (persist && pointInTimeFundamentals !== true) {
+    persistQualityGarpFunnel({
+      date,
+      screen: QUALITY_GARP_SCREEN,
+      matches,
+      universe_scope: universeScope,
+      regime,
+      funnel,
+      recordedAt: new Date().toISOString(),
+    });
+  }
+
   return {
     matches,
     partial: 0,
+    funnel,
     evaluations,
   };
 }
@@ -305,23 +382,43 @@ function evaluateQualityGarpSymbol(
 
   // Gate 1: ETF/SGB exclusion list
   if (etfExclusions.has(symbol)) {
-    return { passed: false, score: gateScore(matchedCount), matchedCount };
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'etf_exclusion',
+    };
   }
   matchedCount++;
 
   if (!fundamentals) {
-    return { passed: false, score: gateScore(matchedCount), matchedCount };
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'no_fundamentals',
+    };
   }
 
   // Gate 2: hard valuation null guard
   if (fundamentals.pe == null || fundamentals.pb == null) {
-    return { passed: false, score: gateScore(matchedCount), matchedCount };
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'valuation_null',
+    };
   }
   matchedCount++;
 
   // Gate 3: valuation ceilings
-  if (fundamentals.pe > 35 || fundamentals.pb > 6) {
-    return { passed: false, score: gateScore(matchedCount), matchedCount };
+  if (fundamentals.pe > QUALITY_GARP_PE_MAX || fundamentals.pb > QUALITY_GARP_PB_MAX) {
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'valuation',
+    };
   }
   matchedCount++;
 
@@ -334,32 +431,65 @@ function evaluateQualityGarpSymbol(
     fundamentals.prevRoe < QUALITY_GARP_ROE_MIN ||
     fundamentals.thirdRoe < QUALITY_GARP_ROE_MIN
   ) {
-    return { passed: false, score: gateScore(matchedCount), matchedCount };
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'roe_3yr',
+    };
   }
   matchedCount++;
 
   // Gate 5: ROCE quality floor
   if (fundamentals.latestRoce == null || fundamentals.latestRoce < QUALITY_GARP_ROCE_MIN) {
-    return { passed: false, score: gateScore(matchedCount), matchedCount };
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'roce',
+    };
   }
   matchedCount++;
 
   // Gate 6: conservative leverage
   if (fundamentals.debtToEquity == null || fundamentals.debtToEquity >= QUALITY_GARP_DE_MAX) {
-    return { passed: false, score: gateScore(matchedCount), matchedCount };
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'debt',
+    };
   }
   matchedCount++;
 
   // Gate 7: growth at reasonable price
-  if (fundamentals.peg == null || fundamentals.peg >= QUALITY_GARP_PEG_MAX) {
-    return { passed: false, score: gateScore(matchedCount), matchedCount };
+  if (fundamentals.peg == null) {
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'peg_null',
+    };
+  }
+  if (fundamentals.peg >= QUALITY_GARP_PEG_MAX) {
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'peg',
+    };
   }
   matchedCount++;
 
   // Gate 8: technical dip via RSI
   const rsi14 = provider.get(symbol, date, 'rsi_14');
-  if (rsi14 == null || rsi14 >= 45) {
-    return { passed: false, score: gateScore(matchedCount), matchedCount };
+  if (rsi14 == null || rsi14 >= QUALITY_GARP_RSI_MAX) {
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'rsi',
+    };
   }
   matchedCount++;
 
@@ -367,17 +497,32 @@ function evaluateQualityGarpSymbol(
   const sma50 = provider.get(symbol, date, 'sma_50');
   const close = provider.get(symbol, date, 'close');
   if (sma50 == null || close == null || sma50 === 0) {
-    return { passed: false, score: gateScore(matchedCount), matchedCount };
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'sma50',
+    };
   }
   const pctFromSma50 = Math.abs(((close - sma50) / sma50) * 100);
-  if (pctFromSma50 > 5) {
-    return { passed: false, score: gateScore(matchedCount), matchedCount };
+  if (pctFromSma50 > QUALITY_GARP_SMA50_PCT_MAX) {
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'sma50',
+    };
   }
   matchedCount++;
 
   // Gate 10: fail-open on NULL promoter change; block only active selling
   if (fundamentals.promoterHoldingChangeQoQ != null && fundamentals.promoterHoldingChangeQoQ < 0) {
-    return { passed: false, score: gateScore(matchedCount), matchedCount };
+    return {
+      passed: false,
+      score: gateScore(matchedCount),
+      matchedCount,
+      failedGate: 'promoter',
+    };
   }
   matchedCount++;
 

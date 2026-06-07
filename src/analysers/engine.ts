@@ -17,6 +17,7 @@ import { child } from '../logger.js';
 import type { ScreenDefinition, ScreenResult } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
 import { evaluateScreen, type ScreenEvaluation, toScreenResult } from './evaluator.js';
+import type { QualityGarpFunnelCounts } from './quality-garp-funnel.js';
 import { DbSignalProvider, type SignalProvider } from './signal-provider.js';
 
 const log = child({ component: 'screen-engine' });
@@ -47,6 +48,8 @@ export interface ScreenEngineResult {
   matchesByScreen: Record<string, number>;
   /** Per-screen partial matches (score >= threshold) — diagnostic. */
   partialByScreen: Record<string, number>;
+  /** Per-screen gate elimination counts (quality_garp only). */
+  funnelByScreen?: Record<string, QualityGarpFunnelCounts>;
   /** Full evaluation list for callers that need raw data. */
   evaluations: ScreenEvaluation[];
 }
