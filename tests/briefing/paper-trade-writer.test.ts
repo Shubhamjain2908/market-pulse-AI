@@ -5,13 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockError = vi.hoisted(() => vi.fn());
 const mockWarn = vi.hoisted(() => vi.fn());
+const mockInfo = vi.hoisted(() => vi.fn());
 const noop = vi.hoisted(() => vi.fn());
 
 vi.mock('../../src/logger.js', () => {
   const stub = () => ({
     warn: mockWarn,
     error: mockError,
-    info: noop,
+    info: mockInfo,
     debug: noop,
     child: stub,
   });
@@ -35,6 +36,7 @@ describe('recordPaperTrades', () => {
     migrate(db);
     mockError.mockClear();
     mockWarn.mockClear();
+    mockInfo.mockClear();
   });
 
   afterEach(() => {
@@ -205,6 +207,226 @@ describe('recordPaperTrades', () => {
       expect.objectContaining({ originalStop: expect.any(Number) }),
       'AI_PICK stop raised to 8% hard floor',
     );
+  });
+
+  function aiPickThesisCard(symbol: string): ThesisCard {
+    return {
+      symbol,
+      thesis: 'x',
+      bullCase: ['a'],
+      bearCase: ['b'],
+      entryZone: '₹100',
+      stopLoss: '₹95',
+      target: '₹120',
+      timeHorizon: 'medium',
+      confidence: 5,
+      triggerReason: 't',
+    };
+  }
+
+  it('blocks AI_PICK when OPEN momentum_mf exists for the symbol', () => {
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status
+      ) VALUES ('RELIANCE', 'momentum_mf', '2026-04-01', 100, 92, 115, 'medium', 90, 'OPEN')
+    `,
+    ).run();
+    const r = recordPaperTrades('2026-05-01', [aiPickThesisCard('RELIANCE')], undefined, db);
+    expect(r.insertedAiPick).toBe(0);
+    expect(r.crossStrategyBlocked).toBe(1);
+    expect(getOpenPaperTrades(db)).toHaveLength(1);
+    expect(mockInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        symbol: 'RELIANCE',
+        signalType: 'AI_PICK',
+        blockReason: 'open_in_other_strategy',
+      }),
+      'paper trade dedup — symbol already open under different signal',
+    );
+  });
+
+  function catalystThesisCard(symbol: string): ThesisCard {
+    return {
+      symbol,
+      thesis: 'Catalyst thesis with enough length for validation.',
+      bullCase: ['a'],
+      bearCase: ['b'],
+      entryZone: '₹100',
+      stopLoss: '₹95',
+      target: '₹110',
+      timeHorizon: 'short',
+      confidence: 6,
+      triggerReason: 'catalyst_entry',
+    };
+  }
+
+  function seedCatalystScreen(symbol: string, date: string): void {
+    db.prepare(
+      `
+      INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+      VALUES (?, ?, 'catalyst_entry', 1, ?)
+    `,
+    ).run(symbol, date, JSON.stringify({ days_to_earnings: 7, atr_14: 3.2 }));
+  }
+
+  it('blocks catalyst_entry when another OPEN paper trade exists for the symbol', () => {
+    seedCatalystScreen('CATBLK', '2026-05-01');
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status
+      ) VALUES ('CATBLK', 'AI_PICK', '2026-04-01', 100, 95, 120, 'medium', 90, 'OPEN')
+    `,
+    ).run();
+    const r = recordPaperTrades('2026-05-01', [catalystThesisCard('CATBLK')], undefined, db);
+    expect(r.insertedCatalystEntry).toBe(0);
+    expect(r.crossStrategyBlocked).toBe(1);
+    expect(getOpenPaperTrades(db)).toHaveLength(1);
+    expect(mockInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        symbol: 'CATBLK',
+        signalType: 'catalyst_entry',
+        blockReason: 'open_in_other_strategy',
+      }),
+      'paper trade dedup — symbol already open under different signal',
+    );
+  });
+
+  it('blocks PORTFOLIO_ADD when another OPEN paper trade exists for the symbol', () => {
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status
+      ) VALUES ('ADDBLK', 'momentum_mf', '2026-04-01', 100, 92, 115, 'medium', 90, 'OPEN')
+    `,
+    ).run();
+    const portfolio: PortfolioSummary = {
+      totalValue: 1,
+      totalPnl: 0,
+      totalPnlPct: 0,
+      dayChange: null,
+      dayChangePct: null,
+      source: 'manual',
+      positions: [
+        {
+          symbol: 'ADDBLK',
+          qty: 1,
+          avgPrice: 100,
+          lastPrice: 150,
+          pnl: null,
+          pnlPct: null,
+          dayChangePct: null,
+          action: 'ADD',
+          conviction: 0.8,
+          thesis: null,
+          triggerReason: null,
+          bullPoints: [],
+          bearPoints: [],
+          suggestedStop: 140,
+          suggestedTarget: 180,
+        },
+      ],
+    };
+    const r = recordPaperTrades('2026-05-01', [], portfolio, db);
+    expect(r.insertedPortfolioAdd).toBe(0);
+    expect(r.crossStrategyBlocked).toBe(1);
+    expect(getOpenPaperTrades(db)).toHaveLength(1);
+    expect(mockInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        symbol: 'ADDBLK',
+        signalType: 'PORTFOLIO_ADD',
+        blockReason: 'open_in_other_strategy',
+      }),
+      'paper trade dedup — symbol already open under different signal',
+    );
+  });
+
+  it('accumulates crossStrategyBlocked across branches in one run', () => {
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status
+      ) VALUES ('RELIANCE', 'momentum_mf', '2026-04-01', 100, 92, 115, 'medium', 90, 'OPEN')
+    `,
+    ).run();
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status
+      ) VALUES ('INFY', 'AI_PICK', '2026-04-01', 100, 95, 120, 'medium', 90, 'OPEN')
+    `,
+    ).run();
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status
+      ) VALUES ('TCS', 'PORTFOLIO_ADD', '2026-04-01', 100, 95, 120, 'medium', 90, 'OPEN')
+    `,
+    ).run();
+    seedCatalystScreen('RELIANCE', '2026-05-01');
+
+    const portfolio: PortfolioSummary = {
+      totalValue: 1,
+      totalPnl: 0,
+      totalPnlPct: 0,
+      dayChange: null,
+      dayChangePct: null,
+      source: 'manual',
+      positions: [
+        {
+          symbol: 'TCS',
+          qty: 1,
+          avgPrice: 100,
+          lastPrice: 150,
+          pnl: null,
+          pnlPct: null,
+          dayChangePct: null,
+          action: 'ADD',
+          conviction: 0.8,
+          thesis: null,
+          triggerReason: null,
+          bullPoints: [],
+          bearPoints: [],
+          suggestedStop: 140,
+          suggestedTarget: 180,
+        },
+      ],
+    };
+
+    const r = recordPaperTrades(
+      '2026-05-01',
+      [catalystThesisCard('RELIANCE'), aiPickThesisCard('INFY')],
+      portfolio,
+      db,
+    );
+    expect(r.crossStrategyBlocked).toBe(3);
+    expect(r.insertedCatalystEntry).toBe(0);
+    expect(r.insertedAiPick).toBe(0);
+    expect(r.insertedPortfolioAdd).toBe(0);
+    expect(getOpenPaperTrades(db)).toHaveLength(3);
+  });
+
+  it('allows AI_PICK when prior paper trade is CLOSED', () => {
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status, outcome_date, exit_price, pnl_pct
+      ) VALUES ('RELIANCE', 'momentum_mf', '2026-04-01', 100, 92, 115, 'medium', 90, 'CLOSED_WIN', '2026-04-20', 110, 10)
+    `,
+    ).run();
+    const r = recordPaperTrades('2026-05-01', [aiPickThesisCard('RELIANCE')], undefined, db);
+    expect(r.insertedAiPick).toBe(1);
+    expect(r.crossStrategyBlocked).toBe(0);
+    expect(getOpenPaperTrades(db)).toHaveLength(1);
+    expect(getOpenPaperTrades(db)[0]?.signalType).toBe('AI_PICK');
   });
 
   it('is idempotent for same source day', () => {

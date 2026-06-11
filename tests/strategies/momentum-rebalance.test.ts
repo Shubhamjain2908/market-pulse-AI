@@ -4,13 +4,14 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockWarn = vi.hoisted(() => vi.fn());
+const mockInfo = vi.hoisted(() => vi.fn());
 const noop = vi.hoisted(() => vi.fn());
 
 vi.mock('../../src/logger.js', () => {
   const stub = () => ({
     warn: mockWarn,
     error: noop,
-    info: noop,
+    info: mockInfo,
     debug: noop,
     child: stub,
   });
@@ -78,6 +79,7 @@ describe('strategies/momentum-rebalance', () => {
     dbPath = join(tmpdir(), `mp-mom-rebal-${Date.now()}-${Math.random()}.db`);
     process.env.DATABASE_PATH = dbPath;
     mockWarn.mockClear();
+    mockInfo.mockClear();
   });
 
   function openMomentumTestDb(): ReturnType<typeof getDb> {
@@ -381,6 +383,42 @@ describe('strategies/momentum-rebalance', () => {
     db.close();
   });
 
+  it('blocks momentum_mf entry when OPEN AI_PICK exists for the symbol', async () => {
+    const db = openMomentumTestDb();
+    const session = '2026-05-08';
+    insertRegimeBull(db, session);
+    quote(db, 'INFY', session, 100);
+    sigRank(db, 'INFY', session, 1);
+    sigAtr14(db, 'INFY', session, 2);
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status
+      ) VALUES ('INFY', 'AI_PICK', '2026-05-01', 100, 95, 120, 'medium', 90, 'OPEN')
+    `,
+    ).run();
+
+    const r = await runMomentumRebalance({
+      calendarDate: session,
+      db,
+      skipRanker: true,
+      skipThesis: true,
+    });
+    expect(r.entriesInserted).toBe(0);
+    expect(r.crossStrategyBlocked).toBe(1);
+    expect(getOpenPaperTradesForSignal('momentum_mf', db)).toHaveLength(0);
+    expect(mockInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        symbol: 'INFY',
+        signalType: 'momentum_mf',
+        blockReason: 'open_in_other_strategy',
+      }),
+      'paper trade dedup — symbol already open under different signal',
+    );
+    db.close();
+  });
+
   it('second rebalance is idempotent (no duplicate inserts)', async () => {
     const db = openMomentumTestDb();
     const session = '2026-05-08';
@@ -423,6 +461,7 @@ describe('toMomentumRebalanceBriefingSummary', () => {
         blackoutBlocked: 0,
         falseFlagBlocked: 0,
         atrMissingSkipped: 0,
+        crossStrategyBlocked: 0,
         unchangedHeld: 1,
         thesisFailed: 0,
         skippedReason: 'regime_gate',
@@ -438,6 +477,7 @@ describe('toMomentumRebalanceBriefingSummary', () => {
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
       falseFlagBlocked: 0,
+      crossStrategyBlocked: 0,
       skippedReason: 'regime_gate',
       thesisFailed: 0,
     });
@@ -457,6 +497,7 @@ describe('toMomentumRebalanceBriefingSummary', () => {
         blackoutBlocked: 1,
         falseFlagBlocked: 0,
         atrMissingSkipped: 0,
+        crossStrategyBlocked: 0,
         unchangedHeld: 3,
         thesisFailed: 0,
       }),
@@ -471,6 +512,7 @@ describe('toMomentumRebalanceBriefingSummary', () => {
       sectorCapBlocked: 0,
       blackoutBlocked: 1,
       falseFlagBlocked: 0,
+      crossStrategyBlocked: 0,
       thesisFailed: 0,
     });
   });
