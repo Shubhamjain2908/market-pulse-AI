@@ -9,7 +9,7 @@
 import type { WarningEntry } from '../briefing/template.js';
 import { config } from '../config/env.js';
 import { getMomentumUniverseSymbols } from '../config/loaders.js';
-import { getDb, getRegimeForCalendarDate } from '../db/index.js';
+import { getDb } from '../db/index.js';
 import { recordPipelineStage } from '../db/pipeline-queries.js';
 import { enrichSentiment } from '../enrichers/sentiment/enricher.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
@@ -303,16 +303,12 @@ export async function runDailyWorkflow(
     let regimeAgent: RunRegimeAgentResult;
     try {
       regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
-      const regimeRow = getRegimeForCalendarDate(date, db);
       recordPipelineStage(
         {
           runDate,
           stage: 'regime',
           status: 'success',
-          metadata: {
-            regime: regimeAgent.regime,
-            scoreTotal: regimeRow?.scoreTotal,
-          },
+          metadata: { regime: regimeAgent.regime },
         },
         db,
       );
