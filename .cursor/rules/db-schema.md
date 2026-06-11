@@ -38,6 +38,8 @@ CREATE TABLE fundamentals (
   PRIMARY KEY (symbol, as_of)
 );
 CREATE INDEX idx_fundamentals_symbol ON fundamentals(symbol);
+CREATE INDEX idx_fundamentals_asof ON fundamentals(as_of);
+CREATE INDEX idx_fundamentals_source_symbol_asof ON fundamentals(source, symbol, as_of DESC);
 CREATE TABLE news (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   symbol       TEXT,
@@ -53,6 +55,7 @@ CREATE TABLE news (
 CREATE TABLE sqlite_sequence(name,seq);
 CREATE INDEX idx_news_symbol     ON news(symbol);
 CREATE INDEX idx_news_published  ON news(published_at);
+CREATE INDEX idx_news_symbol_published ON news(symbol, published_at DESC);
 CREATE TABLE fii_dii (
   date        TEXT NOT NULL,
   segment     TEXT NOT NULL, -- 'cash' | 'fno' | 'fno_index_fut' | 'fno_stock_fut'
@@ -107,6 +110,8 @@ CREATE TABLE signals (
 );
 CREATE INDEX idx_signals_date_name ON signals(date, name);
 CREATE INDEX idx_signals_symbol    ON signals(symbol);
+-- Hot-path covering index for getLatestSignalsMap* (migration 0021); preferred for symbol+name+date DESC lookups.
+CREATE INDEX idx_signals_symbol_name_date ON signals(symbol, name, date DESC);
 CREATE TABLE screens (
   symbol            TEXT NOT NULL,
   date              TEXT NOT NULL,
@@ -140,6 +145,18 @@ CREATE TABLE briefings (
   created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_briefings_date ON briefings(date);
+-- Per-stage audit trail for daily-workflow.ts (migration 0022). status: started | success | failed | skipped.
+CREATE TABLE pipeline_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_date    TEXT NOT NULL,
+  stage       TEXT NOT NULL,
+  status      TEXT NOT NULL CHECK (status IN ('started','success','failed','skipped')),
+  started_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT,
+  error_msg   TEXT,
+  metadata    TEXT
+);
+CREATE INDEX idx_pipeline_runs_date_stage ON pipeline_runs(run_date, stage);
 CREATE TABLE symbols (
   symbol      TEXT PRIMARY KEY,
   name        TEXT,
@@ -197,9 +214,10 @@ CREATE TABLE backtest_runs (
   median_return_pct REAL  NOT NULL,
   max_return_pct  REAL    NOT NULL,
   min_return_pct  REAL    NOT NULL,
-  max_drawdown_pct REAL   NOT NULL, -- worst trade DD across the run
+  max_drawdown_pct REAL   NOT NULL, -- worst per-trade DD across the run (backtest_trades also has per-leg max_drawdown_pct)
   created_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
-, strategy_id TEXT, expectancy REAL, avg_hold_days REAL, profit_factor REAL, universe_json TEXT, cost_bps_round_trip INTEGER, notes TEXT);
+, strategy_id TEXT, expectancy REAL, avg_hold_days REAL, profit_factor REAL, universe_json TEXT, cost_bps_round_trip INTEGER, notes TEXT, equity_curve_max_dd_pct REAL CHECK (equity_curve_max_dd_pct IS NULL OR equity_curve_max_dd_pct <= 0));
+-- equity_curve_max_dd_pct: portfolio-level equity-curve DD on the run summary (migration 0022); runner write pending.
 CREATE INDEX idx_backtest_runs_screen ON backtest_runs(screen_name, created_at DESC);
 CREATE TABLE backtest_trades (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -268,6 +286,10 @@ CREATE TABLE portfolio_analysis (
   PRIMARY KEY (symbol, date)
 );
 CREATE INDEX idx_portfolio_analysis_action ON portfolio_analysis(date, action);
+-- Excludes STALE_HOLDINGS placeholders (model='none') from LLM aggregation queries (migration 0022).
+CREATE VIEW portfolio_analysis_llm AS
+  SELECT * FROM portfolio_analysis
+  WHERE model != 'none';
 CREATE TABLE intraday_quotes (
   symbol       TEXT    NOT NULL,
   captured_at  TEXT    NOT NULL,    -- ISO 8601 UTC
@@ -298,7 +320,8 @@ CREATE TABLE paper_trades (
 , highest_close_since_entry REAL, atr14_at_entry REAL, trailing_multiplier REAL DEFAULT 2.0, stop_raised_today INTEGER DEFAULT 0, exit_reason TEXT, stop_type TEXT NOT NULL DEFAULT 'trailing');
 CREATE UNIQUE INDEX uq_paper_trades_signal_day
   ON paper_trades(symbol, signal_type, source_date);
-CREATE INDEX idx_paper_trades_status ON paper_trades(status);
+-- Partial index for OPEN-trade hot path (migration 0021 replaces idx_paper_trades_status).
+CREATE INDEX idx_pt_open ON paper_trades(symbol) WHERE status = 'OPEN';
 CREATE INDEX idx_paper_trades_outcome_date ON paper_trades(outcome_date);
 CREATE TABLE regime_daily (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
