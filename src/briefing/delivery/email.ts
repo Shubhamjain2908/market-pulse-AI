@@ -51,6 +51,16 @@ export async function deliverToEmail(
     html,
   });
 
+  const accepted = (info.accepted ?? []).map(String);
+  const rejected = (info.rejected ?? []).map(String);
+  if (accepted.length === 0) {
+    throw new Error(
+      `email delivery failed: no recipients accepted${
+        rejected.length > 0 ? ` (${rejected.join(', ')} rejected)` : ''
+      }`,
+    );
+  }
+
   const insert = db.prepare(`
     INSERT INTO briefings (date, html_content, delivery_method, delivered_at)
     VALUES (?, ?, 'email', datetime('now'))
@@ -58,8 +68,6 @@ export async function deliverToEmail(
   const result = insert.run(date, html);
   const briefingId = Number(result.lastInsertRowid);
 
-  const accepted = (info.accepted ?? []).map(String);
-  const rejected = (info.rejected ?? []).map(String);
   const messageId = info.messageId ?? 'unknown';
 
   log.info({ messageId, accepted, rejected, briefingId }, 'briefing delivered via email');
