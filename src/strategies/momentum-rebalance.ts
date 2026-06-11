@@ -178,6 +178,7 @@ export interface MomentumRebalanceResult {
   entriesInserted: number;
   sectorCapBlocked: number;
   blackoutBlocked: number;
+  falseFlagBlocked: number;
   unchangedHeld: number;
   thesisFailed: number;
   /** Omitted when regime is allowed and rebalance proceeded normally. */
@@ -198,6 +199,7 @@ export function toMomentumRebalanceBriefingSummary(
     unchangedHeld: r.unchangedHeld,
     sectorCapBlocked: r.sectorCapBlocked,
     blackoutBlocked: r.blackoutBlocked,
+    falseFlagBlocked: r.falseFlagBlocked,
     skippedReason: r.skippedReason,
     thesisFailed: r.thesisFailed,
     rankerSnapshot: r.rankerSnapshot,
@@ -372,6 +374,7 @@ export async function runMomentumRebalance(
       entriesInserted: 0,
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
+      falseFlagBlocked: 0,
       unchangedHeld: getOpenPaperTradesForSignal('momentum_mf', db).length,
       thesisFailed: 0,
       skippedReason: 'missing_regime',
@@ -394,6 +397,7 @@ export async function runMomentumRebalance(
       entriesInserted: 0,
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
+      falseFlagBlocked: 0,
       unchangedHeld: getOpenPaperTradesForSignal('momentum_mf', db).length,
       thesisFailed: 0,
       skippedReason: 'regime_gate',
@@ -437,6 +441,7 @@ export async function runMomentumRebalance(
   let entriesInserted = 0;
   let sectorCapBlocked = 0;
   let blackoutBlocked = 0;
+  let falseFlagBlocked = 0;
 
   let needed = slotsTarget - openTrades.length;
   if (needed <= 0) {
@@ -461,6 +466,7 @@ export async function runMomentumRebalance(
       entriesInserted: 0,
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
+      falseFlagBlocked: 0,
       unchangedHeld: heldBeforeEntries.size,
       thesisFailed: 0,
     });
@@ -509,6 +515,15 @@ export async function runMomentumRebalance(
     }
 
     const entryCtx = loadMomentumEntryContext(sym, sessionDate, rkNew, db);
+    if (entryCtx.falseFlag) {
+      log.info(
+        { symbol: sym, source_date: sessionDate, reason: 'false_momentum_flag' },
+        '[GATED] momentum_mf entry blocked — mom_false_flag=1',
+      );
+      falseFlagBlocked++;
+      continue;
+    }
+
     let thesisStop: number | null = null;
     let thesisTarget: number | null = null;
     let thesisModel = 'n/a';
@@ -613,6 +628,7 @@ export async function runMomentumRebalance(
       entriesInserted,
       sectorCapBlocked,
       blackoutBlocked,
+      falseFlagBlocked,
       heldCount: finalOpen.length,
       thesisFailed,
       rankerSnapshot,
@@ -631,6 +647,7 @@ export async function runMomentumRebalance(
     entriesInserted,
     sectorCapBlocked,
     blackoutBlocked,
+    falseFlagBlocked,
     unchangedHeld,
     thesisFailed,
   });

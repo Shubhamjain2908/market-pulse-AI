@@ -35,6 +35,8 @@ export interface MomentumRebalanceSummary {
   unchangedHeld: number;
   sectorCapBlocked: number;
   blackoutBlocked: number;
+  /** Present when passed from a live rebalance run; not persisted to DB. */
+  falseFlagBlocked?: number;
   skippedReason?: 'regime_gate' | 'missing_regime';
   /** Entry-thesis attempts that did not yield a trade (no LLM, LLM error, or invalid levels). */
   thesisFailed?: number;
