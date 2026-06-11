@@ -289,11 +289,14 @@ export async function composeBriefing(
 
   const trailingStopBlock = renderTrailingStopBriefingBlock(date, db) || undefined;
 
-  const momentumSummary: MomentumRebalanceSummary | undefined =
-    opts.momentumRebalanceSummary ??
-    getMomentumRebalanceBriefingForCalendarDate(date, db) ??
-    undefined;
-  const momentumBlock = renderMomentumBriefingBlock(date, db, momentumSummary) || undefined;
+  const momentumSummary: MomentumRebalanceSummary | undefined = partialPipeline
+    ? undefined
+    : (opts.momentumRebalanceSummary ??
+      getMomentumRebalanceBriefingForCalendarDate(date, db) ??
+      undefined);
+  const momentumBlock = partialPipeline
+    ? undefined
+    : renderMomentumBriefingBlock(date, db, momentumSummary) || undefined;
   const etfPricingBlock =
     renderEtfPricingBlock(date, db, portfolio?.staleHoldings ?? false) || undefined;
 
