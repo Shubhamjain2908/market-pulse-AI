@@ -197,12 +197,15 @@ export interface BriefingData {
   etfPricingBlock?: string;
   /** Non-fatal warnings to display in a yellow banner at the top of the briefing. */
   warnings?: WarningEntry[];
+  /** When true, show a dedicated banner that the per-run LLM budget was exceeded. */
+  budgetExceeded?: boolean;
 }
 
 export function renderBriefing(data: BriefingData): string {
   const t = THEME;
   const bodyInner = `
     ${renderHeader(data.date)}
+    ${renderBudgetExceededBanner(data.budgetExceeded)}
     ${renderWarnings(data.warnings)}
     ${renderMood(data.date, data.mood, data.moodNarrative, data.marketClosure)}
     ${renderSignalPerformance(data.signalPerformance)}
@@ -823,6 +826,18 @@ function renderNews(news: NewsRow[]): string {
     </section>`;
 }
 
+function renderBudgetExceededBanner(budgetExceeded?: boolean): string {
+  if (!budgetExceeded) return '';
+  return `
+    <section class="card budget-exceeded-card">
+      <div class="budget-exceeded-header">LLM budget exceeded</div>
+      <p class="budget-exceeded-body">
+        This run hit the per-pipeline LLM spend cap. Thesis generation and/or portfolio analysis
+        were skipped; evaluate and briefing stages still completed from persisted data.
+      </p>
+    </section>`;
+}
+
 function renderWarnings(warnings?: WarningEntry[]): string {
   if (!warnings || warnings.length === 0) return '';
   const items = warnings
@@ -1033,6 +1048,9 @@ function baseStyles(): string {
       font-weight: 600; font-size: 11px; }
     .warnings-card { background: #fff8e6; border-color: #f0b429; }
     .warnings-header { font-size: 14px; font-weight: 700; color: #b7791f; margin-bottom: 8px; }
+    .budget-exceeded-card { background: #fde8e8; border-color: #e53e3e; }
+    .budget-exceeded-header { font-size: 14px; font-weight: 700; color: #c53030; margin-bottom: 8px; }
+    .budget-exceeded-body { margin: 0; font-size: 13px; color: #742a2a; line-height: 1.45; }
     .ingest-warning { padding: 6px 0; border-bottom: 1px solid #f0e0a8; font-size: 13px; line-height: 1.45; }
     .ingest-warning:last-child { border-bottom: none; }
     .ai-placeholder { background: #fbf7e9; border-color: #f0e0a8; }

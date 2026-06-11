@@ -17,6 +17,7 @@ import { runExtSignalHoldingsIngestor } from '../ingestors/ext-signal-holdings-i
 import { fetchInavSnapshots } from '../ingestors/inav-fetcher.js';
 import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { ingestYahooSnapshots } from '../ingestors/yahoo-snapshot-ingestor.js';
+import { clearRunBudget, LlmBudgetExceededError, startRunBudget } from '../llm/index.js';
 import { child } from '../logger.js';
 import { getMarketClosure, isSundayIst } from '../market/nse-calendar.js';
 import { runEvaluatePaperTrades } from '../scripts/evaluate-trades.js';
@@ -124,175 +125,226 @@ export async function runDailyWorkflow(
   }
 
   const warnings: WarningEntry[] = [];
-
-  if (!opts.skipPortfolio) {
-    try {
-      // Phase 4.5: portfolio sync + stop-loss are outside regime gates (`portfolio_exit_signals` /
-      // `trailing_stop_update` are always-on at 100% in strategy-gates.json).
-      await runPortfolioSync({ date });
-      const stopLoss = detectStopLossBreaches({ date });
-      log.info(
-        { checked: stopLoss.checked, breached: stopLoss.breached },
-        'stop-loss detector complete',
-      );
-    } catch (err) {
-      const msg = (err as Error).message;
-      log.warn({ err: msg }, 'portfolio sync/stop-loss failed; continuing workflow');
-      warnings.push({ category: 'Portfolio sync', message: msg });
-    }
-  }
-
-  const ingestResult = await runDailyIngestor({ date });
-  for (const f of ingestResult.failures) {
-    warnings.push({
-      category: 'Ingest',
-      message: `${f.ingestor} could not fetch ${f.capability}: ${f.reason}`,
-    });
-  }
-
-  try {
-    await applyCorporateActionsFromYahooSplits(getDb(), { refDate: date });
-  } catch (err) {
-    const msg = (err as Error).message;
-    log.warn({ err: msg }, 'corporate actions from Yahoo splits failed; continuing workflow');
-    warnings.push({ category: 'Corporate actions', message: msg });
-  }
-  await runSignalEnricher({ date });
-  log.info('pipeline: enrich complete, starting yahoo snapshot ingest');
-  try {
-    const snap = await ingestYahooSnapshots(getDb(), { date });
-    if (snap.failed > 0) {
-      log.warn(snap, 'yahoo snapshot ingest partial failures');
-    } else {
-      log.info(snap, 'yahoo snapshot ingest complete');
-    }
-  } catch (err) {
-    log.warn(
-      { err: (err as Error).message },
-      'yahoo snapshot ingest failed unexpectedly; continuing workflow',
-    );
-  }
-  try {
-    await runExtSignalHoldingsIngestor(getDb());
-  } catch (err) {
-    log.warn({ err }, 'ext signal holdings ingestor failed — continuing');
-  }
-  try {
-    const inav = await fetchInavSnapshots({ date, db: getDb() });
-    if (inav.failed) {
-      log.warn({ date }, 'inav snapshot ingest skipped after NSE failure');
-    }
-  } catch (err) {
-    log.warn(
-      { err: (err as Error).message },
-      'inav snapshot ingest failed unexpectedly; continuing',
-    );
-  }
-  log.info('pipeline: inav snapshots complete, starting regime classification');
-  const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
-  const momRegimeExits = applyMomentumRegimeGateExits({
-    calendarDate: date,
-    regime: regimeAgent.regime,
-    db: getDb(),
-  });
-  if (momRegimeExits > 0) {
-    log.info({ momRegimeExits }, 'momentum regime gate: closed paper trades');
-  }
-  await runStockScreener({ date, regime: regimeAgent.regime });
-
-  let thesisRun:
-    | {
-        generated: number;
-        failed: number;
-        candidateCount: number;
-        eligibleUniverseSize: number;
-        watchlistSize: number;
-      }
-    | undefined;
+  let budgetExceeded = false;
 
   if (!opts.skipAi) {
-    const sentimentResult = await enrichSentiment();
-    log.info(sentimentResult, 'sentiment scoring done');
-    if (sentimentResult.scored === 0 && sentimentResult.failed > 0) {
+    startRunBudget(date, config.LLM_RUN_BUDGET_USD);
+  }
+
+  try {
+    if (!opts.skipPortfolio) {
+      try {
+        // Phase 4.5: portfolio sync + stop-loss are outside regime gates (`portfolio_exit_signals` /
+        // `trailing_stop_update` are always-on at 100% in strategy-gates.json).
+        await runPortfolioSync({ date });
+        const stopLoss = detectStopLossBreaches({ date });
+        log.info(
+          { checked: stopLoss.checked, breached: stopLoss.breached },
+          'stop-loss detector complete',
+        );
+      } catch (err) {
+        const msg = (err as Error).message;
+        log.warn({ err: msg }, 'portfolio sync/stop-loss failed; continuing workflow');
+        warnings.push({ category: 'Portfolio sync', message: msg });
+      }
+    }
+
+    const ingestResult = await runDailyIngestor({ date });
+    for (const f of ingestResult.failures) {
       warnings.push({
-        category: 'Sentiment',
-        message: `News sentiment scoring completed with ${sentimentResult.failed} error(s) and no successfully scored items.`,
+        category: 'Ingest',
+        message: `${f.ingestor} could not fetch ${f.capability}: ${f.reason}`,
       });
     }
 
-    const thesisResult = await generateTheses({
-      date,
-      maxTheses: config.THESIS_MAX_PER_RUN,
-      regime: regimeAgent.regime,
-    });
-    thesisRun = {
-      generated: thesisResult.generated,
-      failed: thesisResult.failed,
-      candidateCount: thesisResult.candidateCount,
-      eligibleUniverseSize: thesisResult.eligibleUniverseSize,
-      watchlistSize: thesisResult.watchlistSize,
-    };
-    log.info(
-      { generated: thesisResult.generated, failed: thesisResult.failed },
-      'thesis generation done',
-    );
-
-    if (!opts.skipPortfolio) {
-      const portfolioResult = await analysePortfolio({ date });
-      if (portfolioResult.failed > 0) {
-        warnings.push({
-          category: 'Portfolio analysis',
-          message: `${portfolioResult.failed} holding(s) failed AI analysis after retries; check LLM provider status. ${portfolioResult.analysed} holding(s) completed successfully.`,
-        });
+    try {
+      await applyCorporateActionsFromYahooSplits(getDb(), { refDate: date });
+    } catch (err) {
+      const msg = (err as Error).message;
+      log.warn({ err: msg }, 'corporate actions from Yahoo splits failed; continuing workflow');
+      warnings.push({ category: 'Corporate actions', message: msg });
+    }
+    await runSignalEnricher({ date });
+    log.info('pipeline: enrich complete, starting yahoo snapshot ingest');
+    try {
+      const snap = await ingestYahooSnapshots(getDb(), { date });
+      if (snap.failed > 0) {
+        log.warn(snap, 'yahoo snapshot ingest partial failures');
+      } else {
+        log.info(snap, 'yahoo snapshot ingest complete');
       }
-      log.info(
-        {
-          analysed: portfolioResult.analysed,
-          failed: portfolioResult.failed,
-          byAction: portfolioResult.byAction,
-        },
-        'portfolio analysis done',
+    } catch (err) {
+      log.warn(
+        { err: (err as Error).message },
+        'yahoo snapshot ingest failed unexpectedly; continuing workflow',
       );
     }
+    try {
+      await runExtSignalHoldingsIngestor(getDb());
+    } catch (err) {
+      const msg = (err as Error).message;
+      warnings.push({
+        category: 'External signals',
+        message: `ext_signal_holdings ingest failed: ${msg}`,
+      });
+      log.warn({ err }, 'ext_signal: ingest failed — thesis corroboration unavailable');
+    }
+    try {
+      const inav = await fetchInavSnapshots({ date, db: getDb() });
+      if (inav.failed) {
+        log.warn({ date }, 'inav snapshot ingest skipped after NSE failure');
+      }
+    } catch (err) {
+      const msg = (err as Error).message;
+      warnings.push({
+        category: 'ETF iNAV',
+        message: `iNAV fetch failed: ${msg}`,
+      });
+      log.warn({ err }, 'iNAV: fetch failed — ETF pricing card will not render');
+    }
+    log.info('pipeline: inav snapshots complete, starting regime classification');
+    const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
+    const momRegimeExits = applyMomentumRegimeGateExits({
+      calendarDate: date,
+      regime: regimeAgent.regime,
+      db: getDb(),
+    });
+    if (momRegimeExits > 0) {
+      log.info({ momRegimeExits }, 'momentum regime gate: closed paper trades');
+    }
+    await runStockScreener({ date, regime: regimeAgent.regime });
+
+    let thesisRun:
+      | {
+          generated: number;
+          failed: number;
+          candidateCount: number;
+          eligibleUniverseSize: number;
+          watchlistSize: number;
+        }
+      | undefined;
+
+    if (!opts.skipAi) {
+      const sentimentResult = await enrichSentiment();
+      log.info(sentimentResult, 'sentiment scoring done');
+      if (sentimentResult.scored === 0 && sentimentResult.failed > 0) {
+        warnings.push({
+          category: 'Sentiment',
+          message: `News sentiment scoring completed with ${sentimentResult.failed} error(s) and no successfully scored items.`,
+        });
+      }
+
+      try {
+        const thesisResult = await generateTheses({
+          date,
+          maxTheses: config.THESIS_MAX_PER_RUN,
+          regime: regimeAgent.regime,
+        });
+        thesisRun = {
+          generated: thesisResult.generated,
+          failed: thesisResult.failed,
+          candidateCount: thesisResult.candidateCount,
+          eligibleUniverseSize: thesisResult.eligibleUniverseSize,
+          watchlistSize: thesisResult.watchlistSize,
+        };
+        log.info(
+          { generated: thesisResult.generated, failed: thesisResult.failed },
+          'thesis generation done',
+        );
+      } catch (err) {
+        if (err instanceof LlmBudgetExceededError) {
+          budgetExceeded = true;
+          log.warn(
+            { err, spent: err.spent, cap: err.cap },
+            'thesis stage skipped: LLM budget exceeded',
+          );
+          warnings.push({
+            category: 'LLM budget',
+            message: `Thesis generation skipped — run LLM budget exceeded ($${err.spent.toFixed(4)} / $${err.cap.toFixed(2)}).`,
+          });
+        } else {
+          throw err;
+        }
+      }
+
+      if (!opts.skipPortfolio) {
+        try {
+          const portfolioResult = await analysePortfolio({ date });
+          if (portfolioResult.failed > 0) {
+            warnings.push({
+              category: 'Portfolio analysis',
+              message: `${portfolioResult.failed} holding(s) failed AI analysis after retries; check LLM provider status. ${portfolioResult.analysed} holding(s) completed successfully.`,
+            });
+          }
+          log.info(
+            {
+              analysed: portfolioResult.analysed,
+              failed: portfolioResult.failed,
+              byAction: portfolioResult.byAction,
+            },
+            'portfolio analysis done',
+          );
+        } catch (err) {
+          if (err instanceof LlmBudgetExceededError) {
+            budgetExceeded = true;
+            log.warn(
+              { err, spent: err.spent, cap: err.cap },
+              'portfolio-analysis stage skipped: LLM budget exceeded',
+            );
+            warnings.push({
+              category: 'LLM budget',
+              message: `Portfolio analysis skipped — run LLM budget exceeded ($${err.spent.toFixed(4)} / $${err.cap.toFixed(2)}).`,
+            });
+          } else {
+            throw err;
+          }
+        }
+      }
+    }
+
+    const paperEval = runEvaluatePaperTrades(date, getDb(), { skipAi: opts.skipAi });
+    log.info(paperEval, 'paper trade evaluation');
+
+    const briefing = await runBriefingComposer({
+      date,
+      skipAi: opts.skipAi,
+      thesisRun: opts.skipAi ? undefined : thesisRun,
+      delivery: config.BRIEFING_DELIVERY,
+      warnings: warnings.length > 0 ? warnings : undefined,
+      budgetExceeded: budgetExceeded || undefined,
+    });
+
+    maybeWriteDailyRunSummary({
+      schemaVersion: 1,
+      generatedAt: new Date().toISOString(),
+      date: briefing.date,
+      holidayMode: false,
+      delivery: briefing.delivery,
+      counts: {
+        alerts: briefing.alertCount,
+        screenMatchSymbols: briefing.screenMatchesCount,
+        news: briefing.newsCount,
+        theses: briefing.thesesCount,
+        portfolioHoldings: briefing.portfolioCount,
+      },
+      thesisRun: opts.skipAi ? undefined : thesisRun,
+      hasMoodNarrative: briefing.hasNarrative,
+    });
+
+    return {
+      date: briefing.date,
+      alertCount: briefing.alertCount,
+      screenMatchesCount: briefing.screenMatchesCount,
+      newsCount: briefing.newsCount,
+      thesesCount: briefing.thesesCount,
+      portfolioCount: briefing.portfolioCount,
+      hasNarrative: briefing.hasNarrative,
+      html: briefing.html,
+      delivery: config.BRIEFING_DELIVERY,
+    };
+  } finally {
+    if (!opts.skipAi) {
+      clearRunBudget(date);
+    }
   }
-
-  const paperEval = runEvaluatePaperTrades(date, getDb(), { skipAi: opts.skipAi });
-  log.info(paperEval, 'paper trade evaluation');
-
-  const briefing = await runBriefingComposer({
-    date,
-    skipAi: opts.skipAi,
-    thesisRun: opts.skipAi ? undefined : thesisRun,
-    delivery: config.BRIEFING_DELIVERY,
-    warnings: warnings.length > 0 ? warnings : undefined,
-  });
-
-  maybeWriteDailyRunSummary({
-    schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
-    date: briefing.date,
-    holidayMode: false,
-    delivery: briefing.delivery,
-    counts: {
-      alerts: briefing.alertCount,
-      screenMatchSymbols: briefing.screenMatchesCount,
-      news: briefing.newsCount,
-      theses: briefing.thesesCount,
-      portfolioHoldings: briefing.portfolioCount,
-    },
-    thesisRun: opts.skipAi ? undefined : thesisRun,
-    hasMoodNarrative: briefing.hasNarrative,
-  });
-
-  return {
-    date: briefing.date,
-    alertCount: briefing.alertCount,
-    screenMatchesCount: briefing.screenMatchesCount,
-    newsCount: briefing.newsCount,
-    thesesCount: briefing.thesesCount,
-    portfolioCount: briefing.portfolioCount,
-    hasNarrative: briefing.hasNarrative,
-    html: briefing.html,
-    delivery: config.BRIEFING_DELIVERY,
-  };
 }
