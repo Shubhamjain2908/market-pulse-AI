@@ -1,7 +1,24 @@
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mockError = vi.hoisted(() => vi.fn());
+const mockWarn = vi.hoisted(() => vi.fn());
+const noop = vi.hoisted(() => vi.fn());
+
+vi.mock('../../src/logger.js', () => {
+  const stub = () => ({
+    warn: mockWarn,
+    error: mockError,
+    info: noop,
+    debug: noop,
+    child: stub,
+  });
+  const logger = stub();
+  return { child: stub, logger };
+});
+
 import { recordPaperTrades } from '../../src/briefing/paper-trade-writer.js';
 import type { PortfolioSummary, ThesisCard } from '../../src/briefing/template.js';
 import { closeDb, getDb, migrate } from '../../src/db/index.js';
@@ -16,6 +33,8 @@ describe('recordPaperTrades', () => {
     process.env.DATABASE_PATH = dbPath;
     db = getDb({ path: dbPath });
     migrate(db);
+    mockError.mockClear();
+    mockWarn.mockClear();
   });
 
   afterEach(() => {
@@ -104,6 +123,88 @@ describe('recordPaperTrades', () => {
     ];
     expect(recordPaperTrades('2026-05-01', theses, undefined, db).insertedAiPick).toBe(0);
     expect(getOpenPaperTrades(db)).toHaveLength(0);
+  });
+
+  function aiPickThesis(
+    symbol: string,
+    entryZone: string,
+    stopLoss: string,
+    target: string,
+  ): ThesisCard {
+    return {
+      symbol,
+      thesis: 'x',
+      bullCase: ['a'],
+      bearCase: ['b'],
+      entryZone,
+      stopLoss,
+      target,
+      timeHorizon: 'medium',
+      confidence: 7,
+      triggerReason: 'test',
+    };
+  }
+
+  it('rejects AI_PICK when stopLoss is above entryPrice', () => {
+    const r = recordPaperTrades(
+      '2026-05-01',
+      [aiPickThesis('HIGH', '₹100', '₹105', '₹120')],
+      undefined,
+      db,
+    );
+    expect(r.insertedAiPick).toBe(0);
+    expect(getOpenPaperTrades(db)).toHaveLength(0);
+    expect(mockError).toHaveBeenCalledWith(
+      { symbol: 'HIGH', stopLoss: 105, entryPrice: 100 },
+      'AI_PICK paper trade rejected: stopLoss >= entryPrice',
+    );
+  });
+
+  it('rejects AI_PICK when stopLoss equals entryPrice', () => {
+    const r = recordPaperTrades(
+      '2026-05-01',
+      [aiPickThesis('FLAT', '₹100', '₹100', '₹120')],
+      undefined,
+      db,
+    );
+    expect(r.insertedAiPick).toBe(0);
+    expect(getOpenPaperTrades(db)).toHaveLength(0);
+    expect(mockError).toHaveBeenCalledWith(
+      { symbol: 'FLAT', stopLoss: 100, entryPrice: 100 },
+      'AI_PICK paper trade rejected: stopLoss >= entryPrice',
+    );
+  });
+
+  it('raises AI_PICK stop to 8% hard floor when LLM stop is too wide', () => {
+    const r = recordPaperTrades(
+      '2026-05-01',
+      [aiPickThesis('WIDE', '₹100', '₹88', '₹120')],
+      undefined,
+      db,
+    );
+    expect(r.insertedAiPick).toBe(1);
+    const trade = getOpenPaperTrades(db)[0];
+    expect(trade?.stopLoss).toBe(92);
+    expect(mockWarn).toHaveBeenCalledWith(
+      { symbol: 'WIDE', originalStop: 88, effectiveStop: 92 },
+      'AI_PICK stop raised to 8% hard floor',
+    );
+  });
+
+  it('inserts AI_PICK with LLM stop when above hard floor', () => {
+    const r = recordPaperTrades(
+      '2026-05-01',
+      [aiPickThesis('OK', '₹100', '₹95', '₹120')],
+      undefined,
+      db,
+    );
+    expect(r.insertedAiPick).toBe(1);
+    const trade = getOpenPaperTrades(db)[0];
+    expect(trade?.stopLoss).toBe(95);
+    expect(mockWarn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originalStop: expect.any(Number) }),
+      'AI_PICK stop raised to 8% hard floor',
+    );
   });
 
   it('is idempotent for same source day', () => {
