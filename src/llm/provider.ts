@@ -22,18 +22,39 @@ import type {
 
 const log = child({ component: 'llm-provider' });
 
-/** USD per token (input / output). See architecture-v2.md §7. */
+/** Convert published $/1M token list price to $/token. */
+function perMillion(usd: number): number {
+  return usd / 1_000_000;
+}
+
+/**
+ * USD per token (input / output). Standard tier, prompts ≤200k tokens.
+ * Sources: https://ai.google.dev/gemini-api/docs/pricing (Jun 2026).
+ */
 export const MODEL_COST_USD_PER_TOKEN: Record<string, { input: number; output: number }> = {
   'deepseek-chat': { input: 0.00000027, output: 0.0000011 },
+  'gemini-3.1-pro-preview': { input: perMillion(2), output: perMillion(12) },
+  'gemini-3.1-pro': { input: perMillion(2), output: perMillion(12) },
+  'gemini-2.5-pro': { input: perMillion(1.25), output: perMillion(10) },
+  'gemini-2.5-flash': { input: perMillion(0.3), output: perMillion(2.5) },
 };
 
+function modelIdFromResponse(model: string): string {
+  const trimmed = model.trim();
+  const segments = trimmed.split(/[:/]/);
+  return (segments[segments.length - 1] ?? trimmed).trim();
+}
+
 function resolveModelPricing(model: string): { input: number; output: number } | undefined {
-  if (model in MODEL_COST_USD_PER_TOKEN) {
-    return MODEL_COST_USD_PER_TOKEN[model];
-  }
-  const base = model.split(/[:/]/)[0]?.trim();
-  if (base && base in MODEL_COST_USD_PER_TOKEN) {
-    return MODEL_COST_USD_PER_TOKEN[base];
+  const candidates = [model.trim(), modelIdFromResponse(model)];
+  for (const id of candidates) {
+    if (id in MODEL_COST_USD_PER_TOKEN) {
+      return MODEL_COST_USD_PER_TOKEN[id];
+    }
+    const withoutPreview = id.replace(/-preview(-customtools)?$/, '');
+    if (withoutPreview !== id && withoutPreview in MODEL_COST_USD_PER_TOKEN) {
+      return MODEL_COST_USD_PER_TOKEN[withoutPreview];
+    }
   }
   return undefined;
 }
