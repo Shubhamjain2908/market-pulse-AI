@@ -109,6 +109,8 @@ const EnvSchema = z.object({
   BRIEFING_MOOD_NARRATIVE: z.enum(['0', '1']).default('1'),
   /** Cap AI thesis cards per daily run (`generateTheses`). */
   THESIS_MAX_PER_RUN: z.coerce.number().int().min(0).max(25).default(5),
+  /** Parallel LLM calls when generating AI thesis cards (`generateTheses`). */
+  THESIS_CONCURRENCY: z.coerce.number().int().min(1).max(5).default(3),
 
   /** Write `run-summary-{date}.json` next to HTML briefings when `'1'`. */
   BRIEFING_RUN_SUMMARY_JSON: z.enum(['0', '1']).default('0'),

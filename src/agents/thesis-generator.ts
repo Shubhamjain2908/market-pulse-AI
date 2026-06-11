@@ -7,6 +7,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+import pLimit from 'p-limit';
 import { config } from '../config/env.js';
 import {
   type ExtSignalProviderFile,
@@ -414,72 +415,91 @@ export async function generateTheses(
     };
   }
 
-  log.info({ candidates: toGenerate.map((c) => c.symbol) }, 'generating theses for top candidates');
+  log.info(
+    {
+      count: toGenerate.length,
+      concurrency: config.THESIS_CONCURRENCY,
+    },
+    'thesis generation starting',
+  );
+
+  const limit = pLimit(config.THESIS_CONCURRENCY);
+  const results = await Promise.all(
+    toGenerate.map((candidate) =>
+      limit(async () => {
+        try {
+          const context = buildStockContext(candidate.symbol, date, db);
+          const momentumContext = hasMomentumThesisContext(candidate.symbol, date, db);
+          const qualityGarpContext = buildQualityGarpContextAppend(candidate.symbol, date, db);
+          const catalystContext = buildCatalystEntryContextAppend(candidate.symbol, date, db);
+          const contextWithScreen = [context, qualityGarpContext, catalystContext]
+            .filter((part): part is string => part != null && part !== '')
+            .join('\n');
+          const systemAddenda: string[] = [];
+          if (momentumContext) systemAddenda.push(MOMENTUM_THESIS_ADDENDUM);
+          if (qualityGarpContext) systemAddenda.push(QUALITY_GARP_THESIS_ADDENDUM);
+          if (catalystContext) systemAddenda.push(CATALYST_ENTRY_THESIS_ADDENDUM);
+          const system =
+            systemAddenda.length > 0
+              ? `${THESIS_JSON_SYSTEM_PROMPT}\n\n${systemAddenda.join('\n\n')}`
+              : THESIS_JSON_SYSTEM_PROMPT;
+          const result = await llm.generateJson<Thesis>({
+            system,
+            user: contextWithScreen,
+            schema: ThesisSchema,
+            temperature: 0.3,
+            maxRetries: 2,
+          });
+
+          const signalSnap = getLatestSignalsMap(candidate.symbol, date, db);
+          let thesisOut = result.data;
+          if (signalSnap.mom_false_flag === 1) {
+            thesisOut = {
+              ...thesisOut,
+              confidenceScore: Math.min(thesisOut.confidenceScore, 5),
+            };
+          }
+          if (catalystContext) {
+            thesisOut = {
+              ...thesisOut,
+              confidenceScore: Math.min(thesisOut.confidenceScore, 6),
+            };
+          }
+
+          const row: UpsertThesisRow = {
+            ...thesisOut,
+            symbol: candidate.symbol,
+            date,
+            model: result.model,
+            raw: result.raw,
+          };
+          upsertThesis(row, db);
+
+          log.info(
+            {
+              symbol: candidate.symbol,
+              confidence: thesisOut.confidenceScore,
+              model: result.model,
+            },
+            'thesis generated',
+          );
+          return { ok: true as const };
+        } catch (err) {
+          log.warn(
+            { symbol: candidate.symbol, err: (err as Error).message },
+            'thesis generation failed',
+          );
+          return { ok: false as const };
+        }
+      }),
+    ),
+  );
 
   let generated = 0;
   let failed = 0;
-
-  for (const candidate of toGenerate) {
-    try {
-      const context = buildStockContext(candidate.symbol, date, db);
-      const momentumContext = hasMomentumThesisContext(candidate.symbol, date, db);
-      const qualityGarpContext = buildQualityGarpContextAppend(candidate.symbol, date, db);
-      const catalystContext = buildCatalystEntryContextAppend(candidate.symbol, date, db);
-      const contextWithScreen = [context, qualityGarpContext, catalystContext]
-        .filter((part): part is string => part != null && part !== '')
-        .join('\n');
-      const systemAddenda: string[] = [];
-      if (momentumContext) systemAddenda.push(MOMENTUM_THESIS_ADDENDUM);
-      if (qualityGarpContext) systemAddenda.push(QUALITY_GARP_THESIS_ADDENDUM);
-      if (catalystContext) systemAddenda.push(CATALYST_ENTRY_THESIS_ADDENDUM);
-      const system =
-        systemAddenda.length > 0
-          ? `${THESIS_JSON_SYSTEM_PROMPT}\n\n${systemAddenda.join('\n\n')}`
-          : THESIS_JSON_SYSTEM_PROMPT;
-      const result = await llm.generateJson<Thesis>({
-        system,
-        user: contextWithScreen,
-        schema: ThesisSchema,
-        temperature: 0.3,
-        maxRetries: 2,
-      });
-
-      const signalSnap = getLatestSignalsMap(candidate.symbol, date, db);
-      let thesisOut = result.data;
-      if (signalSnap.mom_false_flag === 1) {
-        thesisOut = {
-          ...thesisOut,
-          confidenceScore: Math.min(thesisOut.confidenceScore, 5),
-        };
-      }
-      if (catalystContext) {
-        thesisOut = {
-          ...thesisOut,
-          confidenceScore: Math.min(thesisOut.confidenceScore, 6),
-        };
-      }
-
-      const row: UpsertThesisRow = {
-        ...thesisOut,
-        symbol: candidate.symbol,
-        date,
-        model: result.model,
-        raw: result.raw,
-      };
-      upsertThesis(row, db);
-      generated++;
-
-      log.info(
-        { symbol: candidate.symbol, confidence: thesisOut.confidenceScore, model: result.model },
-        'thesis generated',
-      );
-    } catch (err) {
-      failed++;
-      log.warn(
-        { symbol: candidate.symbol, err: (err as Error).message },
-        'thesis generation failed',
-      );
-    }
+  for (const r of results) {
+    if (r.ok) generated++;
+    else failed++;
   }
 
   const theses = getThesesForDate(date, db);
