@@ -50,7 +50,7 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 | **Screen** | `src/analysers/stock-screener.ts` | Loads `config/screens.json`. DSL screens via `engine.ts`; **`quality_garp`** and **`catalyst_entry`** use dedicated dispatchers (`getQualityGarpFundamentals` + 10 v2 gates; `runCatalystScreener`). Checks `regime_strategy_gate`. Writes passing symbols to `screens`. |
 | **AI Thesis** | `src/agents/thesis-generator.ts` | Per screen pass: sends technicals + fundamentals + news + regime context to LLM. Returns structured JSON. Skips symbols in live portfolio (`alreadyOwned`) and any symbol with an OPEN `paper_trades` row (any `signal_type`). |
 | **Portfolio review** | `src/agents/portfolio-sync.ts` + `portfolio-analyser.ts` | When AI is enabled and portfolio is not skipped: after thesis, optional Kite sync (earlier in the same run) feeds `portfolio_holdings`; analyser writes `portfolio_analysis` (full LLM, lite snapshot, or **stale-holdings placeholders** — see §4). |
-| **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). `stop_type='trailing'` follows adaptive ATR trailing; `stop_type='fixed'` bypasses trailing math/logs and evaluates stops/targets at static levels. New bars only after the latest non-`STOPPED_OUT` `trailing_stop_log` row (exclusive `source_date` bound via `getSymbolBars`), so a raised persisted stop is not replayed against already-evaluated history. **Circuit breaker:** if `bar.open < 0.7 ×` prior session’s NSE `close` (`date < bar.date`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag. |
+| **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). `stop_type='trailing'` follows adaptive ATR trailing; `stop_type='fixed'` bypasses trailing math/logs and evaluates stops/targets at static levels. New bars only after the latest non-`STOPPED_OUT` `trailing_stop_log` row (exclusive `source_date` bound via `getSymbolBars`), so a raised persisted stop is not replayed against already-evaluated history. **Gap-down CB:** if `bar.open < 0.7 ×` prior NSE `close` (`getPrevClose`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag (`hasCorporateActionInRange`). **Gap-up CB:** if `bar.open > 1.3 ×` prior close, suppress `highest_close_since_entry` update for that bar (stop/target still run); mitigates fake highs after post-resolution gaps. Day-1 ATR latch snaps `sourceDate` via `nextOpenOnOrAfter` when it falls on a non-session day. |
 | **Briefing** | `src/briefing/composer.ts` | Records `briefing` / `started` first, then `hasFailedRequiredStage` gate. Normal path: `renderBriefing()` → `juice()` for Gmail-safe inline CSS (600px table layout). Regime card + change banner; **FII/DII flow attribution**; **ETF iNAV pricing** block for held ETFs (`etf-pricing-card.ts`, WARN/NOTE thresholds). **Degraded path:** partial-pipeline banner listing failed required stages; screens / AI picks / portfolio / momentum omitted. Delivered via Nodemailer → Gmail SMTP (`delivered_at` persisted only after ≥1 SMTP recipient accepted). |
 
 NOTE: Fundamentals refresh is operational via `pnpm fundamentals:refresh` (Python annual + screener + Yahoo snapshot; see §3.5).
@@ -88,7 +88,7 @@ NOTE: Fundamentals refresh is operational via `pnpm fundamentals:refresh` (Pytho
 #   atr_multiplier 2.5, lock_in_threshold_pct 18, tightened_multiplier 1.5
 
 initial_stop = MAX(hard_floor, entry_price − atr_multiplier × ATR14_at_entry)  # hard_floor = entry × 0.92
-day1_stop    = MAX(llm_stop, entry − atr_multiplier × ATR14_at_entry)       # evaluate-trades day-1 latch
+day1_stop    = MAX(llm_stop, entry − atr_multiplier × ATR14_at_entry)       # evaluate-trades day-1 latch; ATR14_at_entry from getAtr14(symbol, nextOpenOnOrAfter(sourceDate) ?? sourceDate)
 
 unrealised_pct = ((highest_close_since_entry − entry_price) / entry_price) × 100
 multiplier = (unrealised_pct ≥ lock_in_threshold_pct OR already_tightened_band)
@@ -108,13 +108,17 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 **7-step EOD evaluation order (strict, never resequence):**
 1. Reset `stop_raised_today = 0` for all OPEN trades
 2. Fetch today's OHLCV + ATR14
-3. Update `highest_close_since_entry = MAX(prev, today_close)`
+3. Update `highest_close_since_entry = MAX(prev, today_close)` *(skipped when gap-up CB fires — see below; persist the real watermark `highestClose`, not the stop-math fallback)*
 4. Run `computeNewStop()` → golden rule → persist if raised
 5. Stop-out check: `today_low ≤ updated_stop` → close trade *(skipped for the bar when the gap-down circuit breaker fires — see below)*
-6. Target check: `today_close ≥ target` → close as `TARGET_HIT` *(same skip)*
+6. Target check: `today_close ≥ target` → close as `TARGET_HIT` *(gap-down skip only; gap-up CB does **not** skip target)*
 7. Persist all changes
 
-**Gap-down circuit breaker (code, per bar):** After hard floor, before SL/TP: if prior NSE `close` exists and `open < 0.7 × that close`, do not run stop-out or target for that bar; max-hold and persistence still run. Mitigates false stop-outs on extreme opens (e.g. around corporate events).
+**Prior close lookup:** `getPrevClose(symbol, bar.date)` in `src/db/queries.ts` — latest NSE `close` with `date < bar.date`. Shared by both circuit breakers.
+
+**Gap-down circuit breaker (code, per bar):** After hard floor, before SL/TP: if prior NSE `close` exists and `open < 0.7 × that close`, do not run stop-out or target for that bar; max-hold and persistence still run. Mitigates false stop-outs on extreme opens (e.g. around corporate events). Recent `corporate_actions` in a 5-day lookback window are flagged in the log via `hasCorporateActionInRange`.
+
+**Gap-up circuit breaker (code, per bar):** At step 3, before updating `highest_close_since_entry`: if prior NSE `close` exists and `open > 1.3 × that close`, skip the watermark update for that bar; downstream stop math uses the prior watermark (or `entry_price` when unset). Stop-out, target, and persistence still run — a genuine gap-up to target remains a valid `TARGET_HIT`.
 
 **Hard stop for momentum_mf:** −8% floor from entry. `effectiveStop = MAX(computedNewStop, entry × 0.92)`. Trailing stop cannot trail below this floor.
 

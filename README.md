@@ -654,7 +654,7 @@ Legacy open trades with `trailing_multiplier = 2.0` in DB are normalized to the 
 
 **Evaluation**
 
-- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) + [`src/scripts/trailing-stop-engine.ts`](src/scripts/trailing-stop-engine.ts) — branches on **`stop_type`**: **trailing** path uses config-driven mults (no inline 2.0/1.5/15%), bar walk from `source_date` to `asOf`, **incremental resume** from the last `trailing_stop_log` bar (non-`STOPPED_OUT`), idempotent log inserts; **fixed** path skips trailing math/logs and evaluates persisted `stop_loss` / `target` / `max_hold_days` under the same **circuit breaker**; **`pnpm cli evaluate`** / **`pnpm evaluate`** with **`--skip-ai`**
+- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) + [`src/scripts/trailing-stop-engine.ts`](src/scripts/trailing-stop-engine.ts) — branches on **`stop_type`**: **trailing** path uses config-driven mults (no inline 2.0/1.5/15%), bar walk from `source_date` to `asOf`, **incremental resume** from the last `trailing_stop_log` bar (non-`STOPPED_OUT`), idempotent log inserts; **fixed** path skips trailing math/logs and evaluates persisted `stop_loss` / `target` / `max_hold_days` under the same **circuit-breaker envelope** (gap-down skips SL/TP; gap-up suppresses fake `highest_close` only); Day-1 ATR latch uses [`nextOpenOnOrAfter`](src/market/trading-days.ts) when `source_date` is a non-session day; prior-close / corp-action lookups via [`getPrevClose`](src/db/queries.ts) / [`hasCorporateActionInRange`](src/db/queries.ts); **`pnpm cli evaluate`** / **`pnpm evaluate`** with **`--skip-ai`**
 - [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` after the briefing is composed (same ordering as before)
 
 **Briefing**
@@ -668,7 +668,9 @@ Legacy open trades with `trailing_multiplier = 2.0` in DB are normalized to the 
 
 **Tests**
 
-- [`tests/scripts/evaluate-trades.test.ts`](tests/scripts/evaluate-trades.test.ts) — merge gates (multi-day catch-up, stats), §9.2 integration cases
+- [`tests/scripts/evaluate-trades.test.ts`](tests/scripts/evaluate-trades.test.ts) — merge gates (multi-day catch-up, stats), §9.2 integration cases, gap-up/down CB edge cases, Day-1 Sunday ATR latch
+- [`tests/scripts/evaluate-trades-gap-up.test.ts`](tests/scripts/evaluate-trades-gap-up.test.ts) — gap-up CB structured log assertion
+- [`tests/market/trading-days.test.ts`](tests/market/trading-days.test.ts) — `nextOpenOnOrAfter` session snapping
 - [`tests/briefing/trailing-stop-card.test.ts`](tests/briefing/trailing-stop-card.test.ts) — §9.3 briefing cases
 
 ---
