@@ -703,7 +703,8 @@ describe('evaluate paper trades', () => {
       const dBar = '2026-08-03';
       seedNifty(dPrev, dBar);
       upsertQuotes(
-        [q('GAPUP3', dPrev, 100, 100, 100, 100), q('GAPUP3', dBar, 125, 135, 120, 130)],
+        // low must clear raised trailing stop (~124) after close updates watermark to 130
+        [q('GAPUP3', dPrev, 100, 100, 100, 100), q('GAPUP3', dBar, 125, 135, 126, 130)],
         db,
       );
       seedAtr14('GAPUP3', [src, dPrev, dBar], 3);

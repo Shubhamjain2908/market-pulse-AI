@@ -131,14 +131,14 @@ describe('gap-up circuit breaker logging', () => {
     expect(closed.status).toBe('CLOSED_WIN');
     expect(closed.exit_reason).toBe('TARGET_HIT');
 
-    expect(mockWarn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        symbol: 'GAPUP',
-        barDate: dGap,
-        prevClose: 100,
-        open: 135,
-      }),
-      expect.stringContaining('CIRCUIT BREAKER (gap-up)'),
-    );
+    expect(mockWarn).toHaveBeenCalledTimes(1);
+    const [warnCtx, warnMsg] = mockWarn.mock.calls[0] ?? [];
+    expect(warnCtx).toMatchObject({
+      symbol: 'GAPUP',
+      barDate: dGap,
+      prevClose: 100,
+      open: 135,
+    });
+    expect(String(warnMsg)).toContain('CIRCUIT BREAKER (gap-up >30%)');
   });
 });
