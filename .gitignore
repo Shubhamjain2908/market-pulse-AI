@@ -50,3 +50,10 @@ spec/
 .cursor/plans/
 sync-db-to-vm.sh
 sync-env-to-vm.sh
+
+# Local machine Node version fixes (don't commit)
+run-daily.sh
+scripts/fix-node-version.sh
+LOCAL_NODE_FIX.md
+
+

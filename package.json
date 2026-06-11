@@ -5,7 +5,7 @@
   "description": "Personal Indian-markets (NSE/BSE) morning briefing agent. Pipeline: ingest -> enrich -> screen -> brief, with a swappable LLM provider.",
   "type": "module",
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=22.0.0 <23.0.0",
     "pnpm": ">=9"
   },
   "packageManager": "pnpm@10.33.2",
@@ -105,13 +105,5 @@
     "typescript": "^6.0.3",
     "vite": "^6.4.2",
     "vitest": "^4.1.7"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@biomejs/biome",
-      "better-sqlite3",
-      "esbuild",
-      "husky"
-    ]
   }
 }
