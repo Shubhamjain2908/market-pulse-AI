@@ -15,7 +15,13 @@ import {
   normalizePersistedTrailingMult,
   trailingStopSizingFromMomentumConfig,
 } from '../config/trailing-stop-sizing.js';
-import { closePaperTrade, getOpenPaperTrades, type PaperTradeRow } from '../db/queries.js';
+import {
+  closePaperTrade,
+  getOpenPaperTrades,
+  getPrevClose,
+  hasCorporateActionInRange,
+  type PaperTradeRow,
+} from '../db/queries.js';
 import {
   getAtr14,
   getLastEvaluatedBarDate,
@@ -26,6 +32,7 @@ import {
 import { isoDateIst, parseIsoDate } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 import { NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
+import { nextOpenOnOrAfter } from '../market/trading-days.js';
 import type { ExitReason } from '../types/trailing-stop.js';
 import { GAP_DOWN_THROUGH_STOP_NOTE } from '../types/trailing-stop.js';
 import { applyDay1InitialStop, computeNewStop } from './trailing-stop-engine.js';
@@ -164,18 +171,39 @@ export function evaluateOnePaperTrade(
     if (!bar) continue;
 
     const stopAtBarStart = stopLoss;
+    const prevClose = getPrevClose(trade.symbol, bar.date, db);
 
-    const maxCloseSinceEntry =
-      isFixedStop || highestClose === null ? bar.close : Math.max(highestClose, bar.close);
+    const gapUpExtreme =
+      prevClose != null && Number.isFinite(prevClose) && bar.open > prevClose * 1.3;
+
+    let maxCloseSinceEntry: number;
     if (!isFixedStop) {
-      highestClose = maxCloseSinceEntry;
-      lastTrailUnrealisedPct = unrealisedPctFromHigh(trade.entryPrice, maxCloseSinceEntry);
+      if (gapUpExtreme) {
+        log.warn(
+          {
+            symbol: trade.symbol,
+            barDate: bar.date,
+            prevClose,
+            open: bar.open,
+          },
+          'CIRCUIT BREAKER (gap-up >30%): highest_close update suppressed for this bar',
+        );
+        // gap-up: use prior watermark for downstream stop math; do not persist fake high
+        maxCloseSinceEntry = highestClose ?? trade.entryPrice;
+      } else {
+        maxCloseSinceEntry = highestClose === null ? bar.close : Math.max(highestClose, bar.close);
+        highestClose = maxCloseSinceEntry;
+        lastTrailUnrealisedPct = unrealisedPctFromHigh(trade.entryPrice, maxCloseSinceEntry);
+      }
+    } else {
+      maxCloseSinceEntry = bar.close;
     }
 
     let skipTrailThisBar = false;
 
     if (!isFixedStop && !initialSetupComplete) {
-      const atrOnSource = getAtr14(trade.symbol, trade.sourceDate, db);
+      const atrSourceDate = nextOpenOnOrAfter(trade.sourceDate) ?? trade.sourceDate;
+      const atrOnSource = getAtr14(trade.symbol, atrSourceDate, db);
       stopLoss = applyDay1InitialStop(
         trade.entryPrice,
         initialLlmStop,
@@ -228,23 +256,13 @@ export function evaluateOnePaperTrade(
 
     stopLoss = Math.max(stopLoss, hardFloor);
 
-    const prevCloseRow = db
-      .prepare(
-        `SELECT close FROM quotes WHERE symbol = ? AND exchange = 'NSE' AND date < ? ORDER BY date DESC LIMIT 1`,
-      )
-      .get(trade.symbol, bar.date) as { close: number } | undefined;
-    const prevClose = prevCloseRow?.close;
-
     let skipStopTargetThisBar = false;
     if (prevClose != null && Number.isFinite(prevClose) && bar.open < prevClose * 0.7) {
       skipStopTargetThisBar = true;
       const lowerEx = lowerExclusiveIsoFromBarDate(bar.date);
-      const caRecent = db
-        .prepare(
-          'SELECT 1 AS x FROM corporate_actions WHERE symbol = ? AND ex_date > ? AND ex_date <= ? LIMIT 1',
-        )
-        .get(trade.symbol, lowerEx, bar.date) as { x: number } | undefined;
-      const caAppliedRecent = caRecent != null ? 'Yes' : 'No';
+      const caAppliedRecent = hasCorporateActionInRange(trade.symbol, lowerEx, bar.date, db)
+        ? 'Yes'
+        : 'No';
       log.warn(
         {
           symbol: trade.symbol,
@@ -270,7 +288,7 @@ export function evaluateOnePaperTrade(
         trade.id,
         {
           stopLoss,
-          highestCloseSinceEntry: isFixedStop ? undefined : maxCloseSinceEntry,
+          highestCloseSinceEntry: isFixedStop ? undefined : highestClose,
           atr14AtEntry: atr14AtEntryStored,
           trailingMultiplier: trailingMult,
           stopRaisedToday: raisedForBriefingLatch ? 1 : 0,
