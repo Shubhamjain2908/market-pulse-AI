@@ -331,6 +331,7 @@ CREATE TABLE regime_strategy_gate (
 );
 CREATE INDEX idx_regime_strategy_gate_regime ON regime_strategy_gate(regime);
 -- `quality_garp` regime rows are seeded from config/strategy-gates.json.
+-- isStrategyAllowed: missing (strategy_id, regime) row → DISALLOWED (fail-closed).
 -- operating_margin_pct migration remains deferred (no schema delta in quality_garp v2).
 CREATE TABLE trailing_stop_log (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -363,6 +364,8 @@ CREATE TABLE earnings_calendar (
   PRIMARY KEY (symbol, expected_date)
 );
 CREATE INDEX idx_earnings_calendar_expected_date ON earnings_calendar(expected_date);
+-- replaceMomentumEarningsCalendarForSymbol(db, symbol, rows): empty rows[] retains
+-- existing symbol rows (Yahoo outage must not DELETE blackout dates).
 CREATE TABLE momentum_rebalance_briefing (
   calendar_date      TEXT    PRIMARY KEY,
   session_date       TEXT    NOT NULL,

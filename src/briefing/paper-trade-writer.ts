@@ -10,6 +10,9 @@ import type { PortfolioSummary, ThesisCard } from './template.js';
 
 const log = child({ component: 'paper-trade-writer' });
 
+/** Matches momentum_mf hard stop floor (entry × 0.92). */
+const AI_PICK_HARD_STOP_FLOOR_MULT = 0.92;
+
 function horizonToDays(horizon: string): { horizon: PaperTradeHorizon; maxHoldDays: number } {
   const h = horizon.toLowerCase().trim();
   if (h === 'short') return { horizon: 'short', maxHoldDays: 30 };
@@ -80,15 +83,15 @@ export function recordPaperTrades(
       log.warn({ symbol: t.symbol }, 'paper trade skipped: unparseable INR levels');
       continue;
     }
-    if (!isValidLongLevel(entry, stop, target)) {
-      log.warn(
-        { symbol: t.symbol, entry, stop, target },
-        'paper trade skipped: invalid long setup (target<=entry or stop>=entry)',
-      );
-      continue;
-    }
     const catalystCriteria = getCatalystScreenCriteria(t.symbol, sourceDate, db);
     if (catalystCriteria) {
+      if (!isValidLongLevel(entry, stop, target)) {
+        log.warn(
+          { symbol: t.symbol, entry, stop, target },
+          'paper trade skipped: invalid long setup (target<=entry or stop>=entry)',
+        );
+        continue;
+      }
       const maxHoldDays = Math.max(1, Math.trunc(catalystCriteria.days_to_earnings) + 2);
       const ok = insertPaperTradeIfAbsent(
         {
@@ -110,6 +113,37 @@ export function recordPaperTrades(
       continue;
     }
 
+    if (!(entry > 0 && stop > 0 && target > 0)) {
+      log.warn(
+        { symbol: t.symbol, entry, stop, target },
+        'paper trade skipped: invalid long setup (target<=entry or stop>=entry)',
+      );
+      continue;
+    }
+    if (target <= entry) {
+      log.warn(
+        { symbol: t.symbol, entry, stop, target },
+        'paper trade skipped: invalid long setup (target<=entry or stop>=entry)',
+      );
+      continue;
+    }
+    if (stop >= entry) {
+      log.error(
+        { symbol: t.symbol, stopLoss: stop, entryPrice: entry },
+        'AI_PICK paper trade rejected: stopLoss >= entryPrice',
+      );
+      continue;
+    }
+
+    const hardFloor = entry * AI_PICK_HARD_STOP_FLOOR_MULT;
+    const effectiveStop = Math.max(stop, hardFloor);
+    if (effectiveStop !== stop) {
+      log.warn(
+        { symbol: t.symbol, originalStop: stop, effectiveStop },
+        'AI_PICK stop raised to 8% hard floor',
+      );
+    }
+
     const { horizon, maxHoldDays } = horizonToDays(t.timeHorizon ?? 'medium');
     const ok = insertPaperTradeIfAbsent(
       {
@@ -117,7 +151,7 @@ export function recordPaperTrades(
         signalType: 'AI_PICK',
         sourceDate,
         entryPrice: entry,
-        stopLoss: stop,
+        stopLoss: effectiveStop,
         target,
         timeHorizon: horizon,
         maxHoldDays,

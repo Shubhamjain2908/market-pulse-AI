@@ -21,8 +21,9 @@ short, actionable briefing before market open.
 > (rank decay + open-book monitor), thesis/portfolio context that **merges latest
 > values per signal name** (so weekday technical enrich does not drop stale
 > `mom_rank` / `mom_false_flag`), code-enforced **confidence ≤ 5** when
-> `mom_false_flag = 1`, portfolio guardrails (rank-decay EXIT, block ADD on
-> false flag), and **Sunday 08:00** rebalance followed by a skip-AI briefing that
+> `mom_false_flag = 1`, **hard-block `momentum_mf` entries** when flagged,
+> portfolio guardrails (rank-decay EXIT, block ADD on false flag), and **Sunday 08:00**
+> rebalance followed by a skip-AI briefing that
 > includes the rebalance summary (`pnpm cli momentum-rebalance --brief` for the
 > same compose + deliver path). **Quality-GARP screener (`quality_garp`)** shipped (v1):
 > fundamentals-backed dispatcher in [`stock-screener.ts`](src/analysers/stock-screener.ts)
@@ -439,7 +440,7 @@ A **meta-layer** on top of the existing pipeline: each open session gets a singl
 **Persistence**
 
 - Migration [`src/db/migrations/0006_regime_tables.sql`](src/db/migrations/0006_regime_tables.sql): `regime_daily` (one row per session with scores, narrative, prev/age) and `regime_strategy_gate` (strategy × regime × allowed × `size_multiplier`).
-- Queries and seeding: [`src/db/regime-queries.ts`](src/db/regime-queries.ts), [`scripts/seed-regime-gates.mts`](scripts/seed-regime-gates.mts), driven by [`config/strategy-gates.json`](config/strategy-gates.json).
+- Queries and seeding: [`src/db/regime-queries.ts`](src/db/regime-queries.ts), [`scripts/seed-regime-gates.mts`](scripts/seed-regime-gates.mts), driven by [`config/strategy-gates.json`](config/strategy-gates.json). **`isStrategyAllowed` is fail-closed:** a missing `(strategy_id, regime)` gate row → strategy **disallowed** (run `pnpm regime:seed-gates` after migrate).
 
 **LLM narrative**
 
@@ -474,11 +475,11 @@ A **regime-gated** momentum sleeve that ranks a configurable universe, writes **
 
 - **Signal enrich** — `pnpm cli enrich` → [`TechnicalEnricher`](src/enrichers/index.ts) plus [`enrichMomentumSignals`](src/enrichers/momentum-signals.ts) for the momentum universe: **`mom_12_1_return`**, `mom_relative_strength_ba`, `mom_volume_breakout_flag`, `mom_earnings_blackout`. Requires sufficient quote history in SQLite for 12–1 style momentum math.
 - **Ranker** — `pnpm cli momentum-rank` → [`src/rankers/momentum-ranker.ts`](src/rankers/momentum-ranker.ts) reads those factor rows for `asOf` and writes **`mom_rank`**, `mom_composite_score`, **`mom_false_flag`**, `mom_rank_excluded`.
-- **Rebalance** — `pnpm cli momentum-rebalance` → [`src/strategies/momentum-rebalance.ts`](src/strategies/momentum-rebalance.ts): optional embedded ranker pass, liquidations when regime ∉ gate, rank-decay exits, new entries with sector cap + blackout checks; optional LLM entry thesis (false-flag thesis confidence is clamped in-strategy).
+- **Rebalance** — `pnpm cli momentum-rebalance` → [`src/strategies/momentum-rebalance.ts`](src/strategies/momentum-rebalance.ts): optional embedded ranker pass, liquidations when regime ∉ gate, rank-decay exits, new entries with sector cap + blackout checks + **`mom_false_flag` hard-block** (`falseFlagBlocked` counter); optional LLM entry thesis (false-flag thesis confidence is clamped in-strategy when thesis runs).
 
 Shortcuts: `pnpm momentum:rank` / `pnpm momentum:rebalance` (wrappers around the same CLI commands).
 
-- **Daily workflow** — [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) runs Yahoo momentum earnings refresh on **Sunday** IST; [**`applyMomentumRegimeGateExits`**](src/strategies/momentum-rebalance.ts) after regime classification on trading days.
+- **Daily workflow** — [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) runs Yahoo momentum earnings refresh on **Sunday** IST ([`syncMomentumEarningsCalendarFromYahoo`](src/ingestors/yahoo/earnings-ingestor.ts) → [`replaceMomentumEarningsCalendarForSymbol`](src/db/momentum-queries.ts); **empty Yahoo response retains** existing `earnings_calendar` rows); [**`applyMomentumRegimeGateExits`**](src/strategies/momentum-rebalance.ts) after regime classification on trading days.
 
 **Historical session (quotes only ≠ momentum factors)** — `pnpm momentum:backfill-universe` loads **quotes** for the momentum universe; it does **not** insert `mom_12_1_return` or other factor rows. For a past calendar date `D`: ensure quotes cover the lookback window, then run **`pnpm cli enrich -d D`**, then **`pnpm cli momentum-rank -d D`**, then **`pnpm cli momentum-rebalance -d D`** (or your usual pipeline).
 
@@ -631,6 +632,8 @@ pnpm cli evaluate -d YYYY-MM-DD
 End-to-end feature for **paper** positions with **`stop_type='trailing'`** (default): AI picks, portfolio adds, and `momentum_mf` use **ATR14**-driven upward-only trailing, conservative same-day SL+TP handling, and additive **`exit_reason`** without changing the `CLOSED_WIN` / `CLOSED_LOSS` / `CLOSED_TIME` enum.
 
 **`catalyst_entry`** rows use **`stop_type='fixed'`** instead — static levels only; see [Catalyst-driven entry](#catalyst-driven-entry-pre-earnings).
+
+**`AI_PICK` entry stops** ([`src/briefing/paper-trade-writer.ts`](src/briefing/paper-trade-writer.ts)): reject when LLM `stopLoss ≥ entryPrice` (`log.error`, no row); otherwise `effectiveStop = MAX(stopLoss, entry × 0.92)` with `log.warn` when the 8% hard floor binds (same discipline as `momentum_mf`).
 
 **Production parameters** (authoritative: [`config/momentum-config.json`](config/momentum-config.json), loaded via [`src/config/trailing-stop-sizing.ts`](src/config/trailing-stop-sizing.ts)):
 

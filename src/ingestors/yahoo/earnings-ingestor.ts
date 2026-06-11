@@ -127,24 +127,21 @@ export async function syncMomentumEarningsCalendarFromYahoo(
       const nextIso = pickFirstFutureEarningsDateIso(merged, refIso);
 
       if (nextIso) {
-        replaceMomentumEarningsCalendarForSymbol(sym, nextIso, db, {
-          source: YAHOO_EARNINGS_CALENDAR_SOURCE,
-          fetchedAt,
-        });
+        replaceMomentumEarningsCalendarForSymbol(db, sym, [
+          {
+            expectedDate: nextIso,
+            source: YAHOO_EARNINGS_CALENDAR_SOURCE,
+            fetchedAt,
+          },
+        ]);
         result.rowsWritten++;
       } else {
-        replaceMomentumEarningsCalendarForSymbol(sym, null, db, {
-          source: YAHOO_EARNINGS_CALENDAR_SOURCE,
-          fetchedAt,
-        });
+        replaceMomentumEarningsCalendarForSymbol(db, sym, []);
         result.clearedNoUpcoming++;
       }
     } catch (err) {
       result.fetchFailed++;
-      replaceMomentumEarningsCalendarForSymbol(sym, null, db, {
-        source: YAHOO_EARNINGS_CALENDAR_SOURCE,
-        fetchedAt,
-      });
+      replaceMomentumEarningsCalendarForSymbol(db, sym, []);
       if (isYahooMissingSymbolError(err)) {
         log.debug(
           { symbol: sym, yTicker, err: (err as Error).message },

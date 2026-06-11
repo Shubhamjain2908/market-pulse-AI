@@ -76,6 +76,8 @@ NOTE: Fundamentals refresh is operational via `pnpm fundamentals:refresh` (Pytho
 
 **Strategy gate table:** `regime_strategy_gate(strategy_id, regime, allowed, size_multiplier)`. Momentum_mf: BULL_TRENDING only.
 
+**Gate lookup (fail-closed):** [`isStrategyAllowed`](src/db/regime-queries.ts) returns **false** when no row exists for `(strategy_id, regime)` — missing seed data must not allow strategies through. Run `pnpm regime:seed-gates` after migrate.
+
 ### 3.2 Adaptive Trailing Stop
 
 **Core math:**
@@ -121,7 +123,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 ### 3.3 Paper Trades Ledger
 
 **Signal types currently active:**
-- `AI_PICK` — from thesis generator on screened candidates
+- `AI_PICK` — from thesis generator on screened candidates. Entry stop: reject when `stopLoss ≥ entryPrice` (`log.error`); else `effectiveStop = MAX(stopLoss, entry × 0.92)` with `log.warn` when raised ([`paper-trade-writer.ts`](src/briefing/paper-trade-writer.ts)).
 - `PORTFOLIO_ADD` — from portfolio analyser ADD recommendations
 - `momentum_mf` — from Sunday momentum rebalance
 - `catalyst_entry` — from catalyst-driven screen hits (fixed stop)
@@ -159,14 +161,14 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 
 **Composite:** z-score normalised cross-sectionally, winsorised ±3.0, weighted sum + breakout bonus.
 
-**False momentum flag:** `mom_false_flag = 1` when z_12_1 > 0.674 (top quartile) AND `profit_growth_yoy` < −5%. Confidence capped at 5/10 when flagged.
+**False momentum flag:** `mom_false_flag = 1` when z_12_1 > 0.674 (top quartile) AND `profit_growth_yoy` < −5%. Confidence capped at 5/10 when flagged. **Rebalance entry block:** flagged symbols are skipped before paper-trade insert (`falseFlagBlocked` counter); confidence cap in entry thesis path is unchanged.
 
 **Lifecycle:**
 - Enter: top 10 by composite rank, Sunday EOD
 - Exit triggers (priority order): trailing stop → hard −8% stop → rank drops > 20 (daily check) → target hit → regime changes from BULL_TRENDING
 - Rebalance: Sunday 8:00 AM IST — entries Sunday only, rank exits evaluated daily
 - Sector cap: max 3 stocks per NSE sector
-- Earnings blackout: block entries within ±3 trading days of earnings (from `earnings_calendar` table, sourced via Yahoo Finance)
+- Earnings blackout: block entries within ±3 calendar days of earnings (from `earnings_calendar` table, sourced via Yahoo Finance). **Sunday sync:** [`replaceMomentumEarningsCalendarForSymbol`](src/db/momentum-queries.ts) replaces rows per symbol when Yahoo returns data; **empty Yahoo response retains** existing calendar rows (fail-closed against outage clearing blackouts).
 
 ### 3.5 Fundamentals backfill & Quality-GARP v2
 Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates Python annual backfill (241 symbols), screener ingest, then Yahoo snapshot (yahoo wins on `(symbol, as_of)` conflict). **`quality_garp`** gates: 3yr ROE≥18%, ROCE≥20%, D/E<0.5, PEG<1.2, PE/PB ceilings, RSI+SMA50 dip, promoter selling block.
@@ -190,6 +192,10 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 | **Confidence range** | Full 1–10 scale. Strong tech + fundamentals = 7–8. Pure tech, weak fundamentals = 3–4. False momentum flag = max 5. Catalyst-event theses are hard-capped in code at max 6. | Thesis generator system prompt + post-LLM clamp |
 | **ETF/SGB RSI exclusion** | LIQUIDCASE, GOLDBEES, GOLDCASE, SILVERBEES, NIFTYBEES, JUNIORBEES, SGBs — skip RSI/volume signals entirely | `config/etf-exclusions.json` + portfolio analyser (newly added) |
 | **Regime gate absolute** | momentum_mf: no entries if regime ≠ BULL_TRENDING. No exception. | `momentum-rebalance.ts` pre-check |
+| **Regime strategy gate fail-closed** | Missing `regime_strategy_gate` row → strategy disallowed (`isStrategyAllowed` returns false). | `src/db/regime-queries.ts` |
+| **mom_false_flag entry block** | `momentum_mf` rebalance skips insert when `mom_false_flag = 1`. | `src/strategies/momentum-rebalance.ts` |
+| **Earnings calendar retain on empty** | Empty Yahoo earnings rows → retain existing `earnings_calendar` per symbol. | `src/db/momentum-queries.ts` |
+| **AI_PICK stop floor** | Reject `stopLoss ≥ entryPrice`; floor `entry × 0.92`; raise wider stops with warn. | `src/briefing/paper-trade-writer.ts` |
 | **alreadyOwned filter** | Skip symbol in AI Picks if currently held in Kite portfolio **or** symbol has any OPEN `paper_trades` row (any `signal_type`) | Thesis generator input preprocessing (**extended May 14**) |
 | **Stale Kite holdings** | If any analysed row is `source=kite` and `portfolio_holdings.as_of` is **before** the last open NSE session on or before the run date (`lastOpenOnOrBefore`), skip **all** portfolio LLM + lite paths; upsert per-symbol `HOLD` rows (`model=none`, `trigger_reason` prefix `STALE_HOLDINGS — …`); structured `log.warn` with `briefingPortfolio: true`; briefing **My Portfolio** shows a yellow banner (`staleHoldingsWarning`). Manual-only portfolios skip this gate. | `portfolio-analyser.ts`, `briefing/composer.ts` + `template.ts` |
 | **Signals read window (90d)** | Technical lookups from `signals` only consider rows with `date >= date(as_of, '-90 days')` (anchored on the evaluation / screen date). If nothing falls in the window, callers see **empty** maps / nulls — **no** silent fallback to older history. Same window on the `MAX(date)` subquery in `DbSignalProvider` so “latest session” cannot be outside the window. | `analysers/signal-provider.ts`, `agents/portfolio-trigger.ts` (`getLatestSignalsMap`, `getLatestSignalsMapsForSymbols`) |
@@ -219,7 +225,9 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 - **`symbols`** — `(symbol)` PK. Master list. Columns: `name, exchange, sector, 
   industry, is_index, is_active`. ⚠️ Sector data lives here, not in fundamentals.
 - **`earnings_calendar`** — `(symbol, expected_date)` PK. Source: Yahoo Finance
-  quoteSummary. Used for momentum entry blackout gate.
+  quoteSummary. Used for momentum entry blackout gate. Replace helper:
+  `replaceMomentumEarningsCalendarForSymbol(db, symbol, rows[])` — empty `rows`
+  is a no-op (retains existing dates).
 - **`intraday_quotes`** — `(symbol, captured_at)` PK. LTP snapshots from Kite.
 
 ### AI & screening outputs
@@ -257,11 +265,13 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
   score_vix, score_fii, score_breadth, vix_value, nifty_vs_sma200, fii_20d_net, 
   ad_ratio, pct_above_sma200, crisis_override, narrative, prev_regime, regime_age`.
 - **`regime_strategy_gate`** — `(strategy_id, regime)` PK. Columns: `allowed (0/1), 
-  size_multiplier, notes`.
+  size_multiplier, notes`. Lookup via `isStrategyAllowed` is **fail-closed**
+  (missing row = disallowed). Seed from `config/strategy-gates.json`.
 - **`momentum_rebalance_briefing`** — `calendar_date` PK. Sunday audit:
   `session_date, regime_allowed, regime, closed_rank_decay, entries_inserted, 
   unchanged_held, sector_cap_blocked, blackout_blocked, skipped_reason, 
-  thesis_failed, ranker_universe_size, ranker_eligible_count`.
+  thesis_failed, ranker_universe_size, ranker_eligible_count`. In-memory rebalance
+  result also tracks `falseFlagBlocked` (not persisted to this table).
 
 ### Infrastructure
 - **`briefings`** — `(id)` PK, index on `date`. Columns: `date, html_content, 

@@ -2,8 +2,10 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { loadStrategyGates } from '../../src/config/loaders.js';
 import { closeDb, getDb, migrate } from '../../src/db/index.js';
-import { getOpenPaperTradesForSignal, getThesesForDate } from '../../src/db/queries.js';
+import { getOpenPaperTradesForSignal } from '../../src/db/queries.js';
+import { seedStrategyGates } from '../../src/db/regime-queries.js';
 import type { LlmProvider } from '../../src/llm/types.js';
 import {
   applyMomentumRegimeGateExits,
@@ -56,6 +58,13 @@ describe('strategies/momentum-rebalance', () => {
     process.env.DATABASE_PATH = dbPath;
   });
 
+  function openMomentumTestDb(): ReturnType<typeof getDb> {
+    const db = getDb({ path: dbPath });
+    migrate(db);
+    seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
+    return db;
+  }
+
   afterEach(() => {
     closeDb();
     try {
@@ -93,8 +102,7 @@ describe('strategies/momentum-rebalance', () => {
   });
 
   it('runMomentumRebalance gates in non-bull regime (no rebalance writes)', async () => {
-    const db = getDb({ path: dbPath });
-    migrate(db);
+    const db = openMomentumTestDb();
     const session = '2026-05-08';
     insertRegimeChoppy(db, session);
     quote(db, 'ZZZ', session, 105);
@@ -120,8 +128,7 @@ describe('strategies/momentum-rebalance', () => {
   });
 
   it('exits holdings when mom_rank > exit_rank_threshold', async () => {
-    const db = getDb({ path: dbPath });
-    migrate(db);
+    const db = openMomentumTestDb();
     const session = '2026-05-08';
     insertRegimeBull(db, session);
     quote(db, 'OLD', session, 100);
@@ -147,8 +154,7 @@ describe('strategies/momentum-rebalance', () => {
   });
 
   it('skips sector-cap fourth name and promotes next sector', async () => {
-    const db = getDb({ path: dbPath });
-    migrate(db);
+    const db = openMomentumTestDb();
     const session = '2026-05-08';
     insertRegimeBull(db, session);
     for (const s of ['AA', 'BB', 'CC', 'DD', 'EE']) {
@@ -184,8 +190,7 @@ describe('strategies/momentum-rebalance', () => {
   });
 
   it('blocks blackout symbols and takes next rank', async () => {
-    const db = getDb({ path: dbPath });
-    migrate(db);
+    const db = openMomentumTestDb();
     const session = '2026-05-08';
     insertRegimeBull(db, session);
     quote(db, 'P', session, 50);
@@ -213,8 +218,7 @@ describe('strategies/momentum-rebalance', () => {
   });
 
   it('writes entries using thesis + ATR-integrated stop path', async () => {
-    const db = getDb({ path: dbPath });
-    migrate(db);
+    const db = openMomentumTestDb();
     const session = '2026-05-08';
     insertRegimeBull(db, session);
     quote(db, 'THX', session, 100);
@@ -273,63 +277,37 @@ describe('strategies/momentum-rebalance', () => {
     db.close();
   });
 
-  it('caps thesis confidence at 5 when mom_false_flag is set (LLM ignores prompt)', async () => {
-    const db = getDb({ path: dbPath });
-    migrate(db);
+  it('hard-blocks entry when mom_false_flag is set; allows clean rank through', async () => {
+    const db = openMomentumTestDb();
     const session = '2026-05-08';
     insertRegimeBull(db, session);
     quote(db, 'FFX', session, 100);
+    quote(db, 'GOOD', session, 100);
     sigRank(db, 'FFX', session, 1);
-    db.prepare(
-      `INSERT INTO signals (symbol, date, name, value, source) VALUES ('FFX', ?, 'mom_composite_score', 1, 'test')`,
-    ).run(session);
+    sigRank(db, 'GOOD', session, 2);
     db.prepare(
       `INSERT INTO signals (symbol, date, name, value, source) VALUES ('FFX', ?, 'mom_false_flag', 1, 'test')`,
     ).run(session);
-
-    const llm: LlmProvider = {
-      name: 'mock',
-      model: 'mock-1',
-      async generateText() {
-        return { text: 'ok', usage: { durationMs: 1 }, model: 'mock-1' };
-      },
-      async generateJson<T>() {
-        return {
-          data: {
-            symbol: 'FFX',
-            thesis: 'Hot momentum.',
-            bullCase: [''],
-            bearCase: [''],
-            entryZone: '₹99-₹101',
-            stopLoss: '₹88',
-            target: '₹130',
-            timeHorizon: 'medium',
-            confidenceScore: 9,
-            triggerScreen: 'momentum',
-          } as T,
-          raw: '{}',
-          usage: { durationMs: 1 },
-          model: 'mock-1',
-        };
-      },
-    };
+    db.prepare(
+      `INSERT INTO signals (symbol, date, name, value, source) VALUES ('GOOD', ?, 'mom_false_flag', 0, 'test')`,
+    ).run(session);
 
     const r = await runMomentumRebalance({
       calendarDate: session,
       db,
       skipRanker: true,
-      llm,
+      skipThesis: true,
     });
+    expect(r.falseFlagBlocked).toBe(1);
     expect(r.entriesInserted).toBe(1);
-    const thesisRows = getThesesForDate(session, db).filter((t) => t.symbol === 'FFX');
-    expect(thesisRows).toHaveLength(1);
-    expect(thesisRows[0]?.confidence).toBe(5);
+    const open = getOpenPaperTradesForSignal('momentum_mf', db).map((t) => t.symbol);
+    expect(open).not.toContain('FFX');
+    expect(open).toContain('GOOD');
     db.close();
   });
 
   it('uses 2% ATR proxy when atr_14 signal is missing', async () => {
-    const db = getDb({ path: dbPath });
-    migrate(db);
+    const db = openMomentumTestDb();
     const session = '2026-05-08';
     insertRegimeBull(db, session);
     quote(db, 'ATR', session, 100);
@@ -382,8 +360,7 @@ describe('strategies/momentum-rebalance', () => {
   });
 
   it('second rebalance is idempotent (no duplicate inserts)', async () => {
-    const db = getDb({ path: dbPath });
-    migrate(db);
+    const db = openMomentumTestDb();
     const session = '2026-05-08';
     insertRegimeBull(db, session);
     quote(db, 'ONLY', session, 75);
@@ -421,6 +398,7 @@ describe('toMomentumRebalanceBriefingSummary', () => {
         entriesInserted: 0,
         sectorCapBlocked: 0,
         blackoutBlocked: 0,
+        falseFlagBlocked: 0,
         unchangedHeld: 1,
         thesisFailed: 0,
         skippedReason: 'regime_gate',
@@ -435,6 +413,7 @@ describe('toMomentumRebalanceBriefingSummary', () => {
       unchangedHeld: 1,
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
+      falseFlagBlocked: 0,
       skippedReason: 'regime_gate',
       thesisFailed: 0,
     });
@@ -452,6 +431,7 @@ describe('toMomentumRebalanceBriefingSummary', () => {
         entriesInserted: 1,
         sectorCapBlocked: 0,
         blackoutBlocked: 1,
+        falseFlagBlocked: 0,
         unchangedHeld: 3,
         thesisFailed: 0,
       }),
@@ -465,6 +445,7 @@ describe('toMomentumRebalanceBriefingSummary', () => {
       unchangedHeld: 3,
       sectorCapBlocked: 0,
       blackoutBlocked: 1,
+      falseFlagBlocked: 0,
       thesisFailed: 0,
     });
   });

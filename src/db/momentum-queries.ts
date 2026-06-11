@@ -5,7 +5,10 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 
+import { child } from '../logger.js';
 import { getDb } from './connection.js';
+
+const log = child({ component: 'momentum-queries' });
 
 /**
  * True when the symbol has at least `minTradingDays` quote rows on or before `asOf` (NSE).
@@ -54,25 +57,38 @@ export function isInEarningsBlackoutCalendarWindow(
   return row != null;
 }
 
+export interface MomentumEarningsCalendarRow {
+  expectedDate: string;
+  source: string;
+  fetchedAt: string;
+}
+
 /**
- * Replace all calendar rows for a symbol with at most one upcoming earnings row.
- * Passing `null` clears the symbol (fail-open after Yahoo miss / stale data).
+ * Replace all calendar rows for a symbol with the given rows.
+ * Empty `rows` retains existing data (fail-closed against Yahoo outages clearing blackouts).
  */
 export function replaceMomentumEarningsCalendarForSymbol(
-  symbol: string,
-  expectedDateIso: string | null,
   db: DatabaseType,
-  meta: { source: string; fetchedAt: string },
+  symbol: string,
+  rows: MomentumEarningsCalendarRow[],
 ): void {
   const sym = symbol.toUpperCase();
+  if (rows.length === 0) {
+    log.warn(
+      { symbol: sym },
+      'earnings_calendar: Yahoo returned 0 rows — retaining existing calendar, not clearing',
+    );
+    return;
+  }
   db.prepare('DELETE FROM earnings_calendar WHERE symbol = ?').run(sym);
-  if (expectedDateIso) {
-    db.prepare(
-      `
-      INSERT INTO earnings_calendar (symbol, expected_date, source, fetched_at)
-      VALUES (?, ?, ?, ?)
-    `,
-    ).run(sym, expectedDateIso, meta.source, meta.fetchedAt);
+  const insertStmt = db.prepare(
+    `
+    INSERT INTO earnings_calendar (symbol, expected_date, source, fetched_at)
+    VALUES (?, ?, ?, ?)
+  `,
+  );
+  for (const row of rows) {
+    insertStmt.run(sym, row.expectedDate, row.source, row.fetchedAt);
   }
 }
 
