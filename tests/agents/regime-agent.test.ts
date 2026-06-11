@@ -1,13 +1,53 @@
 import Database from 'better-sqlite3';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mockComputeRegimeSignals = vi.hoisted(() => vi.fn());
+
+vi.mock('../../src/enrichers/regime-signals.js', () => ({
+  computeRegimeSignals: mockComputeRegimeSignals,
+}));
+
 import { isCompleteRegimeNarrative, runRegimeAgent } from '../../src/agents/regime-agent.js';
 import { migrate } from '../../src/db/migrate.js';
 import { getTodayRegime } from '../../src/db/regime-queries.js';
 import { resetLlmProvider, setLlmProvider } from '../../src/llm/factory.js';
 import { MockLlmProvider } from '../../src/llm/providers/mock.js';
+import type { RegimeSignals } from '../../src/types/regime.js';
+
+function fullRegimeSignals(date: string, partial: Partial<RegimeSignals> = {}): RegimeSignals {
+  return {
+    date,
+    niftyVsSma200Pct: 2.5,
+    sma200Slope10dPct: 0.2,
+    vixCurrent: 15,
+    vix5dChangePct: 1.2,
+    fii20dRollingCr: 1200,
+    fii5dTrend: 'POSITIVE',
+    adRatio: 1.4,
+    pctAboveSma200: 55,
+    niftyGapPct: 0.1,
+    scoreNiftySma: 1,
+    scoreSma200Slope: 1,
+    scoreVixLevel: 1,
+    scoreVix5d: 0,
+    scoreFii20d: 1,
+    scoreFii5dTrend: 0,
+    scoreAdRatio: 0,
+    scorePctAboveSma200: 1,
+    scoreTrend: 2,
+    scoreVix: 1,
+    scoreFii: 1,
+    scoreBreadth: 1,
+    scoreTotal: 2,
+    warnings: [],
+    ...partial,
+  };
+}
 
 describe('runRegimeAgent', () => {
   beforeEach(() => {
+    mockComputeRegimeSignals.mockReset();
+    mockComputeRegimeSignals.mockImplementation((_db, date) => fullRegimeSignals(date));
     resetLlmProvider();
     setLlmProvider(new MockLlmProvider());
   });
