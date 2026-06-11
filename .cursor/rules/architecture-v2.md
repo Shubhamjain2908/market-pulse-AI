@@ -46,9 +46,10 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 | **External signal holdings** | `src/ingestors/ext-signal-holdings-ingestor.ts` | After Yahoo snapshot, before regime: JSON-RPC `get_holdings` per strategy in `config/ext-signal-provider.json` → `ext_signal_holdings`. Skipped when `enabled: false`, `EXT_SIGNAL_ENDPOINT` unset, or `EXT_SIGNAL_API_KEY` unset. Read only by thesis generator (optional user-message context). Fail-open. |
 | **ETF iNAV** | `src/ingestors/inav-fetcher.ts` | After Yahoo snapshot, before regime: NSE `/api/etf` → `inav_snapshots` for symbols in `config/etf-exclusions.json`. Fail-open (warn + skip on NSE failure). |
 | **COMEX gold COT** | `src/cot/fetch-gold-cot.ts`, `scripts/cot-gold-fetch.ts` | Weekly CFTC `f_disagg.txt` → `cot_gold`; Sunday 07:45 IST cron + `pnpm cot:gold`. Regime briefing line when crowded long/short only. |
-| **Regime Classify** | `src/agents/regime-agent.ts` | 8 signals scored −2 to +2. 3-day persistence. CRISIS fires immediately. Writes to `regime_daily`. Runs before all strategies. |
+| **Regime Classify** | `src/agents/regime-agent.ts` | 8 signals scored −2 to +2. 3-day persistence. CRISIS fires immediately. **Quorum:** refuses `regime_daily` write when any of five required inputs is null (Nifty vs SMA200, SMA200 slope, VIX, FII 20d, % above SMA200). Runs before all strategies. |
+| **Weekly cleanup** | `src/agents/weekly-cleanup.ts` | Sunday 07:30 IST: prune `briefings` &gt; 90d, `signals` &gt; 730d. Fail-open (logged; does not block rebalance). |
 | **Screen** | `src/analysers/stock-screener.ts` | Loads `config/screens.json`. DSL screens via `engine.ts`; **`quality_garp`** and **`catalyst_entry`** use dedicated dispatchers (`getQualityGarpFundamentals` + 10 v2 gates; `runCatalystScreener`). Checks `regime_strategy_gate`. Writes passing symbols to `screens`. |
-| **AI Thesis** | `src/agents/thesis-generator.ts` | Per screen pass: sends technicals + fundamentals + news + regime context to LLM. Returns structured JSON. Skips symbols in live portfolio (`alreadyOwned`) and any symbol with an OPEN `paper_trades` row (any `signal_type`). |
+| **AI Thesis** | `src/agents/thesis-generator.ts` | Per screen pass: sends technicals + fundamentals + news + regime context to LLM. Returns structured JSON. Parallel symbol processing via `p-limit` (`THESIS_CONCURRENCY`, default 3). Skips symbols in live portfolio (`alreadyOwned`) and any symbol with an OPEN `paper_trades` row (any `signal_type`). |
 | **Portfolio review** | `src/agents/portfolio-sync.ts` + `portfolio-analyser.ts` | When AI is enabled and portfolio is not skipped: after thesis, optional Kite sync (earlier in the same run) feeds `portfolio_holdings`; analyser writes `portfolio_analysis` (full LLM, lite snapshot, or **stale-holdings placeholders** — see §4). |
 | **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). `stop_type='trailing'` follows adaptive ATR trailing; `stop_type='fixed'` bypasses trailing math/logs and evaluates stops/targets at static levels. New bars only after the latest non-`STOPPED_OUT` `trailing_stop_log` row (exclusive `source_date` bound via `getSymbolBars`), so a raised persisted stop is not replayed against already-evaluated history. **Gap-down CB:** if `bar.open < 0.7 ×` prior NSE `close` (`getPrevClose`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag (`hasCorporateActionInRange`). **Gap-up CB:** if `bar.open > 1.3 ×` prior close, suppress `highest_close_since_entry` update for that bar (stop/target still run); mitigates fake highs after post-resolution gaps. Day-1 ATR latch snaps `sourceDate` via `nextOpenOnOrAfter` when it falls on a non-session day. |
 | **Briefing** | `src/briefing/composer.ts` | Records `briefing` / `started` first, then `hasFailedRequiredStage` gate. Normal path: `renderBriefing()` → `juice()` for Gmail-safe inline CSS (600px table layout). Regime card + change banner; **FII/DII flow attribution**; **ETF iNAV pricing** block for held ETFs (`etf-pricing-card.ts`, WARN/NOTE thresholds). **Degraded path:** partial-pipeline banner listing failed required stages; screens / AI picks / portfolio / momentum omitted. Delivered via Nodemailer → Gmail SMTP (`delivered_at` persisted only after ≥1 SMTP recipient accepted). |
@@ -73,6 +74,8 @@ NOTE: Fundamentals refresh is operational via `pnpm fundamentals:refresh` (Pytho
 **8 input signals** (each −2 to +2): Nifty % vs SMA200, SMA200 slope (10d), VIX level, VIX 5d change, FII 20d rolling net, FII 5d trend, Advance-Decline ratio, % NSE500 above SMA200.
 
 **3-day persistence:** Regime change requires 3 consecutive days at new band. CRISIS exception: fires immediately, requires 5 days to clear.
+
+**Regime quorum (safety):** Before scoring, `prepareRegimeDaily` validates five required signal fields are non-null. Missing data throws — `regime` pipeline stage fails; no silent null-as-zero scoring.
 
 **Current state (May 14):** BEAR_TRENDING Day 4. Score −7.0. FII −3.0, Breadth −4.0. 5 of 11 strategies active.
 
@@ -131,8 +134,10 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 **Signal types currently active:**
 - `AI_PICK` — from thesis generator on screened candidates. Entry stop: reject when `stopLoss ≥ entryPrice` (`log.error`); else `effectiveStop = MAX(stopLoss, entry × 0.92)` with `log.warn` when raised ([`paper-trade-writer.ts`](src/briefing/paper-trade-writer.ts)).
 - `PORTFOLIO_ADD` — from portfolio analyser ADD recommendations
-- `momentum_mf` — from Sunday momentum rebalance
+- `momentum_mf` — from Sunday momentum rebalance (**requires `atr_14` at entry**; no 2% proxy)
 - `catalyst_entry` — from catalyst-driven screen hits (fixed stop)
+
+**Cross-strategy entry dedup:** `hasOpenPaperTradeForSymbol` blocks new inserts (all active signal types + momentum rebalance) when any OPEN row exists for the symbol, regardless of `signal_type`. CLOSED rows do not block.
 
 **Unique constraint:** `UNIQUE INDEX uq_paper_trades_signal_day ON paper_trades(symbol, signal_type, source_date)`
 
