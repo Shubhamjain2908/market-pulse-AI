@@ -859,6 +859,20 @@ export function getOpenPaperTrades(db: DatabaseType = getDb()): PaperTradeRow[] 
   return rows;
 }
 
+/** True when any OPEN `paper_trades` row exists for `symbol` (any `signal_type`). */
+export function hasOpenPaperTradeForSymbol(symbol: string, db: DatabaseType = getDb()): boolean {
+  const row = db
+    .prepare(
+      `
+      SELECT 1 FROM paper_trades
+      WHERE symbol = ? AND status = 'OPEN'
+      LIMIT 1
+    `,
+    )
+    .get(symbol.toUpperCase());
+  return row != null;
+}
+
 /** Distinct symbols with at least one OPEN `paper_trades` row (any `signal_type`). */
 export function getDistinctOpenPaperTradeSymbols(db: DatabaseType = getDb()): string[] {
   const rows = db

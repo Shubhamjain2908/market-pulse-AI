@@ -3,7 +3,12 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
-import { insertPaperTradeIfAbsent, type PaperTradeHorizon } from '../db/queries.js';
+import {
+  hasOpenPaperTradeForSymbol,
+  insertPaperTradeIfAbsent,
+  type PaperTradeHorizon,
+  type PaperTradeSignalType,
+} from '../db/queries.js';
 import { child } from '../logger.js';
 import { parseInrPriceMidpoint } from './paper-trade-parsers.js';
 import type { PortfolioSummary, ThesisCard } from './template.js';
@@ -62,6 +67,26 @@ function getCatalystScreenCriteria(
   }
 }
 
+export interface PaperTradeRecordResult {
+  insertedAiPick: number;
+  insertedPortfolioAdd: number;
+  insertedCatalystEntry: number;
+  crossStrategyBlocked: number;
+}
+
+function blockIfOpenPaperTradeExists(
+  symbol: string,
+  signalType: PaperTradeSignalType,
+  db: DatabaseType,
+): boolean {
+  if (!hasOpenPaperTradeForSymbol(symbol, db)) return false;
+  log.info(
+    { symbol, signalType, blockReason: 'open_in_other_strategy' },
+    'paper trade dedup — symbol already open under different signal',
+  );
+  return true;
+}
+
 /**
  * Idempotent: one row per (symbol, signal_type, source_date). Safe to call on every brief run.
  */
@@ -70,10 +95,11 @@ export function recordPaperTrades(
   theses: ThesisCard[],
   portfolio: PortfolioSummary | undefined,
   db: DatabaseType,
-): { insertedAiPick: number; insertedPortfolioAdd: number; insertedCatalystEntry: number } {
+): PaperTradeRecordResult {
   let insertedAiPick = 0;
   let insertedPortfolioAdd = 0;
   let insertedCatalystEntry = 0;
+  let crossStrategyBlocked = 0;
 
   for (const t of theses) {
     const entry = parseInrPriceMidpoint(t.entryZone);
@@ -93,6 +119,10 @@ export function recordPaperTrades(
         continue;
       }
       const maxHoldDays = Math.max(1, Math.trunc(catalystCriteria.days_to_earnings) + 2);
+      if (blockIfOpenPaperTradeExists(t.symbol, 'catalyst_entry', db)) {
+        crossStrategyBlocked++;
+        continue;
+      }
       const ok = insertPaperTradeIfAbsent(
         {
           symbol: t.symbol,
@@ -145,6 +175,10 @@ export function recordPaperTrades(
     }
 
     const { horizon, maxHoldDays } = horizonToDays(t.timeHorizon ?? 'medium');
+    if (blockIfOpenPaperTradeExists(t.symbol, 'AI_PICK', db)) {
+      crossStrategyBlocked++;
+      continue;
+    }
     const ok = insertPaperTradeIfAbsent(
       {
         symbol: t.symbol,
@@ -178,6 +212,10 @@ export function recordPaperTrades(
         );
         continue;
       }
+      if (blockIfOpenPaperTradeExists(p.symbol, 'PORTFOLIO_ADD', db)) {
+        crossStrategyBlocked++;
+        continue;
+      }
       const ok = insertPaperTradeIfAbsent(
         {
           symbol: p.symbol,
@@ -195,5 +233,5 @@ export function recordPaperTrades(
     }
   }
 
-  return { insertedAiPick, insertedPortfolioAdd, insertedCatalystEntry };
+  return { insertedAiPick, insertedPortfolioAdd, insertedCatalystEntry, crossStrategyBlocked };
 }

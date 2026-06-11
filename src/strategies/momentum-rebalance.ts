@@ -16,6 +16,7 @@ import {
   closePaperTrade,
   getNseCloseOnOrBefore,
   getOpenPaperTradesForSignal,
+  hasOpenPaperTradeForSymbol,
   insertPaperTradeIfAbsent,
   type PaperTradeRow,
   type UpsertThesisRow,
@@ -180,6 +181,7 @@ export interface MomentumRebalanceResult {
   blackoutBlocked: number;
   falseFlagBlocked: number;
   atrMissingSkipped: number;
+  crossStrategyBlocked: number;
   unchangedHeld: number;
   thesisFailed: number;
   /** Omitted when regime is allowed and rebalance proceeded normally. */
@@ -201,6 +203,7 @@ export function toMomentumRebalanceBriefingSummary(
     sectorCapBlocked: r.sectorCapBlocked,
     blackoutBlocked: r.blackoutBlocked,
     falseFlagBlocked: r.falseFlagBlocked,
+    crossStrategyBlocked: r.crossStrategyBlocked,
     skippedReason: r.skippedReason,
     thesisFailed: r.thesisFailed,
     rankerSnapshot: r.rankerSnapshot,
@@ -377,6 +380,7 @@ export async function runMomentumRebalance(
       blackoutBlocked: 0,
       falseFlagBlocked: 0,
       atrMissingSkipped: 0,
+      crossStrategyBlocked: 0,
       unchangedHeld: getOpenPaperTradesForSignal('momentum_mf', db).length,
       thesisFailed: 0,
       skippedReason: 'missing_regime',
@@ -401,6 +405,7 @@ export async function runMomentumRebalance(
       blackoutBlocked: 0,
       falseFlagBlocked: 0,
       atrMissingSkipped: 0,
+      crossStrategyBlocked: 0,
       unchangedHeld: getOpenPaperTradesForSignal('momentum_mf', db).length,
       thesisFailed: 0,
       skippedReason: 'regime_gate',
@@ -446,6 +451,7 @@ export async function runMomentumRebalance(
   let blackoutBlocked = 0;
   let falseFlagBlocked = 0;
   let atrMissingSkipped = 0;
+  let crossStrategyBlocked = 0;
 
   let needed = slotsTarget - openTrades.length;
   if (needed <= 0) {
@@ -472,6 +478,7 @@ export async function runMomentumRebalance(
       blackoutBlocked: 0,
       falseFlagBlocked: 0,
       atrMissingSkipped: 0,
+      crossStrategyBlocked: 0,
       unchangedHeld: heldBeforeEntries.size,
       thesisFailed: 0,
     });
@@ -483,6 +490,15 @@ export async function runMomentumRebalance(
   for (const sym of rankedOrder) {
     if (needed <= 0) break;
     if (held.has(sym)) continue;
+
+    if (hasOpenPaperTradeForSymbol(sym, db)) {
+      log.info(
+        { symbol: sym, signalType: 'momentum_mf', blockReason: 'open_in_other_strategy' },
+        'paper trade dedup — symbol already open under different signal',
+      );
+      crossStrategyBlocked++;
+      continue;
+    }
 
     const rkNew = rankBySymbol.get(sym);
     if (rkNew == null || !Number.isFinite(rkNew) || rkNew > exitThreshold) {
@@ -643,6 +659,7 @@ export async function runMomentumRebalance(
       blackoutBlocked,
       falseFlagBlocked,
       atrMissingSkipped,
+      crossStrategyBlocked,
       heldCount: finalOpen.length,
       thesisFailed,
       rankerSnapshot,
@@ -663,6 +680,7 @@ export async function runMomentumRebalance(
     blackoutBlocked,
     falseFlagBlocked,
     atrMissingSkipped,
+    crossStrategyBlocked,
     unchangedHeld,
     thesisFailed,
   });

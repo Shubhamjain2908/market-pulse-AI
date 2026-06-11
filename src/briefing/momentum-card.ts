@@ -37,6 +37,7 @@ export interface MomentumRebalanceSummary {
   blackoutBlocked: number;
   /** Present when passed from a live rebalance run; not persisted to DB. */
   falseFlagBlocked?: number;
+  crossStrategyBlocked?: number;
   skippedReason?: 'regime_gate' | 'missing_regime';
   /** Entry-thesis attempts that did not yield a trade (no LLM, LLM error, or invalid levels). */
   thesisFailed?: number;
@@ -148,6 +149,7 @@ export function renderMomentumBriefingBlock(
         · unchanged ${rebalance.unchangedHeld}
         · sector cap blocked ${rebalance.sectorCapBlocked}
         · blackout blocked ${rebalance.blackoutBlocked}
+        ${(rebalance.crossStrategyBlocked ?? 0) > 0 ? ` · cross-strategy blocked ${esc(rebalance.crossStrategyBlocked ?? 0)}` : ''}
         ${(rebalance.thesisFailed ?? 0) > 0 ? ` · entry thesis failed ${esc(rebalance.thesisFailed ?? 0)}` : ''}
       </div>${rankerMeta}${thesisNote}`
       : `<div class="momentum-rebalance muted momentum-rebalance-gated">
