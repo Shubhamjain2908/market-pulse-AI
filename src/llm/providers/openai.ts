@@ -14,6 +14,40 @@ import type {
   LlmTextResult,
 } from '../types.js';
 
+async function withTimeout<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    return await fn(ctl.signal);
+  } catch (err) {
+    if (ctl.signal.aborted) {
+      throw new Error(`${label} timed out after ${ms}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
+  if (typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([a, b]);
+  }
+  const merged = new AbortController();
+  const abort = () => merged.abort();
+  if (a.aborted || b.aborted) {
+    merged.abort();
+    return merged.signal;
+  }
+  a.addEventListener('abort', abort, { once: true });
+  b.addEventListener('abort', abort, { once: true });
+  return merged.signal;
+}
+
 export class OpenAIProvider implements LlmProvider {
   readonly name = 'openai';
   readonly model: string;
@@ -34,18 +68,25 @@ export class OpenAIProvider implements LlmProvider {
 
   async generateText(opts: GenerateTextOptions & { forceJson?: boolean }): Promise<LlmTextResult> {
     const started = Date.now();
-    const response = await this.client.chat.completions.create(
-      {
-        model: this.model,
-        temperature: opts.temperature ?? 0.2,
-        max_tokens: opts.maxOutputTokens ?? 4096,
-        messages: [
-          { role: 'system', content: opts.system },
-          { role: 'user', content: opts.user },
-        ],
-        ...(opts.forceJson && { response_format: { type: 'json_object' } }),
+    const response = await withTimeout(
+      (timeoutSignal) => {
+        const signal = opts.signal ? mergeSignals(opts.signal, timeoutSignal) : timeoutSignal;
+        return this.client.chat.completions.create(
+          {
+            model: this.model,
+            temperature: opts.temperature ?? 0.2,
+            max_tokens: opts.maxOutputTokens ?? 4096,
+            messages: [
+              { role: 'system', content: opts.system },
+              { role: 'user', content: opts.user },
+            ],
+            ...(opts.forceJson && { response_format: { type: 'json_object' } }),
+          },
+          { signal },
+        );
       },
-      { signal: opts.signal ?? undefined },
+      config.OPENAI_TIMEOUT_MS,
+      'openai.chat.completions',
     );
 
     const text = response.choices[0]?.message?.content ?? '';

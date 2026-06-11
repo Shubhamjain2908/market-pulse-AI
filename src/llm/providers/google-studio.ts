@@ -176,6 +176,7 @@ export class GoogleStudioProvider implements LlmProvider {
         safetySettings: RESEARCH_SAFETY_SETTINGS,
         temperature: opts.temperature ?? 0.2,
         maxOutputTokens: opts.maxOutputTokens ?? 8192,
+        httpOptions: { timeout: config.GOOGLE_STUDIO_TIMEOUT_MS },
         // Optional: Uncomment below line to ground stock evaluation with live web search results
         tools: [{ googleSearch: {} }],
       },
@@ -219,6 +220,7 @@ export class GoogleStudioProvider implements LlmProvider {
             safetySettings: RESEARCH_SAFETY_SETTINGS,
             temperature: opts.temperature ?? 0.1,
             maxOutputTokens: opts.maxOutputTokens ?? 8192,
+            httpOptions: { timeout: config.GOOGLE_STUDIO_TIMEOUT_MS },
             // Strictly enforce structured output matching your custom schema
             responseMimeType: 'application/json',
             // Only pass responseSchema when it is already JSON-schema-like.

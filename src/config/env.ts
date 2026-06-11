@@ -41,9 +41,11 @@ const EnvSchema = z.object({
 
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default('claude-sonnet-4-5'),
+  ANTHROPIC_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
 
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
+  GOOGLE_STUDIO_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
 
   GOOGLE_VERTEX_PROJECT: z.string().optional(),
   GOOGLE_VERTEX_LOCATION: z.string().default('us-central1'),
@@ -56,6 +58,10 @@ const EnvSchema = z.object({
   OPENAI_BASE_URL: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4o'),
+  OPENAI_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+
+  /** Per daily-workflow run cap on LLM spend (USD). Enforced via `src/llm/budget.ts`. */
+  LLM_RUN_BUDGET_USD: z.coerce.number().positive().default(0.5),
 
   MARKET_DATA_PROVIDER: z.enum(['free', 'kite']).default('free'),
   KITE_API_KEY: z.string().optional(),

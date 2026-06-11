@@ -166,6 +166,8 @@ export interface ComposeBriefingOptions {
   momentumRebalanceSummary?: MomentumRebalanceSummary;
   /** Non-fatal pipeline warnings to surface in the briefing HTML header. */
   warnings?: WarningEntry[];
+  /** When true, render a prominent LLM budget-exceeded banner. */
+  budgetExceeded?: boolean;
 }
 
 export interface ComposedBriefing {
@@ -339,6 +341,7 @@ export async function composeBriefing(
     momentumBlock,
     etfPricingBlock,
     warnings: warnings.length > 0 ? warnings : undefined,
+    budgetExceeded: opts.budgetExceeded,
   };
 
   log.info(
