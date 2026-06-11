@@ -571,6 +571,241 @@ describe('evaluate paper trades', () => {
     expect(getOpenPaperTrades(db)).toHaveLength(1);
   });
 
+  describe('gap-up circuit breaker (>30%)', () => {
+    it('leaves highest_close unchanged when gap-up is extreme but target not hit', () => {
+      const src = '2026-08-01';
+      const dPrev = '2026-08-02';
+      const dGap = '2026-08-03';
+      seedNifty(dPrev, dGap);
+      upsertQuotes(
+        [q('GAPUP2', dPrev, 100, 100, 100, 100), q('GAPUP2', dGap, 135, 140, 108, 110)],
+        db,
+      );
+      seedAtr14('GAPUP2', [src, dPrev, dGap], 3);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'GAPUP2',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 85,
+          target: 200,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const rowId = (
+        db.prepare('SELECT id FROM paper_trades WHERE symbol = ?').get('GAPUP2') as { id: number }
+      ).id;
+      db.prepare(
+        'UPDATE paper_trades SET highest_close_since_entry = 105, atr14_at_entry = 3 WHERE id = ?',
+      ).run(rowId);
+
+      const t = getOpenPaperTrades(db)[0];
+      if (t === undefined) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, dGap, { skipAi: true })).toBe('still_open');
+
+      const still = getOpenPaperTrades(db)[0];
+      expect(still?.highestCloseSinceEntry).toBe(105);
+    });
+
+    it('bar-1 gap-up leaves watermark unset; bar-2 seeds from bar.close', () => {
+      const src = '2026-09-01';
+      const d1 = '2026-09-02';
+      const d2 = '2026-09-03';
+      seedNifty(d1, d2);
+      upsertQuotes(
+        [
+          q('GAPB1', src, 100, 100, 100, 100),
+          q('GAPB1', d1, 135, 145, 130, 140),
+          q('GAPB1', d2, 99, 101, 97, 98),
+        ],
+        db,
+      );
+      seedAtr14('GAPB1', [src, d1, d2], 3);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'GAPB1',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 85,
+          target: 200,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const rowId = (
+        db.prepare('SELECT id FROM paper_trades WHERE symbol = ?').get('GAPB1') as { id: number }
+      ).id;
+
+      let t = getOpenPaperTrades(db)[0];
+      if (t === undefined) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, d1, { skipAi: true })).toBe('still_open');
+
+      const afterBar1 = db
+        .prepare('SELECT highest_close_since_entry FROM paper_trades WHERE id = ?')
+        .get(rowId) as { highest_close_since_entry: number | null };
+      expect(afterBar1.highest_close_since_entry).toBeNull();
+      expect(afterBar1.highest_close_since_entry).not.toBe(140);
+
+      t = getOpenPaperTrades(db)[0];
+      if (t === undefined) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, d2, { skipAi: true })).toBe('still_open');
+
+      const still = getOpenPaperTrades(db)[0];
+      expect(still?.highestCloseSinceEntry).toBe(98);
+    });
+
+    it('gap-up same bar still stop-outs when low breaches stop', () => {
+      const src = '2026-09-01';
+      const dPrev = '2026-09-02';
+      const dGap = '2026-09-03';
+      seedNifty(dPrev, dGap);
+      upsertQuotes([q('GAPSL', dPrev, 100, 100, 100, 100), q('GAPSL', dGap, 135, 136, 88, 95)], db);
+      seedAtr14('GAPSL', [src, dPrev, dGap], 3);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'GAPSL',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 92,
+          target: 200,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const rowId = (
+        db.prepare('SELECT id FROM paper_trades WHERE symbol = ?').get('GAPSL') as { id: number }
+      ).id;
+      db.prepare(
+        'UPDATE paper_trades SET highest_close_since_entry = 105, atr14_at_entry = 3 WHERE id = ?',
+      ).run(rowId);
+
+      const t = getOpenPaperTrades(db)[0];
+      if (t === undefined) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, dGap, { skipAi: true })).toBe('CLOSED_LOSS');
+
+      const closed = db
+        .prepare('SELECT status, exit_reason FROM paper_trades WHERE id = ?')
+        .get(rowId) as { status: string; exit_reason: string | null };
+      expect(closed.status).toBe('CLOSED_LOSS');
+      expect(closed.exit_reason).toBe('TRAILING_STOP');
+    });
+
+    it('updates highest_close normally when gap-up is under 30% threshold', () => {
+      const src = '2026-08-01';
+      const dPrev = '2026-08-02';
+      const dBar = '2026-08-03';
+      seedNifty(dPrev, dBar);
+      upsertQuotes(
+        // low must clear raised trailing stop (~124) after close updates watermark to 130
+        [q('GAPUP3', dPrev, 100, 100, 100, 100), q('GAPUP3', dBar, 125, 135, 126, 130)],
+        db,
+      );
+      seedAtr14('GAPUP3', [src, dPrev, dBar], 3);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'GAPUP3',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 85,
+          target: 200,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const rowId = (
+        db.prepare('SELECT id FROM paper_trades WHERE symbol = ?').get('GAPUP3') as { id: number }
+      ).id;
+      db.prepare(
+        'UPDATE paper_trades SET highest_close_since_entry = 105, atr14_at_entry = 3 WHERE id = ?',
+      ).run(rowId);
+
+      const t = getOpenPaperTrades(db)[0];
+      if (t === undefined) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, dBar, { skipAi: true })).toBe('still_open');
+
+      const still = getOpenPaperTrades(db)[0];
+      expect(still?.highestCloseSinceEntry).toBe(130);
+    });
+  });
+
+  it('null prevClose on first symbol bar skips gap CB and runs trailing', () => {
+    const src = '2026-10-01';
+    const d1 = '2026-10-02';
+    seedNifty(d1);
+    upsertQuotes([q('NOPREV', d1, 100, 108, 99, 106)], db);
+    seedAtr14('NOPREV', [src, d1], 3);
+    insertPaperTradeIfAbsent(
+      {
+        symbol: 'NOPREV',
+        signalType: 'AI_PICK',
+        sourceDate: src,
+        entryPrice: 100,
+        stopLoss: 85,
+        target: 200,
+        timeHorizon: 'medium',
+        maxHoldDays: 90,
+      },
+      db,
+    );
+    const rowId = (
+      db.prepare('SELECT id FROM paper_trades WHERE symbol = ?').get('NOPREV') as { id: number }
+    ).id;
+
+    const t = getOpenPaperTrades(db)[0];
+    if (t === undefined) throw new Error('missing trade');
+    expect(evaluateOnePaperTrade(t, db, d1, { skipAi: true })).toBe('still_open');
+
+    const still = getOpenPaperTrades(db)[0];
+    expect(still?.highestCloseSinceEntry).toBe(106);
+    expect(still?.atr14AtEntry).toBe(3);
+
+    const trailLogCount = (
+      db
+        .prepare(`SELECT COUNT(*) AS c FROM trailing_stop_log WHERE trade_id = ? AND log_date = ?`)
+        .get(rowId, d1) as { c: number }
+    ).c;
+    expect(trailLogCount).toBe(0);
+  });
+
+  it('Day-1 ATR latch uses next open session when sourceDate is Sunday', () => {
+    const srcSunday = '2026-02-01';
+    const dMonday = '2026-02-02';
+    seedNifty(dMonday);
+    upsertQuotes([q('SUNATR', dMonday, 100, 105, 98, 102)], db);
+    seedAtr14('SUNATR', [dMonday], 4);
+
+    insertPaperTradeIfAbsent(
+      {
+        symbol: 'SUNATR',
+        signalType: 'AI_PICK',
+        sourceDate: srcSunday,
+        entryPrice: 100,
+        stopLoss: 90,
+        target: 200,
+        timeHorizon: 'medium',
+        maxHoldDays: 90,
+      },
+      db,
+    );
+    const t = getOpenPaperTrades(db)[0];
+    if (t === undefined) throw new Error('missing trade');
+    expect(evaluateOnePaperTrade(t, db, dMonday, { skipAi: true })).toBe('still_open');
+
+    const still = getOpenPaperTrades(db)[0];
+    // ATR-based: 100 - 2×4 = 92 (tighter than LLM 90).
+    expect(still?.stopLoss).toBe(92);
+    expect(still?.atr14AtEntry).toBe(4);
+  });
+
   it('runEvaluatePaperTrades returns counts', () => {
     seedNifty('2026-02-02');
     upsertQuotes([q('R1', '2026-02-02', 100, 130, 95, 125)], db);

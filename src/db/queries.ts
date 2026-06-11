@@ -3,7 +3,7 @@
  * we'd rather grow this file than reach for an ORM.
  */
 
-import type { Database as DatabaseType } from 'better-sqlite3';
+import type { Database as DatabaseType, Statement } from 'better-sqlite3';
 import type { MomentumRebalanceSummary } from '../briefing/momentum-card.js';
 import type {
   FiiDiiRow,
@@ -87,6 +87,62 @@ export function getRecentQuotes(
     `)
     .all(symbol, limit);
   return rows as RawQuote[];
+}
+
+const GET_PREV_CLOSE_SQL = `
+  SELECT close FROM quotes
+  WHERE symbol = ? AND exchange = 'NSE' AND date < ?
+  ORDER BY date DESC LIMIT 1
+`;
+
+const prevCloseStmtByDb = new WeakMap<DatabaseType, Statement>();
+
+function prevCloseStmt(db: DatabaseType): Statement {
+  let stmt = prevCloseStmtByDb.get(db);
+  if (!stmt) {
+    stmt = db.prepare(GET_PREV_CLOSE_SQL);
+    prevCloseStmtByDb.set(db, stmt);
+  }
+  return stmt;
+}
+
+/** Prior NSE session close strictly before `beforeDate` (for gap circuit breakers). */
+export function getPrevClose(
+  symbol: string,
+  beforeDate: string,
+  db: DatabaseType = getDb(),
+): number | undefined {
+  const row = prevCloseStmt(db).get(symbol, beforeDate) as { close: number } | undefined;
+  return row?.close;
+}
+
+const HAS_CORPORATE_ACTION_IN_RANGE_SQL = `
+  SELECT 1 AS x FROM corporate_actions
+  WHERE symbol = ? AND ex_date > ? AND ex_date <= ?
+  LIMIT 1
+`;
+
+const corporateActionInRangeStmtByDb = new WeakMap<DatabaseType, Statement>();
+
+function corporateActionInRangeStmt(db: DatabaseType): Statement {
+  let stmt = corporateActionInRangeStmtByDb.get(db);
+  if (!stmt) {
+    stmt = db.prepare(HAS_CORPORATE_ACTION_IN_RANGE_SQL);
+    corporateActionInRangeStmtByDb.set(db, stmt);
+  }
+  return stmt;
+}
+
+export function hasCorporateActionInRange(
+  symbol: string,
+  afterExclusive: string,
+  beforeInclusive: string,
+  db: DatabaseType = getDb(),
+): boolean {
+  const row = corporateActionInRangeStmt(db).get(symbol, afterExclusive, beforeInclusive) as
+    | { x: number }
+    | undefined;
+  return row != null;
 }
 
 // ---------------------------------------------------------------------------

@@ -39,6 +39,16 @@ export function lastOpenOnOrBefore(isoDate: string): string | null {
   return null;
 }
 
+/** First open session on or after `isoDate` (same day if already open). */
+export function nextOpenOnOrAfter(isoDate: string): string | null {
+  let cur = isoDate;
+  for (let i = 0; i < 10; i++) {
+    if (!getMarketClosure(cur)) return cur;
+    cur = addCalendarDaysIst(cur, 1);
+  }
+  return null;
+}
+
 /**
  * Open trading days ending at `endDate` inclusive (snapped to last open on/before endDate),
  * going backward `count` sessions (newest first).
