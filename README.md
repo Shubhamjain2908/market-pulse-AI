@@ -222,6 +222,7 @@ pnpm cli scan              # one-shot intraday LTP refresh + live alerts
 pnpm cli schedule          # start built-in croner schedule (Asia/Kolkata):
                            # weekdays 08:45 + 16:30, Saturday 08:00,
                            # Sunday 06:00 (Yahoo momentum earnings calendar),
+                           # Sunday 07:30 (weekly DB cleanup: briefings 90d, signals 730d),
                            # Sunday 07:45 (COMEX gold COT via pnpm cot:gold),
                            # Sunday 08:00 (momentum rank + rebalance + skip-AI briefing w/ rebalance summary + deliver)
 pnpm cli schedule --run-now
@@ -455,6 +456,9 @@ A **meta-layer** on top of the existing pipeline: each open session gets a singl
 - **FII/DII flow attribution** (rule-based, no LLM): [`getFlowAttribution`](src/db/queries.ts) sums the last up to **five cash-segment trading sessions** on or before the briefing date; [`classifyFlowAttribution`](src/briefing/composer.ts) maps rolling FII/DII nets (₹ crore) to **INSTITUTIONAL_ROTATION**, **BROAD_EXIT**, or **FII_ACCUMULATION** (thresholds in composer). **BALANCED** and windows with **&lt; 3 sessions** are suppressed. The block sits in the regime card **between the score tiles and the regime narrative**, with table + inline styles for email (juice-inlined from [`renderBriefing`](src/briefing/template.ts)).
 - **ETF iNAV pricing** (rule-based, fail-open): [`fetchInavSnapshots`](src/ingestors/inav-fetcher.ts) runs after Yahoo snapshot ingest (before regime classify), reads NSE [`/api/etf`](https://www.nseindia.com/api/etf) for symbols in [`config/etf-exclusions.json`](config/etf-exclusions.json), persists [`inav_snapshots`](src/db/migrations/0018_inav_snapshots.sql). Briefing **ETF Pricing** section ([`etf-pricing-card.ts`](src/briefing/etf-pricing-card.ts)) shows **WARN** when held ETF premium **&gt; 0.5%**, **NOTE** when discount **&gt; 0.25%**; mid-band and missing NSE data produce no section.
 - **COMEX gold COT** (weekly, fail-open): [`pnpm cot:gold`](scripts/cot-gold-fetch.ts) pulls CFTC disaggregated [`f_disagg.txt`](https://www.cftc.gov/dea/newcot/f_disagg.txt) (COMEX / `CMX` gold; managed-money as non-commercial proxy; columns resolved by CFTC header names). Stores [`cot_gold`](src/db/migrations/0019_cot_gold.sql). Regime card shows one line when **CROWDED_LONG** (managed-money net/OI **&gt; 35%**) or **CROWDED_SHORT** (managed-money **net short**, `mm_net &lt; 0`); **NEUTRAL** suppressed. Scheduled **Sunday 07:45 IST** before momentum rebalance (briefing-only; momentum rebalance does not read `cot_gold`).
+- **Weekly DB cleanup** (Sunday **07:30 IST**): [`runWeeklyCleanup`](src/agents/weekly-cleanup.ts) deletes `briefings` older than **90 days** and `signals` older than **730 days** (2 years). Fail-open — errors are logged but do not block the 08:00 rebalance.
+- **Regime quorum** (safety): [`prepareRegimeDaily`](src/analysers/regime-classifier.ts) refuses to persist `regime_daily` when any of five required inputs (Nifty vs SMA200, SMA200 slope, VIX, FII 20d, % above SMA200) is missing — the `regime` pipeline stage fails instead of silently scoring with nulls as zero.
+- **Paper-trade cross-strategy dedup**: [`hasOpenPaperTradeForSymbol`](src/db/queries.ts) blocks new entries in [`paper-trade-writer.ts`](src/briefing/paper-trade-writer.ts) and [`momentum-rebalance.ts`](src/strategies/momentum-rebalance.ts) when **any** OPEN row exists for that symbol (any `signal_type`). CLOSED rows do not block. Briefing shows a warning when collisions occur.
 
 **Orchestration**
 
@@ -475,7 +479,7 @@ A **regime-gated** momentum sleeve that ranks a configurable universe, writes **
 
 - **Signal enrich** — `pnpm cli enrich` → [`TechnicalEnricher`](src/enrichers/index.ts) plus [`enrichMomentumSignals`](src/enrichers/momentum-signals.ts) for the momentum universe: **`mom_12_1_return`**, `mom_relative_strength_ba`, `mom_volume_breakout_flag`, `mom_earnings_blackout`. Requires sufficient quote history in SQLite for 12–1 style momentum math.
 - **Ranker** — `pnpm cli momentum-rank` → [`src/rankers/momentum-ranker.ts`](src/rankers/momentum-ranker.ts) reads those factor rows for `asOf` and writes **`mom_rank`**, `mom_composite_score`, **`mom_false_flag`**, `mom_rank_excluded`.
-- **Rebalance** — `pnpm cli momentum-rebalance` → [`src/strategies/momentum-rebalance.ts`](src/strategies/momentum-rebalance.ts): optional embedded ranker pass, liquidations when regime ∉ gate, rank-decay exits, new entries with sector cap + blackout checks + **`mom_false_flag` hard-block** (`falseFlagBlocked` counter); optional LLM entry thesis (false-flag thesis confidence is clamped in-strategy when thesis runs).
+- **Rebalance** — `pnpm cli momentum-rebalance` → [`src/strategies/momentum-rebalance.ts`](src/strategies/momentum-rebalance.ts): optional embedded ranker pass, liquidations when regime ∉ gate, rank-decay exits, new entries with sector cap + blackout checks + **`mom_false_flag` hard-block** (`falseFlagBlocked` counter) + **`atr_14` required** (`atrMissingSkipped` when missing/≤0; no 2% proxy) + **cross-strategy dedup** (`crossStrategyBlocked` when another OPEN `paper_trades` row exists); optional LLM entry thesis (false-flag thesis confidence is clamped in-strategy when thesis runs).
 
 Shortcuts: `pnpm momentum:rank` / `pnpm momentum:rebalance` (wrappers around the same CLI commands).
 
@@ -603,11 +607,13 @@ A **regime-gated**, event-driven sleeve that enters **before** earnings (inverse
 
 **Thesis** ([`src/agents/thesis-generator.ts`](src/agents/thesis-generator.ts))
 
+- **Parallelism:** `THESIS_CONCURRENCY` (default **3**, range 1–5) controls concurrent LLM calls per screen pass via `p-limit`.
 - When a same-day `catalyst_entry` screen exists, appends **=== CATALYST EVENT CONTEXT ===** (earnings date, days away, SMA50 distance, recent news tone) plus up to **two headlines** from `news` (7-day window).
 - System addendum asks for a **two-sentence** consensus vs contrarian read; post-LLM **`confidenceScore = min(LLM, 6)`** (code-enforced, not prompt-only).
 
 **Paper trades** ([`src/briefing/paper-trade-writer.ts`](src/briefing/paper-trade-writer.ts))
 
+- **Cross-strategy dedup:** before inserting `AI_PICK`, `catalyst_entry`, or `PORTFOLIO_ADD`, skip when **any** OPEN `paper_trades` row exists for that symbol (any `signal_type`); CLOSED rows do not block.
 - Same-day `catalyst_entry` screen hit → `signal_type='catalyst_entry'`, **`stop_type='fixed'`**, stop **entry × 0.96**, target **entry × 1.08**, `time_horizon='short'`, **`max_hold_days = days_to_earnings + 2`**, `trailing_multiplier=0`, `atr14_at_entry` from screen criteria.
 - **v1 caveat:** `max_hold_days` uses **calendar** days; long weekends/holidays right after earnings may time-exit before the post-event move (v2: trading-session count from `quotes` — see [`strategy-backlog.md`](strategy-backlog.md)).
 

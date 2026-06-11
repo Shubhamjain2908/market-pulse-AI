@@ -16,6 +16,7 @@ import {
   closePaperTrade,
   getNseCloseOnOrBefore,
   getOpenPaperTradesForSignal,
+  hasOpenPaperTradeForSymbol,
   insertPaperTradeIfAbsent,
   type PaperTradeRow,
   type UpsertThesisRow,
@@ -179,6 +180,8 @@ export interface MomentumRebalanceResult {
   sectorCapBlocked: number;
   blackoutBlocked: number;
   falseFlagBlocked: number;
+  atrMissingSkipped: number;
+  crossStrategyBlocked: number;
   unchangedHeld: number;
   thesisFailed: number;
   /** Omitted when regime is allowed and rebalance proceeded normally. */
@@ -200,6 +203,7 @@ export function toMomentumRebalanceBriefingSummary(
     sectorCapBlocked: r.sectorCapBlocked,
     blackoutBlocked: r.blackoutBlocked,
     falseFlagBlocked: r.falseFlagBlocked,
+    crossStrategyBlocked: r.crossStrategyBlocked,
     skippedReason: r.skippedReason,
     thesisFailed: r.thesisFailed,
     rankerSnapshot: r.rankerSnapshot,
@@ -375,6 +379,8 @@ export async function runMomentumRebalance(
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
       falseFlagBlocked: 0,
+      atrMissingSkipped: 0,
+      crossStrategyBlocked: 0,
       unchangedHeld: getOpenPaperTradesForSignal('momentum_mf', db).length,
       thesisFailed: 0,
       skippedReason: 'missing_regime',
@@ -398,6 +404,8 @@ export async function runMomentumRebalance(
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
       falseFlagBlocked: 0,
+      atrMissingSkipped: 0,
+      crossStrategyBlocked: 0,
       unchangedHeld: getOpenPaperTradesForSignal('momentum_mf', db).length,
       thesisFailed: 0,
       skippedReason: 'regime_gate',
@@ -442,6 +450,8 @@ export async function runMomentumRebalance(
   let sectorCapBlocked = 0;
   let blackoutBlocked = 0;
   let falseFlagBlocked = 0;
+  let atrMissingSkipped = 0;
+  let crossStrategyBlocked = 0;
 
   let needed = slotsTarget - openTrades.length;
   if (needed <= 0) {
@@ -467,6 +477,8 @@ export async function runMomentumRebalance(
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
       falseFlagBlocked: 0,
+      atrMissingSkipped: 0,
+      crossStrategyBlocked: 0,
       unchangedHeld: heldBeforeEntries.size,
       thesisFailed: 0,
     });
@@ -478,6 +490,15 @@ export async function runMomentumRebalance(
   for (const sym of rankedOrder) {
     if (needed <= 0) break;
     if (held.has(sym)) continue;
+
+    if (hasOpenPaperTradeForSymbol(sym, db)) {
+      log.info(
+        { symbol: sym, signalType: 'momentum_mf', blockReason: 'open_in_other_strategy' },
+        'paper trade dedup — symbol already open under different signal',
+      );
+      crossStrategyBlocked++;
+      continue;
+    }
 
     const rkNew = rankBySymbol.get(sym);
     if (rkNew == null || !Number.isFinite(rkNew) || rkNew > exitThreshold) {
@@ -551,14 +572,23 @@ export async function runMomentumRebalance(
     }
 
     const atr14 = getAtr14(sym, sessionDate, db);
-    const atrUsed = atr14 ?? entry * 0.02;
-    const atrFallbackUsed = atr14 == null;
-    if (atrFallbackUsed) {
-      log.info({ symbol: sym, sessionDate }, 'ATR14 missing, using 2% proxy for stop sizing');
+    if (atr14 == null || atr14 <= 0) {
+      log.warn(
+        {
+          symbol: sym,
+          source_date: sessionDate,
+          reason: 'atr14_missing',
+        },
+        '[SKIPPED] momentum_mf entry rejected — ATR14 ' +
+          'unavailable, cannot size stop. Re-run after enricher ' +
+          'populates signal.',
+      );
+      atrMissingSkipped++;
+      continue;
     }
 
     const hardFloorStop = entry * hardMult;
-    const atrStop = entry - cfg.position_sizing.atr_multiplier * atrUsed;
+    const atrStop = entry - cfg.position_sizing.atr_multiplier * atr14;
     const thesisStopSafe = thesisStop != null && thesisStop < entry ? thesisStop : null;
     const stopLoss = Math.max(hardFloorStop, atrStop, thesisStopSafe ?? Number.NEGATIVE_INFINITY);
     const target =
@@ -583,8 +613,7 @@ export async function runMomentumRebalance(
       suggested_position_size_pct: suggestedSizePct,
       false_flag: entryCtx.falseFlag,
       earnings_blackout_checked: true,
-      atr14_used: atrUsed,
-      atr14_fallback_2pct: atrFallbackUsed,
+      atr14: atr14,
       thesis_model: thesisModel,
     });
 
@@ -629,6 +658,8 @@ export async function runMomentumRebalance(
       sectorCapBlocked,
       blackoutBlocked,
       falseFlagBlocked,
+      atrMissingSkipped,
+      crossStrategyBlocked,
       heldCount: finalOpen.length,
       thesisFailed,
       rankerSnapshot,
@@ -648,6 +679,8 @@ export async function runMomentumRebalance(
     sectorCapBlocked,
     blackoutBlocked,
     falseFlagBlocked,
+    atrMissingSkipped,
+    crossStrategyBlocked,
     unchangedHeld,
     thesisFailed,
   });

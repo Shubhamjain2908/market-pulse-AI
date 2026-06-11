@@ -1,7 +1,23 @@
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mockWarn = vi.hoisted(() => vi.fn());
+const mockInfo = vi.hoisted(() => vi.fn());
+const noop = vi.hoisted(() => vi.fn());
+
+vi.mock('../../src/logger.js', () => {
+  const stub = () => ({
+    warn: mockWarn,
+    error: noop,
+    info: mockInfo,
+    debug: noop,
+    child: stub,
+  });
+  return { child: stub, logger: stub() };
+});
+
 import { loadStrategyGates } from '../../src/config/loaders.js';
 import { closeDb, getDb, migrate } from '../../src/db/index.js';
 import { getOpenPaperTradesForSignal } from '../../src/db/queries.js';
@@ -50,12 +66,20 @@ function sigRank(db: ReturnType<typeof getDb>, sym: string, date: string, rank: 
   ).run(sym, date, rank);
 }
 
+function sigAtr14(db: ReturnType<typeof getDb>, sym: string, date: string, value: number): void {
+  db.prepare(
+    `INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, 'atr_14', ?, 'test')`,
+  ).run(sym, date, value);
+}
+
 describe('strategies/momentum-rebalance', () => {
   let dbPath: string;
 
   beforeEach(() => {
     dbPath = join(tmpdir(), `mp-mom-rebal-${Date.now()}-${Math.random()}.db`);
     process.env.DATABASE_PATH = dbPath;
+    mockWarn.mockClear();
+    mockInfo.mockClear();
   });
 
   function openMomentumTestDb(): ReturnType<typeof getDb> {
@@ -159,10 +183,12 @@ describe('strategies/momentum-rebalance', () => {
     insertRegimeBull(db, session);
     for (const s of ['AA', 'BB', 'CC', 'DD', 'EE']) {
       quote(db, s, session, 100);
+      sigAtr14(db, s, session, 2);
       db.prepare('INSERT INTO symbols (symbol, sector) VALUES (?, ?)').run(s, 'Banking');
     }
     db.prepare(`INSERT INTO symbols (symbol, sector) VALUES ('FF', 'IT Services')`).run();
     quote(db, 'FF', session, 100);
+    sigAtr14(db, 'FF', session, 2);
 
     sigRank(db, 'AA', session, 1);
     sigRank(db, 'BB', session, 2);
@@ -195,6 +221,8 @@ describe('strategies/momentum-rebalance', () => {
     insertRegimeBull(db, session);
     quote(db, 'P', session, 50);
     quote(db, 'Q', session, 50);
+    sigAtr14(db, 'P', session, 2);
+    sigAtr14(db, 'Q', session, 2);
     sigRank(db, 'P', session, 1);
     sigRank(db, 'Q', session, 2);
     db.prepare(
@@ -272,8 +300,7 @@ describe('strategies/momentum-rebalance', () => {
     const trade = open[0];
     expect(trade?.stopLoss).toBe(92); // max(hard floor 92, atr stop 90, thesis stop 88)
     expect(trade?.target).toBe(130);
-    expect(trade?.notes).toContain('"atr14_used":5');
-    expect(trade?.notes).toContain('"atr14_fallback_2pct":false');
+    expect(trade?.notes).toContain('"atr14":5');
     db.close();
   });
 
@@ -283,6 +310,7 @@ describe('strategies/momentum-rebalance', () => {
     insertRegimeBull(db, session);
     quote(db, 'FFX', session, 100);
     quote(db, 'GOOD', session, 100);
+    sigAtr14(db, 'GOOD', session, 2);
     sigRank(db, 'FFX', session, 1);
     sigRank(db, 'GOOD', session, 2);
     db.prepare(
@@ -306,7 +334,7 @@ describe('strategies/momentum-rebalance', () => {
     db.close();
   });
 
-  it('uses 2% ATR proxy when atr_14 signal is missing', async () => {
+  it('rejects entry when atr_14 signal is missing', async () => {
     const db = openMomentumTestDb();
     const session = '2026-05-08';
     insertRegimeBull(db, session);
@@ -319,43 +347,75 @@ describe('strategies/momentum-rebalance', () => {
       `INSERT INTO signals (symbol, date, name, value, source) VALUES ('ATR', ?, 'mom_false_flag', 0, 'test')`,
     ).run(session);
 
-    const llm: LlmProvider = {
-      name: 'mock',
-      model: 'mock-1',
-      async generateText() {
-        return { text: 'ok', usage: { durationMs: 1 }, model: 'mock-1' };
-      },
-      async generateJson<T>() {
-        return {
-          data: {
-            symbol: 'ATR',
-            thesis: 'Ok.',
-            bullCase: [''],
-            bearCase: [''],
-            entryZone: '₹99-₹101',
-            stopLoss: '₹85',
-            target: '₹130',
-            timeHorizon: 'medium',
-            confidenceScore: 6,
-            triggerScreen: 'momentum',
-          } as T,
-          raw: '{}',
-          usage: { durationMs: 1 },
-          model: 'mock-1',
-        };
-      },
-    };
+    const r = await runMomentumRebalance({
+      calendarDate: session,
+      db,
+      skipRanker: true,
+      skipThesis: true,
+    });
+    expect(r.entriesInserted).toBe(0);
+    expect(r.atrMissingSkipped).toBe(1);
+    expect(getOpenPaperTradesForSignal('momentum_mf', db)).toHaveLength(0);
+    expect(mockWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'ATR', source_date: session, reason: 'atr14_missing' }),
+      expect.stringContaining('ATR14'),
+    );
+    db.close();
+  });
+
+  it('rejects entry when atr_14 is zero', async () => {
+    const db = openMomentumTestDb();
+    const session = '2026-05-08';
+    insertRegimeBull(db, session);
+    quote(db, 'ZATR', session, 100);
+    sigRank(db, 'ZATR', session, 1);
+    sigAtr14(db, 'ZATR', session, 0);
 
     const r = await runMomentumRebalance({
       calendarDate: session,
       db,
       skipRanker: true,
-      llm,
+      skipThesis: true,
     });
-    expect(r.entriesInserted).toBe(1);
-    const trade = getOpenPaperTradesForSignal('momentum_mf', db)[0];
-    expect(trade?.notes).toContain('"atr14_used":2');
-    expect(trade?.notes).toContain('"atr14_fallback_2pct":true');
+    expect(r.entriesInserted).toBe(0);
+    expect(r.atrMissingSkipped).toBe(1);
+    expect(getOpenPaperTradesForSignal('momentum_mf', db)).toHaveLength(0);
+    db.close();
+  });
+
+  it('blocks momentum_mf entry when OPEN AI_PICK exists for the symbol', async () => {
+    const db = openMomentumTestDb();
+    const session = '2026-05-08';
+    insertRegimeBull(db, session);
+    quote(db, 'INFY', session, 100);
+    sigRank(db, 'INFY', session, 1);
+    sigAtr14(db, 'INFY', session, 2);
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status
+      ) VALUES ('INFY', 'AI_PICK', '2026-05-01', 100, 95, 120, 'medium', 90, 'OPEN')
+    `,
+    ).run();
+
+    const r = await runMomentumRebalance({
+      calendarDate: session,
+      db,
+      skipRanker: true,
+      skipThesis: true,
+    });
+    expect(r.entriesInserted).toBe(0);
+    expect(r.crossStrategyBlocked).toBe(1);
+    expect(getOpenPaperTradesForSignal('momentum_mf', db)).toHaveLength(0);
+    expect(mockInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        symbol: 'INFY',
+        signalType: 'momentum_mf',
+        blockReason: 'open_in_other_strategy',
+      }),
+      'paper trade dedup — symbol already open under different signal',
+    );
     db.close();
   });
 
@@ -365,6 +425,7 @@ describe('strategies/momentum-rebalance', () => {
     insertRegimeBull(db, session);
     quote(db, 'ONLY', session, 75);
     sigRank(db, 'ONLY', session, 1);
+    sigAtr14(db, 'ONLY', session, 2);
 
     const a = await runMomentumRebalance({
       calendarDate: session,
@@ -399,6 +460,8 @@ describe('toMomentumRebalanceBriefingSummary', () => {
         sectorCapBlocked: 0,
         blackoutBlocked: 0,
         falseFlagBlocked: 0,
+        atrMissingSkipped: 0,
+        crossStrategyBlocked: 0,
         unchangedHeld: 1,
         thesisFailed: 0,
         skippedReason: 'regime_gate',
@@ -414,6 +477,7 @@ describe('toMomentumRebalanceBriefingSummary', () => {
       sectorCapBlocked: 0,
       blackoutBlocked: 0,
       falseFlagBlocked: 0,
+      crossStrategyBlocked: 0,
       skippedReason: 'regime_gate',
       thesisFailed: 0,
     });
@@ -432,6 +496,8 @@ describe('toMomentumRebalanceBriefingSummary', () => {
         sectorCapBlocked: 0,
         blackoutBlocked: 1,
         falseFlagBlocked: 0,
+        atrMissingSkipped: 0,
+        crossStrategyBlocked: 0,
         unchangedHeld: 3,
         thesisFailed: 0,
       }),
@@ -446,6 +512,7 @@ describe('toMomentumRebalanceBriefingSummary', () => {
       sectorCapBlocked: 0,
       blackoutBlocked: 1,
       falseFlagBlocked: 0,
+      crossStrategyBlocked: 0,
       thesisFailed: 0,
     });
   });

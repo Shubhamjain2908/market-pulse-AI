@@ -12,8 +12,20 @@ import {
 } from '../db/regime-queries.js';
 import { computeRegimeSignals } from '../enrichers/regime-signals.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
+import { child } from '../logger.js';
 import { lastOpenOnOrBefore, previousOpenTradingDay } from '../market/trading-days.js';
 import type { Regime, RegimeClassification, RegimeSignals } from '../types/regime.js';
+
+const log = child({ component: 'regime-classifier' });
+
+/** Required today-signals — missing any one halts regime persistence (quorum). */
+const REQUIRED_SIGNALS = [
+  'niftyVsSma200Pct',
+  'sma200Slope10dPct',
+  'vixCurrent',
+  'fii20dRollingCr',
+  'pctAboveSma200',
+] as const;
 
 /** `true` when CRISIS override applies (VIX spike or large gap down). Not triggered at VIX===28 or gap===-3 (strict `>` / `<`). */
 export function computeCrisisOverride(signals: RegimeSignals): boolean {
@@ -141,6 +153,25 @@ export function prepareRegimeDaily(
   const sessionDate = lastOpenOnOrBefore(requested) ?? requested;
 
   const signals = computeRegimeSignals(db, sessionDate);
+
+  const missing = REQUIRED_SIGNALS.filter((k) => signals[k] == null);
+  if (missing.length > 0) {
+    log.error(
+      {
+        missing,
+        sessionDate,
+        signals: Object.fromEntries(REQUIRED_SIGNALS.map((k) => [k, signals[k]])),
+      },
+      'regime quorum failure — pipeline will halt for today',
+    );
+    throw new Error(
+      `regime classifier quorum failure: ` +
+        `missing required signals [${missing.join(', ')}] ` +
+        `for ${sessionDate}. ` +
+        `Refusing to write regime_daily row.`,
+    );
+  }
+
   const crisisToday = computeCrisisOverride(signals);
   const rawScoreToday = mapScoreTotalToRegime(signals.scoreTotal);
 

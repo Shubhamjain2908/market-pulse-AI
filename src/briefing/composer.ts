@@ -240,7 +240,8 @@ export async function composeBriefing(
   if (
     paperLog.insertedAiPick > 0 ||
     paperLog.insertedPortfolioAdd > 0 ||
-    paperLog.insertedCatalystEntry > 0
+    paperLog.insertedCatalystEntry > 0 ||
+    paperLog.crossStrategyBlocked > 0
   ) {
     log.info(paperLog, 'paper trades recorded');
   }
@@ -326,6 +327,19 @@ export async function composeBriefing(
   }
 
   const warnings: WarningEntry[] = [...(opts.warnings ?? [])];
+
+  const crossStrategyFromPaper = paperLog.crossStrategyBlocked;
+  const crossStrategyFromMomentum = momentumSummary?.crossStrategyBlocked ?? 0;
+  const crossStrategyTotal = crossStrategyFromPaper + crossStrategyFromMomentum;
+  if (crossStrategyTotal > 0) {
+    warnings.push({
+      category: 'Paper trades',
+      message:
+        `${crossStrategyTotal} new entr${crossStrategyTotal === 1 ? 'y' : 'ies'} skipped — ` +
+        'symbol already has an OPEN paper trade from another signal ' +
+        '(momentum / AI pick / portfolio ADD / catalyst).',
+    });
+  }
 
   const qualityGarpMatches = screenMatches.find((m) => m.screenName === QUALITY_GARP_SCREEN);
   if (!qualityGarpMatches || qualityGarpMatches.symbols.length === 0) {

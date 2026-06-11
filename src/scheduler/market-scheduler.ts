@@ -6,6 +6,7 @@
  *  - Weekdays 16:30
  *  - Saturday 08:00
  *  - Sunday 06:00 — Yahoo momentum earnings calendar refresh (weekly)
+ *  - Sunday 07:30 — weekly cleanup (briefings 90d, signals 730d)
  *  - Sunday 07:45 — COMEX gold COT ingest (CFTC disaggregated file)
  *  - Sunday 08:00 — momentum rank + rebalance (paper_trades), then skip-AI briefing with rebalance summary (delivered per BRIEFING_DELIVERY)
  */
@@ -13,6 +14,7 @@
 import { Cron } from 'croner';
 import { runBriefingComposer } from '../agents/briefing-composer.js';
 import { runDailyWorkflow } from '../agents/daily-workflow.js';
+import { runWeeklyCleanup } from '../agents/weekly-cleanup.js';
 import { deliverBriefing } from '../briefing/dispatch.js';
 import { config } from '../config/env.js';
 import { getMomentumUniverseSymbols } from '../config/loaders.js';
@@ -51,6 +53,11 @@ export function startScheduler(): SchedulerHandle {
     { timezone: MARKET_TIMEZONE, protect: true },
     () => void runSundayEarningsRefresh(),
   );
+  const sundayWeeklyCleanup = new Cron(
+    '30 7 * * 0',
+    { timezone: MARKET_TIMEZONE, protect: true },
+    () => void runSundayWeeklyCleanup(),
+  );
   const sundayCotGold = new Cron(
     '45 7 * * 0',
     { timezone: MARKET_TIMEZONE, protect: true },
@@ -70,6 +77,7 @@ export function startScheduler(): SchedulerHandle {
         '30 16 * * 1-5',
         '0 8 * * 6',
         '0 6 * * 0',
+        '30 7 * * 0',
         '45 7 * * 0',
         '0 8 * * 0',
       ],
@@ -84,11 +92,32 @@ export function startScheduler(): SchedulerHandle {
       weekdayClose.stop();
       saturdayMorning.stop();
       sundayEarnings.stop();
+      sundayWeeklyCleanup.stop();
       sundayCotGold.stop();
       sundayMomentumRebalance.stop();
       log.info('scheduler stopped');
     },
   };
+}
+
+async function runSundayWeeklyCleanup(): Promise<void> {
+  const t0 = Date.now();
+  log.info({ tag: 'sun-0730', health: 'started' }, 'Sunday weekly cleanup started');
+  try {
+    migrate();
+    await runWeeklyCleanup(getDb());
+    log.info(
+      { tag: 'sun-0730', health: 'ok', durationMs: Date.now() - t0 },
+      'Sunday weekly cleanup finished',
+    );
+  } catch (err) {
+    log.error(
+      { tag: 'sun-0730', health: 'error', durationMs: Date.now() - t0, err },
+      'Sunday weekly cleanup failed',
+    );
+  } finally {
+    closeDb();
+  }
 }
 
 async function runSundayMomentumRebalance(): Promise<void> {
