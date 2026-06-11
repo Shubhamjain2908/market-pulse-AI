@@ -35,6 +35,8 @@ Ingest → Corporate actions → Enrich → Yahoo snapshot → NSE ETF iNAV → 
 
 Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evaluation runs **before** the briefing composer so closed trades appear in the brief.
 
+**Pipeline audit (`pipeline_runs`, migration `0022`):** Each stage in `daily-workflow.ts` records `started` / `success` / `failed` / `skipped` via `recordPipelineStage` in `src/db/pipeline-queries.ts`. Fail-open stages (portfolio sync, corporate actions, Yahoo snapshot, ext-signal, iNAV, Sunday earnings) log `failed` but do not abort; fatal stages rethrow. Stage names match the table (`ingest`, `enrich`, `regime`, `screen`, `evaluate`, `briefing`, etc.). `hasFailedRequiredStage(run_date)` is true when **`enrich`**, **`regime`**, or **`screen`** failed — the briefing composer then renders a **degraded** brief (banner + mood/regime if regime succeeded; omits screens, thesis, portfolio, momentum).
+
 | Stage | File | What it does |
 |---|---|---|
 | **Ingest** | `src/agents/daily-ingestor.ts` | Quote batch (often Yahoo), NSE FII/DII, RSS news, optional Yahoo sector metadata on symbols; failures per capability are logged and do not abort the run. |
@@ -49,7 +51,7 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 | **AI Thesis** | `src/agents/thesis-generator.ts` | Per screen pass: sends technicals + fundamentals + news + regime context to LLM. Returns structured JSON. Skips symbols in live portfolio (`alreadyOwned`) and any symbol with an OPEN `paper_trades` row (any `signal_type`). |
 | **Portfolio review** | `src/agents/portfolio-sync.ts` + `portfolio-analyser.ts` | When AI is enabled and portfolio is not skipped: after thesis, optional Kite sync (earlier in the same run) feeds `portfolio_holdings`; analyser writes `portfolio_analysis` (full LLM, lite snapshot, or **stale-holdings placeholders** — see §4). |
 | **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). `stop_type='trailing'` follows adaptive ATR trailing; `stop_type='fixed'` bypasses trailing math/logs and evaluates stops/targets at static levels. New bars only after the latest non-`STOPPED_OUT` `trailing_stop_log` row (exclusive `source_date` bound via `getSymbolBars`), so a raised persisted stop is not replayed against already-evaluated history. **Circuit breaker:** if `bar.open < 0.7 ×` prior session’s NSE `close` (`date < bar.date`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag. |
-| **Briefing** | `src/briefing/composer.ts` | `renderBriefing()` → `juice()` for Gmail-safe inline CSS (600px table layout). Regime card + change banner; **FII/DII flow attribution**; **ETF iNAV pricing** block for held ETFs (`etf-pricing-card.ts`, WARN/NOTE thresholds). Delivered via Nodemailer → Gmail SMTP. |
+| **Briefing** | `src/briefing/composer.ts` | Records `briefing` / `started` first, then `hasFailedRequiredStage` gate. Normal path: `renderBriefing()` → `juice()` for Gmail-safe inline CSS (600px table layout). Regime card + change banner; **FII/DII flow attribution**; **ETF iNAV pricing** block for held ETFs (`etf-pricing-card.ts`, WARN/NOTE thresholds). **Degraded path:** partial-pipeline banner listing failed required stages; screens / AI picks / portfolio / momentum omitted. Delivered via Nodemailer → Gmail SMTP (`delivered_at` persisted only after ≥1 SMTP recipient accepted). |
 
 NOTE: Fundamentals refresh is operational via `pnpm fundamentals:refresh` (Python annual + screener + Yahoo snapshot; see §3.5).
 
@@ -276,9 +278,14 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 ### Infrastructure
 - **`briefings`** — `(id)` PK, index on `date`. Columns: `date, html_content, 
   delivery_method, delivered_at`. Delivery methods: `file | email | slack | telegram`.
+  Email: `delivered_at` is set only when SMTP accepts ≥1 recipient (`src/briefing/delivery/email.ts`).
+- **`pipeline_runs`** — append-only stage audit (migration `0022`). Columns: `run_date, stage, status, started_at, finished_at, error_msg, metadata` (JSON). Index `(run_date, stage)`. Written by `daily-workflow.ts` and `composeBriefing`.
+- **`portfolio_analysis_llm`** — view over `portfolio_analysis` excluding `model = 'none'` stale-holdings placeholders (migration `0022`).
 - **`config`** — `(key)` PK. Key-value store. Currently holds: `kite_access_token`.
 - **`kite_instruments`** — `(exchange, tradingsymbol)` PK. Kite instrument master.
-- **`backtest_runs`** + **`backtest_trades`** — Screen harness (`src/backtest/harness.ts`) persists screen-replay runs. **Option A** (`src/backtest/runner.ts`, `mp backtest-option-a`) adds walk-forward `momentum_mf` / `ai_pick` simulations using **quotes-only** on-the-fly signals; extended columns on `backtest_runs` (migration `0014_backtest_runs_option_a.sql`) store `strategy_id`, expectancy, profit factor, etc. Option A rows on **`backtest_trades`** set **`exit_reason`** (migration `0015_backtest_exit_reason.sql`) from the position sim and strategy-specific exits (`RANK_DECAY`, `REGIME_EXIT`, `WINDOW_END`, …). Default **regime `proxy`** (`src/backtest/regime-proxy.ts`) avoids `regime_daily` and uses a 3-signal NIFTY+breadth coarse label with a **≥252** prior-bar gate on `NIFTY_50`; **`--regime-source daily`** restores the ≥80% `regime_daily` coverage gate. For persisted vs score-only `regime_daily` labels use `scripts/audit-regime-history.mts`.
+- **`backtest_runs`** + **`backtest_trades`** — Screen harness (`src/backtest/harness.ts`) persists screen-replay runs. **Option A** (`src/backtest/runner.ts`, `mp backtest-option-a`) adds walk-forward `momentum_mf` / `ai_pick` simulations using **quotes-only** on-the-fly signals; extended columns on `backtest_runs` (migration `0014_backtest_runs_option_a.sql`) store `strategy_id`, expectancy, profit factor, etc.; **`equity_curve_max_dd_pct`** (migration `0022`) is portfolio-level equity-curve DD on the run row (distinct from per-trade `max_drawdown_pct` on both `backtest_runs` summary and `backtest_trades` legs — runner write pending). Option A rows on **`backtest_trades`** set **`exit_reason`** (migration `0015_backtest_exit_reason.sql`) from the position sim and strategy-specific exits (`RANK_DECAY`, `REGIME_EXIT`, `WINDOW_END`, …). Default **regime `proxy`** (`src/backtest/regime-proxy.ts`) avoids `regime_daily` and uses a 3-signal NIFTY+breadth coarse label with a **≥252** prior-bar gate on `NIFTY_50`; **`--regime-source daily`** restores the ≥80% `regime_daily` coverage gate. For persisted vs score-only `regime_daily` labels use `scripts/audit-regime-history.mts`.
+
+**Hot-path indexes (migration `0021`):** `idx_signals_symbol_name_date`, `idx_fundamentals_asof`, `idx_fundamentals_source_symbol_asof`, `idx_news_symbol_published`, partial `idx_pt_open` on OPEN `paper_trades` (replaces `idx_paper_trades_status`).
 
 ---
 
@@ -302,7 +309,7 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 
 **Deploy scripts:** `deploy/sync-env-to-vm.sh`, `deploy/sync-db-to-vm.sh` (rsync with WAL checkpoint), `deploy/setup.sh` (Node 22 + pnpm + PM2 bootstrap), `deploy/ecosystem.config.cjs`.
 
-**Healthcheck (`deploy/healthcheck.ts`):** Verifies `briefings` row delivered, `regime_daily` row present, no pino errors in PM2 logs, optional run-summary JSON thesis failure count. Also logs **GTT post-fix tranche** metrics (`paper_trades` closed since `2026-05-14`, grouped by `signal_type`) on every run — empty tranche is logged, not a failure. Appends TSV to `deploy/logs/health.log`. Sends alert email on failure (includes tranche block).
+**Healthcheck (`deploy/healthcheck.ts`):** When `BRIEFING_DELIVERY=email`, verifies today's `briefings` row with `delivery_method=email` and non-null `delivered_at` (row absent if SMTP accepted zero recipients). Also checks `regime_daily` row present, no pino errors in PM2 logs, optional run-summary JSON thesis failure count. Logs **GTT post-fix tranche** metrics (`paper_trades` closed since `2026-05-14`, grouped by `signal_type`) on every run — empty tranche is logged, not a failure. Appends TSV to `deploy/logs/health.log`. Sends alert email on failure (includes tranche block).
 
 **config table** note — Kite token stored here
 

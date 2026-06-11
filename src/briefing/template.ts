@@ -199,6 +199,10 @@ export interface BriefingData {
   warnings?: WarningEntry[];
   /** When true, show a dedicated banner that the per-run LLM budget was exceeded. */
   budgetExceeded?: boolean;
+  /** Required pipeline stages failed — screens, thesis, and portfolio sections omitted. */
+  partialPipeline?: boolean;
+  /** Failed required stage names when `partialPipeline` is true. */
+  failedStages?: string[];
 }
 
 export function renderBriefing(data: BriefingData): string {
@@ -210,15 +214,16 @@ export function renderBriefing(data: BriefingData): string {
     ${renderMood(data.date, data.mood, data.moodNarrative, data.marketClosure)}
     ${renderSignalPerformance(data.signalPerformance)}
     ${data.trailingStopBlock ?? ''}
+    ${renderPartialPipelineBanner(data.partialPipeline, data.failedStages)}
     ${data.regimeBlock ?? ''}
     ${renderGlobalCues(data.globalCues)}
-    ${renderPortfolio(data.portfolio)}
+    ${data.partialPipeline ? '' : renderPortfolio(data.portfolio)}
     ${data.etfPricingBlock ?? ''}
-    ${renderScreenMatches(data.screenMatches)}
+    ${data.partialPipeline ? '' : renderScreenMatches(data.screenMatches)}
     ${data.momentumBlock ?? ''}
     ${renderWatchlistAlerts(data.watchlistAlerts)}
     ${renderMovers(data.topGainers, data.topLosers)}
-    ${renderAiPicks(data.theses, data.aiPicksStatus)}
+    ${data.partialPipeline ? '' : renderAiPicks(data.theses, data.aiPicksStatus)}
     ${renderNews(data.news)}
     ${renderFooter()}`;
   return `<!doctype html>
@@ -823,6 +828,15 @@ function renderNews(news: NewsRow[]): string {
       <h2>News &middot; Last 48h</h2>
       <p class="section-lede muted">Watchlist-tagged headlines are prioritised when present.</p>
       <ul class="news">${items}</ul>
+    </section>`;
+}
+
+function renderPartialPipelineBanner(partialPipeline?: boolean, failedStages?: string[]): string {
+  if (!partialPipeline || !failedStages || failedStages.length === 0) return '';
+  const stageList = failedStages.map((s) => esc(s)).join(', ');
+  return `
+    <section class="card warnings-card">
+      <div class="warnings-header">⚠ Pipeline incomplete — the following required stages failed: ${stageList}. Screens and thesis sections are omitted.</div>
     </section>`;
 }
 

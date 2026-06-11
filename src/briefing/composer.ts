@@ -28,6 +28,7 @@ import {
   listAllowedGatesForRegime,
   type PortfolioHoldingRow,
 } from '../db/index.js';
+import { hasFailedRequiredStage, recordPipelineStage } from '../db/pipeline-queries.js';
 import {
   type FlowAttributionSnapshot,
   getFlowAttribution,
@@ -176,12 +177,41 @@ export interface ComposedBriefing {
   data: BriefingData;
 }
 
+function pipelineStageSucceeded(runDate: string, stage: string, db: DatabaseType): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 AS ok FROM pipeline_runs
+       WHERE run_date = ? AND stage = ? AND status = 'success'
+       LIMIT 1`,
+    )
+    .get(runDate, stage) as { ok: number } | undefined;
+  return row !== undefined;
+}
+
+function listFailedRequiredStages(runDate: string, db: DatabaseType): string[] {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT stage FROM pipeline_runs
+       WHERE run_date = ? AND status = 'failed'
+         AND stage IN ('enrich', 'regime', 'screen')
+       ORDER BY stage`,
+    )
+    .all(runDate) as { stage: string }[];
+  return rows.map((r) => r.stage);
+}
+
 export async function composeBriefing(
   opts: ComposeBriefingOptions = {},
   db: DatabaseType = getDb(),
   llm?: LlmProvider,
 ): Promise<ComposedBriefing> {
   const date = opts.date ?? isoDateIst();
+
+  recordPipelineStage({ runDate: date, stage: 'briefing', status: 'started' }, db);
+
+  const partialPipeline = hasFailedRequiredStage(date, db);
+  const failedStages = partialPipeline ? listFailedRequiredStages(date, db) : [];
+
   const watchlist = (opts.watchlist ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
   const allowMoodLlm = !opts.skipAi && !opts.marketClosure;
   const moodNarrativeEnabled =
@@ -199,10 +229,12 @@ export async function composeBriefing(
   const thesisUniverse = watchlist.filter((s) => !holdingsSet.has(s.toUpperCase()));
   const thesisEligibleSet = new Set(thesisUniverse.map((s) => s.toUpperCase()));
   const rankMeta =
-    !opts.skipAi && !opts.marketClosure ? getThesisRankMeta(date, thesisUniverse, db) : undefined;
-  const theses = gatherTheses(date, db, rankMeta, thesisEligibleSet);
-  const screenMatches = gatherScreenMatches(date, db);
-  const portfolio = gatherPortfolio(date, db);
+    !partialPipeline && !opts.skipAi && !opts.marketClosure
+      ? getThesisRankMeta(date, thesisUniverse, db)
+      : undefined;
+  const theses = partialPipeline ? [] : gatherTheses(date, db, rankMeta, thesisEligibleSet);
+  const screenMatches = partialPipeline ? [] : gatherScreenMatches(date, db);
+  const portfolio = partialPipeline ? undefined : gatherPortfolio(date, db);
 
   const paperLog = recordPaperTrades(date, theses, portfolio, db);
   if (
@@ -257,16 +289,20 @@ export async function composeBriefing(
 
   const trailingStopBlock = renderTrailingStopBriefingBlock(date, db) || undefined;
 
-  const momentumSummary: MomentumRebalanceSummary | undefined =
-    opts.momentumRebalanceSummary ??
-    getMomentumRebalanceBriefingForCalendarDate(date, db) ??
-    undefined;
-  const momentumBlock = renderMomentumBriefingBlock(date, db, momentumSummary) || undefined;
+  const momentumSummary: MomentumRebalanceSummary | undefined = partialPipeline
+    ? undefined
+    : (opts.momentumRebalanceSummary ??
+      getMomentumRebalanceBriefingForCalendarDate(date, db) ??
+      undefined);
+  const momentumBlock = partialPipeline
+    ? undefined
+    : renderMomentumBriefingBlock(date, db, momentumSummary) || undefined;
   const etfPricingBlock =
     renderEtfPricingBlock(date, db, portfolio?.staleHoldings ?? false) || undefined;
 
   let regimeBlock: string | undefined;
-  const regimeRow = getRegimeForCalendarDate(date, db);
+  const showRegimeCard = !partialPipeline || pipelineStageSucceeded(date, 'regime', db);
+  const regimeRow = showRegimeCard ? getRegimeForCalendarDate(date, db) : null;
   if (regimeRow) {
     const gateSummary = {
       active: listAllowedGatesForRegime(regimeRow.regime, db),
@@ -329,12 +365,12 @@ export async function composeBriefing(
     marketClosure: opts.marketClosure,
     watchlistAlerts,
     signalPerformance,
-    screenMatches: screenMatches.length > 0 ? screenMatches : undefined,
+    screenMatches: !partialPipeline && screenMatches.length > 0 ? screenMatches : undefined,
     portfolio,
     topGainers,
     topLosers,
     news,
-    theses: theses.length > 0 ? theses : undefined,
+    theses: !partialPipeline && theses.length > 0 ? theses : undefined,
     aiPicksStatus,
     trailingStopBlock,
     regimeBlock,
@@ -342,6 +378,8 @@ export async function composeBriefing(
     etfPricingBlock,
     warnings: warnings.length > 0 ? warnings : undefined,
     budgetExceeded: opts.budgetExceeded,
+    partialPipeline: partialPipeline || undefined,
+    failedStages: partialPipeline ? failedStages : undefined,
   };
 
   log.info(
@@ -364,6 +402,8 @@ export async function composeBriefing(
     preserveMediaQueries: true,
     removeStyleTags: true,
   });
+
+  recordPipelineStage({ runDate: date, stage: 'briefing', status: 'success' }, db);
   return { date, html, data };
 }
 
