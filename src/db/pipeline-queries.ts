@@ -52,8 +52,6 @@ function pipelineStmts(db: DatabaseType): PipelineStmts {
   return stmts;
 }
 
-pipelineStmts(getDb());
-
 export function recordPipelineStage(
   args: {
     runDate: string;
