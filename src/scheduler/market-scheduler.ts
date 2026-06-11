@@ -6,7 +6,7 @@
  *  - Weekdays 16:30
  *  - Saturday 08:00
  *  - Sunday 06:00 — Yahoo momentum earnings calendar refresh (weekly)
- *  - Sunday 07:30 — weekly cleanup (briefings 90d, signals 365d)
+ *  - Sunday 07:30 — weekly cleanup (briefings 90d, signals 730d)
  *  - Sunday 07:45 — COMEX gold COT ingest (CFTC disaggregated file)
  *  - Sunday 08:00 — momentum rank + rebalance (paper_trades), then skip-AI briefing with rebalance summary (delivered per BRIEFING_DELIVERY)
  */

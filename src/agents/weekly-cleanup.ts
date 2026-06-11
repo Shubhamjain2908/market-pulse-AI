@@ -11,10 +11,11 @@ import { child } from '../logger.js';
 const log = child({ component: 'weekly-cleanup' });
 
 const BRIEFINGS_RETENTION_DAYS = 90;
+const SIGNALS_RETENTION_DAYS = 730;
 
 export async function runWeeklyCleanup(db: DatabaseType = getDb()): Promise<void> {
   const deletedBriefingRows = deleteBriefingsOlderThan90Days(db);
-  const deletedSignalRows = deleteSignalsOlderThan365Days(db);
+  const deletedSignalRows = deleteSignalsOlderThanRetention(db);
 
   log.info(
     { event: 'weekly_cleanup', deletedBriefingRows, deletedSignalRows },
@@ -39,11 +40,11 @@ function deleteBriefingsOlderThan90Days(db: DatabaseType): number {
   return result.changes;
 }
 
-function deleteSignalsOlderThan365Days(db: DatabaseType): number {
+function deleteSignalsOlderThanRetention(db: DatabaseType): number {
   const stmt = db.prepare(`
     DELETE FROM signals
-    WHERE date < date('now', '-365 days')
+    WHERE date < date('now', '-' || ? || ' days')
   `);
-  const result = stmt.run();
+  const result = stmt.run(SIGNALS_RETENTION_DAYS);
   return result.changes;
 }
