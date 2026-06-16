@@ -3,7 +3,7 @@
  * provider-agnostic so each adapter can call into them.
  */
 
-import { ZodError, type ZodType } from 'zod';
+import { ZodError, type output, type ZodType } from 'zod';
 
 /**
  * Extract the first JSON object/array from a string, tolerating Markdown
@@ -49,7 +49,10 @@ export class LlmJsonValidationError extends Error {
   }
 }
 
-export function parseAndValidate<T>(raw: string, schema: ZodType<T, any, unknown>): T {
+export function parseAndValidate<TSchema extends ZodType>(
+  raw: string,
+  schema: TSchema,
+): output<TSchema> {
   const candidate = extractJson(raw);
   let parsed: unknown;
   try {

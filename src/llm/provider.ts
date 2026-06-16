@@ -4,6 +4,7 @@
  */
 
 import { child } from '../logger.js';
+import type { output, ZodType } from 'zod';
 import {
   assertBudgetAvailable,
   getCurrentRunId,
@@ -106,13 +107,15 @@ class BudgetAwareLlmProvider implements LlmProvider {
     return result;
   }
 
-  async generateJson<T>(opts: GenerateJsonOptions<T>): Promise<LlmJsonResult<T>> {
+  async generateJson<TSchema extends ZodType>(
+    opts: GenerateJsonOptions<TSchema>,
+  ): Promise<LlmJsonResult<output<TSchema>>> {
     const runId = getCurrentRunId();
     if (runId) assertBudgetAvailable(runId);
 
-    const result = await this.inner.generateJson(opts);
+    const result = await this.inner.generateJson(opts as GenerateJsonOptions<TSchema>);
     trackUsage(result.model, result.usage);
-    return result;
+    return result as LlmJsonResult<output<TSchema>>;
   }
 }
 

@@ -6,7 +6,7 @@
  * generations when the cron job times out or the CLI is interrupted.
  */
 
-import type { ZodType } from 'zod';
+import type { output, ZodType } from 'zod';
 
 export interface GenerateTextOptions {
   /** System prompt - persona and constraints. */
@@ -20,9 +20,9 @@ export interface GenerateTextOptions {
   signal?: AbortSignal;
 }
 
-export interface GenerateJsonOptions<T> extends GenerateTextOptions {
+export interface GenerateJsonOptions<TSchema extends ZodType = ZodType> extends GenerateTextOptions {
   /** Zod schema the response must conform to. */
-  schema: ZodType<T, any, unknown>;
+  schema: TSchema;
   /** Number of repair attempts on parse/validation failure. Default: 1. */
   maxRetries?: number;
 }
@@ -54,5 +54,8 @@ export interface LlmProvider {
   readonly model: string;
 
   generateText(opts: GenerateTextOptions): Promise<LlmTextResult>;
-  generateJson<T>(opts: GenerateJsonOptions<T>): Promise<LlmJsonResult<T>>;
+  generateJson<T>(opts: GenerateJsonOptions<ZodType<T>>): Promise<LlmJsonResult<T>>;
+  generateJson<TSchema extends ZodType>(
+    opts: GenerateJsonOptions<TSchema>,
+  ): Promise<LlmJsonResult<output<TSchema>>>;
 }

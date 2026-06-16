@@ -4,6 +4,7 @@
  */
 
 import OpenAI from 'openai';
+import type { output, ZodType } from 'zod';
 import { config } from '../../config/env.js';
 import { parseAndValidate } from '../json.js';
 import type {
@@ -101,7 +102,9 @@ export class OpenAIProvider implements LlmProvider {
     };
   }
 
-  async generateJson<T>(opts: GenerateJsonOptions<T>): Promise<LlmJsonResult<T>> {
+  async generateJson<TSchema extends ZodType>(
+    opts: GenerateJsonOptions<TSchema>,
+  ): Promise<LlmJsonResult<output<TSchema>>> {
     const maxRetries = opts.maxRetries ?? 1;
     let lastErr: unknown;
     let lastRaw = '';
