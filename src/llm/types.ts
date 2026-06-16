@@ -6,7 +6,7 @@
  * generations when the cron job times out or the CLI is interrupted.
  */
 
-import type { ZodType, ZodTypeDef } from 'zod';
+import type { ZodType } from 'zod';
 
 export interface GenerateTextOptions {
   /** System prompt - persona and constraints. */
@@ -22,7 +22,7 @@ export interface GenerateTextOptions {
 
 export interface GenerateJsonOptions<T> extends GenerateTextOptions {
   /** Zod schema the response must conform to. */
-  schema: ZodType<T, ZodTypeDef, unknown>;
+  schema: ZodType<T, any, unknown>;
   /** Number of repair attempts on parse/validation failure. Default: 1. */
   maxRetries?: number;
 }
