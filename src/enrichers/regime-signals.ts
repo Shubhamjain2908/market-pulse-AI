@@ -117,6 +117,21 @@ function prevTradingDate(db: DatabaseType, symbol: string, date: string): string
 }
 
 /**
+ * Latest INDIA_VIX close on or before `date` (ascending quote rows).
+ * Carries forward the prior session when today's EOD bar is not ingested yet.
+ */
+export function pickVixCloseOnOrBefore(
+  ascVix: ReadonlyArray<{ date: string; close: number }>,
+  date: string,
+): { row: { date: string; close: number }; stale: boolean } | null {
+  const exact = ascVix.find((q) => q.date === date);
+  if (exact) return { row: exact, stale: false };
+  const onOrBefore = ascVix.filter((q) => q.date <= date);
+  const latest = onOrBefore.at(-1);
+  return latest ? { row: latest, stale: true } : null;
+}
+
+/**
  * Compute all raw inputs and the 8 sub-scores + bucket totals for `date` (IST YYYY-MM-DD).
  */
 export function computeRegimeSignals(db: DatabaseType, date: string): RegimeSignals {
@@ -163,20 +178,25 @@ export function computeRegimeSignals(db: DatabaseType, date: string): RegimeSign
   const ascVix = [...vixRows].reverse();
   let vixCurrent: number | null = null;
   let vix5dChangePct: number | null = null;
-  const vixTodayRow = ascVix.find((q) => q.date === date);
-  if (vixTodayRow) {
-    vixCurrent = vixTodayRow.close;
-    const idx = ascVix.findIndex((q) => q.date === date);
+  const vixPick = pickVixCloseOnOrBefore(ascVix, date);
+  if (vixPick) {
+    vixCurrent = vixPick.row.close;
+    if (vixPick.stale) {
+      warnings.push(
+        `INDIA_VIX: no quote row for ${date}; using stale close from ${vixPick.row.date}`,
+      );
+    }
+    const idx = ascVix.findIndex((q) => q.date === vixPick.row.date);
     if (idx >= 5) {
       const vix5dAgo = ascVix[idx - 5]?.close;
       if (vix5dAgo != null && vix5dAgo > 0) {
-        vix5dChangePct = ((vixTodayRow.close - vix5dAgo) / vix5dAgo) * 100;
+        vix5dChangePct = ((vixPick.row.close - vix5dAgo) / vix5dAgo) * 100;
       }
     } else {
       warnings.push('INDIA_VIX: not enough history on or before date for 5d change');
     }
   } else {
-    warnings.push(`INDIA_VIX: no quote row for ${date}`);
+    warnings.push(`INDIA_VIX: no quote row on or before ${date}`);
   }
 
   const fiiNetStmt = db.prepare(

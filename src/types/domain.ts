@@ -42,6 +42,8 @@ export const FundamentalsSchema = z.object({
   roce: z.number().optional(),
   revenueGrowthYoY: z.number().optional(),
   profitGrowthYoY: z.number().optional(),
+  /** TTM net profit in crores; negative = loss-making. */
+  netProfitTtm: z.number().optional(),
   debtToEquity: z.number().optional(),
   promoterHoldingPct: z.number().optional(),
   promoterHoldingChangeQoQ: z.number().optional(),

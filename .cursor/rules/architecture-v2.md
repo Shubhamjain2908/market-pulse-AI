@@ -172,7 +172,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 
 **Composite:** z-score normalised cross-sectionally, winsorised ±3.0, weighted sum + breakout bonus.
 
-**False momentum flag:** `mom_false_flag = 1` when z_12_1 > 0.674 (top quartile) AND `profit_growth_yoy` < −5%. Confidence capped at 5/10 when flagged. **Rebalance entry block:** flagged symbols are skipped before paper-trade insert (`falseFlagBlocked` counter); confidence cap in entry thesis path is unchanged.
+**False momentum flag:** `mom_false_flag = 1` when z_12_1 > 0.674 (top quartile) AND (`profit_growth_yoy` < −5% OR `net_profit_ttm` < 0). The `net_profit_ttm` condition blocks loss-making companies that show positive YoY due to loss-narrowing base effect. `net_profit_ttm` sourced from Yahoo snapshot (`netIncomeToCommon` when present; NSE `.NS` fallback: `fundamentalsTimeSeries` trailing TTM, preferring `normalizedIncome` over distorted `netIncome`). NULL → fail-open (condition treated as false). Confidence capped at 5/10 when flagged. **Rebalance entry block:** flagged symbols are skipped before paper-trade insert (`falseFlagBlocked` counter); confidence cap in entry thesis path is unchanged.
 
 **Lifecycle:**
 - Enter: top 10 by composite rank, Sunday EOD

@@ -123,18 +123,20 @@ function buildAtrByDate(bars: OHLCVBar[]): Map<string, number> {
   return m;
 }
 
-function loadEpsMap(
+function loadFundamentalsMap(
   universe: string[],
   asOf: string,
   db: DatabaseType,
-): Map<string, number | null> {
-  const out = new Map<string, number | null>();
+): Map<string, { profitGrowthYoy: number | null; netProfitTtm: number | null }> {
+  const out = new Map<string, { profitGrowthYoy: number | null; netProfitTtm: number | null }>();
   if (universe.length === 0) return out;
   const ph = universe.map(() => '?').join(',');
   const rows = db
     .prepare(
       `
-      SELECT f.symbol AS symbol, f.profit_growth_yoy AS profit_growth_yoy
+      SELECT f.symbol AS symbol,
+             f.profit_growth_yoy AS profit_growth_yoy,
+             f.net_profit_ttm AS net_profit_ttm
       FROM fundamentals f
       INNER JOIN (
         SELECT symbol, MAX(as_of) AS mx
@@ -148,11 +150,18 @@ function loadEpsMap(
     .all(asOf, ...universe.map((s) => s.toUpperCase())) as Array<{
     symbol: string;
     profit_growth_yoy: number | null;
+    net_profit_ttm: number | null;
   }>;
-  for (const sym of universe) out.set(sym.toUpperCase(), null);
+  for (const sym of universe) {
+    out.set(sym.toUpperCase(), { profitGrowthYoy: null, netProfitTtm: null });
+  }
   for (const r of rows) {
-    const v = r.profit_growth_yoy;
-    out.set(r.symbol.toUpperCase(), v != null && Number.isFinite(v) ? v : null);
+    const pg = r.profit_growth_yoy;
+    const np = r.net_profit_ttm;
+    out.set(r.symbol.toUpperCase(), {
+      profitGrowthYoy: pg != null && Number.isFinite(pg) ? pg : null,
+      netProfitTtm: np != null && Number.isFinite(np) ? np : null,
+    });
   }
   return out;
 }
@@ -316,7 +325,7 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
       const f1: number[] = [];
       const rs: (number | null)[] = [];
       const bo: (number | null)[] = [];
-      const epsMap = loadEpsMap(universe, D, opts.db);
+      const fundMap = loadFundamentalsMap(universe, D, opts.db);
       const bench = ohlcv.get(benchSym) ?? [];
 
       for (const sym of universe) {
@@ -366,8 +375,9 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
         bo.push(breakout);
       }
 
-      const epsArr = eligible.map((s) => epsMap.get(s) ?? null);
-      return scoreMomentumFromFactorRows(eligible, f1, epsArr, rs, bo, cfg);
+      const epsArr = eligible.map((s) => fundMap.get(s)?.profitGrowthYoy ?? null);
+      const netProfitArr = eligible.map((s) => fundMap.get(s)?.netProfitTtm ?? null);
+      return scoreMomentumFromFactorRows(eligible, f1, epsArr, rs, bo, cfg, netProfitArr);
     })();
 
     const rankBySym = new Map<string, number>();
