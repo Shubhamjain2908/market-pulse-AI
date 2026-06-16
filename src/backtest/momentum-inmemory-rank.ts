@@ -3,7 +3,7 @@
  */
 
 import type { MomentumConfig } from '../config/loaders.js';
-import { crossSectionalZ, winsorize } from '../rankers/momentum-ranker.js';
+import { crossSectionalZ, isMomentumFalseFlag, winsorize } from '../rankers/momentum-ranker.js';
 
 export interface MomentumScoredRow {
   symbol: string;
@@ -29,6 +29,7 @@ export function scoreMomentumFromFactorRows(
   rs: (number | null)[],
   bo: (number | null)[],
   cfg: MomentumConfig,
+  netProfitTtm: (number | null)[] = [],
 ): MomentumScoredRow[] {
   const w = cfg.weights;
   const cap = cfg.winsorise_zscore;
@@ -66,9 +67,13 @@ export function scoreMomentumFromFactorRows(
       bonus * boTerm;
 
     const rawEps = eps[i];
-    const topQuartile = zv1 > falseFlagZThreshold;
-    const epsWeak = rawEps != null && Number.isFinite(rawEps) && rawEps < epsThreshold;
-    const falseFlag = topQuartile && epsWeak;
+    const falseFlag = isMomentumFalseFlag({
+      z1: zv1,
+      profitGrowthYoy: rawEps ?? null,
+      netProfitTtm: netProfitTtm[i] ?? null,
+      falseFlagZThreshold,
+      epsThreshold,
+    });
 
     scored.push({
       symbol: sym,

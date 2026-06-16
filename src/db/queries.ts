@@ -154,11 +154,11 @@ export function upsertFundamentals(rows: Fundamentals[], db: DatabaseType = getD
   const stmt = db.prepare(`
     INSERT INTO fundamentals (
       symbol, as_of, market_cap, pe, pb, peg, roe, roce,
-      revenue_growth_yoy, profit_growth_yoy, debt_to_equity,
+      revenue_growth_yoy, profit_growth_yoy, net_profit_ttm, debt_to_equity,
       promoter_holding_pct, promoter_holding_change_qoq, dividend_yield, source
     ) VALUES (
       @symbol, @asOf, @marketCap, @pe, @pb, @peg, @roe, @roce,
-      @revenueGrowthYoY, @profitGrowthYoY, @debtToEquity,
+      @revenueGrowthYoY, @profitGrowthYoY, @netProfitTtm, @debtToEquity,
       @promoterHoldingPct, @promoterHoldingChangeQoQ, @dividendYield, @source
     )
     ON CONFLICT(symbol, as_of) DO UPDATE SET
@@ -170,6 +170,7 @@ export function upsertFundamentals(rows: Fundamentals[], db: DatabaseType = getD
       roce                        = excluded.roce,
       revenue_growth_yoy          = excluded.revenue_growth_yoy,
       profit_growth_yoy           = excluded.profit_growth_yoy,
+      net_profit_ttm              = excluded.net_profit_ttm,
       debt_to_equity              = excluded.debt_to_equity,
       promoter_holding_pct        = excluded.promoter_holding_pct,
       promoter_holding_change_qoq = excluded.promoter_holding_change_qoq,
@@ -189,6 +190,7 @@ export function upsertFundamentals(rows: Fundamentals[], db: DatabaseType = getD
         roce: r.roce ?? null,
         revenueGrowthYoY: r.revenueGrowthYoY ?? null,
         profitGrowthYoY: r.profitGrowthYoY ?? null,
+        netProfitTtm: r.netProfitTtm ?? null,
         debtToEquity: r.debtToEquity ?? null,
         promoterHoldingPct: r.promoterHoldingPct ?? null,
         promoterHoldingChangeQoQ: r.promoterHoldingChangeQoQ ?? null,

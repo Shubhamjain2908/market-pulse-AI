@@ -7,6 +7,7 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import YahooFinance from 'yahoo-finance2';
 import { getDb } from '../db/index.js';
 import { child } from '../logger.js';
+import { addCalendarDaysIst } from '../market/trading-days.js';
 import { isYahooMissingSymbolError } from '../market/yahoo-errors.js';
 import { toYahooFinanceTicker } from '../market/yahoo-ticker.js';
 import { isoDateIst } from './base/dates.js';
@@ -30,6 +31,7 @@ export interface YahooSnapshotFields {
   roe: number | null;
   debtToEquity: number | null;
   dividendYield: number | null;
+  netProfitTtm: number | null;
 }
 
 export interface IngestYahooSnapshotsResult {
@@ -64,16 +66,88 @@ export function derivePegRatio(pe: number | null, earningsGrowth: number | null)
   return Number.isFinite(peg) && peg > 0 ? peg : null;
 }
 
+/** Yahoo reports net income in absolute INR; store crores (Screener convention). */
+export function netIncomeToCrores(raw: unknown): number | null {
+  const n = toFiniteNumber(raw);
+  if (n === null) return null;
+  return n / 1e7;
+}
+
+/**
+ * Pick TTM net income from a fundamentalsTimeSeries row (absolute INR).
+ * Prefer `normalizedIncome` — NSE listings often report distorted `netIncome` after
+ * one-off items (e.g. IDEA AGR settlement) while normalized stays loss-making.
+ */
+export function pickNetIncomeFromTimeSeriesRow(row: Record<string, unknown>): number | null {
+  const normalized = toFiniteNumber(row.normalizedIncome);
+  if (normalized !== null) return normalized;
+  return (
+    toFiniteNumber(row.netIncomeCommonStockholders) ??
+    toFiniteNumber(row.dilutedNIAvailtoComStockholders) ??
+    toFiniteNumber(row.netIncome)
+  );
+}
+
+/** Latest trailing fundamentalsTimeSeries row with income → crores. */
+export function netProfitTtmFromTimeSeriesRows(rows: unknown[]): number | null {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const withIncome = rows.filter((r) => {
+    if (r == null || typeof r !== 'object') return false;
+    return pickNetIncomeFromTimeSeriesRow(r as Record<string, unknown>) !== null;
+  });
+  const latest = withIncome[withIncome.length - 1] as Record<string, unknown> | undefined;
+  if (!latest) return null;
+  return netIncomeToCrores(pickNetIncomeFromTimeSeriesRow(latest));
+}
+
+async function fetchNetProfitTtmFromTimeSeries(
+  client: InstanceType<typeof YahooFinance>,
+  yTicker: string,
+  asOf: string,
+): Promise<number | null> {
+  try {
+    const rows = await client.fundamentalsTimeSeries(
+      yTicker,
+      {
+        period1: addCalendarDaysIst(asOf, -730),
+        type: 'trailing',
+        module: 'financials',
+      },
+      { validateResult: false },
+    );
+    return netProfitTtmFromTimeSeriesRows(rows);
+  } catch (err) {
+    if (isYahooMissingSymbolError(err)) {
+      log.debug(
+        { yTicker, err: (err as Error).message },
+        'yahoo fundamentalsTimeSeries unavailable for symbol',
+      );
+    } else {
+      log.debug(
+        { yTicker, err: (err as Error).message },
+        'yahoo fundamentalsTimeSeries net profit fetch failed',
+      );
+    }
+    return null;
+  }
+}
+
 export function mapQuoteSummaryToSnapshot(
   symbol: string,
   asOf: string,
   summary: {
-    summaryDetail?: { trailingPE?: unknown; marketCap?: unknown; dividendYield?: unknown };
+    summaryDetail?: {
+      trailingPE?: unknown;
+      marketCap?: unknown;
+      dividendYield?: unknown;
+      netIncomeToCommon?: unknown;
+    };
     defaultKeyStatistics?: { priceToBook?: unknown; trailingPegRatio?: unknown };
     financialData?: {
       returnOnEquity?: unknown;
       debtToEquity?: unknown;
       earningsGrowth?: unknown;
+      netIncomeToCommon?: unknown;
     };
     price?: { trailingPE?: unknown };
   },
@@ -89,8 +163,11 @@ export function mapQuoteSummaryToSnapshot(
   const dividendYield = toFiniteNumber(summary.summaryDetail?.dividendYield);
   const roe = toFiniteNumber(summary.financialData?.returnOnEquity);
   const debtToEquity = normalizeDebtToEquity(summary.financialData?.debtToEquity);
+  const netProfitTtm =
+    netIncomeToCrores(summary.summaryDetail?.netIncomeToCommon) ??
+    netIncomeToCrores(summary.financialData?.netIncomeToCommon);
 
-  const values = [pe, pb, peg, marketCap, dividendYield, roe, debtToEquity];
+  const values = [pe, pb, peg, marketCap, dividendYield, roe, debtToEquity, netProfitTtm];
   if (values.every((v) => v === null)) return null;
 
   return {
@@ -103,6 +180,7 @@ export function mapQuoteSummaryToSnapshot(
     roe,
     debtToEquity,
     dividendYield,
+    netProfitTtm,
   };
 }
 
@@ -119,10 +197,10 @@ function writeSnapshotRows(db: DatabaseType, rows: YahooSnapshotFields[]): numbe
   const stmt = db.prepare(`
     INSERT INTO fundamentals (
       symbol, as_of, market_cap, pe, pb, peg, roe,
-      debt_to_equity, dividend_yield, source, ingested_at
+      debt_to_equity, dividend_yield, net_profit_ttm, source, ingested_at
     ) VALUES (
       @symbol, @asOf, @marketCap, @pe, @pb, @peg, @roe,
-      @debtToEquity, @dividendYield, @source, datetime('now')
+      @debtToEquity, @dividendYield, @netProfitTtm, @source, datetime('now')
     )
     ON CONFLICT(symbol, as_of) DO UPDATE SET
       market_cap     = excluded.market_cap,
@@ -132,6 +210,7 @@ function writeSnapshotRows(db: DatabaseType, rows: YahooSnapshotFields[]): numbe
       roe            = excluded.roe,
       debt_to_equity = excluded.debt_to_equity,
       dividend_yield = excluded.dividend_yield,
+      net_profit_ttm = COALESCE(excluded.net_profit_ttm, fundamentals.net_profit_ttm),
       source         = excluded.source,
       ingested_at    = excluded.ingested_at
   `);
@@ -148,6 +227,7 @@ function writeSnapshotRows(db: DatabaseType, rows: YahooSnapshotFields[]): numbe
         roe: r.roe,
         debtToEquity: r.debtToEquity,
         dividendYield: r.dividendYield,
+        netProfitTtm: r.netProfitTtm,
         source: YAHOO_SNAPSHOT_SOURCE,
       });
     }
@@ -190,11 +270,18 @@ export async function ingestYahooSnapshots(
               { modules: [...QUOTE_SUMMARY_MODULES] },
               { validateResult: false },
             );
-            return mapQuoteSummaryToSnapshot(
+            let row = mapQuoteSummaryToSnapshot(
               symbol,
               asOf,
               summary as Parameters<typeof mapQuoteSummaryToSnapshot>[2],
             );
+            if (row !== null && row.netProfitTtm === null) {
+              const fromTs = await fetchNetProfitTtmFromTimeSeries(client, yTicker, asOf);
+              if (fromTs !== null) {
+                row = { ...row, netProfitTtm: fromTs };
+              }
+            }
+            return row;
           } catch (err) {
             if (isYahooMissingSymbolError(err)) {
               log.debug(
