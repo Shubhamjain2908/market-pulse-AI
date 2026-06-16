@@ -82,6 +82,7 @@ export function parseScreenerHtml(html: string, opts: ParseScreenerOptions): Fun
     roce: parseFloatLoose(get(ratios, 'roce', 'return on capital employed')),
     revenueGrowthYoY,
     profitGrowthYoY,
+    netProfitTtm: parseRupeeCrore(get(ratios, 'net profit', 'net profit ttm')),
     debtToEquity,
     promoterHoldingPct,
     promoterHoldingChangeQoQ,
