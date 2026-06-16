@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getDb, migrate } from '../../src/db/index.js';
 import {
   crossSectionalZ,
+  isMomentumFalseFlag,
   quantileSorted,
   runMomentumRanker,
 } from '../../src/rankers/momentum-ranker.js';
@@ -24,6 +25,27 @@ describe('rankers/momentum-ranker helpers', () => {
     expect(z[2]).toBe(0);
     expect(z[0]).toBeLessThan(0);
     expect(z[1]).toBeGreaterThan(0);
+  });
+
+  it('isMomentumFalseFlag fires on loss-making TTM despite positive YoY (IDEA-like)', () => {
+    expect(
+      isMomentumFalseFlag({
+        z1: 1.0,
+        profitGrowthYoy: 13,
+        netProfitTtm: -5000,
+        falseFlagZThreshold: 0.674,
+        epsThreshold: -5,
+      }),
+    ).toBe(true);
+    expect(
+      isMomentumFalseFlag({
+        z1: 1.0,
+        profitGrowthYoy: 13,
+        netProfitTtm: null,
+        falseFlagZThreshold: 0.674,
+        epsThreshold: -5,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -58,8 +80,8 @@ describe('rankers/momentum-ranker integration', () => {
     `);
     const insFund = db.prepare(`
       INSERT INTO fundamentals (
-        symbol, as_of, profit_growth_yoy, source
-      ) VALUES (?, ?, ?, 'test')
+        symbol, as_of, profit_growth_yoy, net_profit_ttm, source
+      ) VALUES (?, ?, ?, ?, 'test')
     `);
 
     const factorRows: Array<[string, number, number, number]> = [
@@ -74,10 +96,10 @@ describe('rankers/momentum-ranker integration', () => {
       insSig.run(sym, asOf, 'mom_volume_breakout_flag', bo);
     }
 
-    insFund.run('AAA', asOf, -10);
-    insFund.run('BBB', asOf, 10);
-    insFund.run('CCC', asOf, 10);
-    insFund.run('DDD', asOf, 10);
+    insFund.run('AAA', asOf, -10, null);
+    insFund.run('BBB', asOf, 10, 100);
+    insFund.run('CCC', asOf, 10, 100);
+    insFund.run('DDD', asOf, 10, 100);
 
     insSig.run('NOPE', asOf, 'mom_rank', 99);
     insSig.run('NOPE', asOf, 'mom_composite_score', 99);
@@ -105,6 +127,50 @@ describe('rankers/momentum-ranker integration', () => {
       )
       .get(asOf) as { c: number };
     expect(nopeRank.c).toBe(0);
+
+    db.close();
+  });
+
+  it('false_flag when top-quartile z1 and loss-making net_profit_ttm despite positive YoY', () => {
+    const db = getDb({ path: dbPath });
+    migrate(db);
+    const asOf = '2026-06-12';
+    const universe = ['IDEA', 'BBB', 'CCC', 'DDD'];
+
+    const insSig = db.prepare(`
+      INSERT INTO signals (symbol, date, name, value, source)
+      VALUES (?, ?, ?, ?, 'test')
+    `);
+    const insFund = db.prepare(`
+      INSERT INTO fundamentals (
+        symbol, as_of, profit_growth_yoy, net_profit_ttm, source
+      ) VALUES (?, ?, ?, ?, 'test')
+    `);
+
+    const factorRows: Array<[string, number, number, number]> = [
+      ['IDEA', 0.6, 1, 0],
+      ['BBB', 0.2, 1, 0],
+      ['CCC', 0.15, 1, 0],
+      ['DDD', 0.1, 1, 0],
+    ];
+    for (const [sym, mom121, rs, bo] of factorRows) {
+      insSig.run(sym, asOf, 'mom_12_1_return', mom121);
+      insSig.run(sym, asOf, 'mom_relative_strength_ba', rs);
+      insSig.run(sym, asOf, 'mom_volume_breakout_flag', bo);
+    }
+
+    insFund.run('IDEA', asOf, 13, -8700);
+    insFund.run('BBB', asOf, 10, 500);
+    insFund.run('CCC', asOf, 10, 500);
+    insFund.run('DDD', asOf, 10, 500);
+
+    runMomentumRanker({ asOf, universe, db });
+
+    const ffStmt = db.prepare(
+      `SELECT value FROM signals WHERE symbol = ? AND date = ? AND name = 'mom_false_flag'`,
+    );
+    expect(ffStmt.get('IDEA', asOf)).toEqual({ value: 1 });
+    expect(ffStmt.get('BBB', asOf)).toEqual({ value: 0 });
 
     db.close();
   });

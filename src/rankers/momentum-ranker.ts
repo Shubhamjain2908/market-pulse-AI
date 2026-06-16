@@ -1,6 +1,6 @@
 /**
  * Cross-sectional momentum composite and ranks for the momentum universe (Phase 4.1).
- * Reads Factors 1/3/4 from `signals`, Factor 2 from `fundamentals.profit_growth_yoy`.
+ * Reads Factors 1/3/4 from `signals`, Factor 2 from `fundamentals` (profit_growth_yoy, net_profit_ttm).
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
@@ -71,6 +71,24 @@ export function winsorize(z: number, cap: number): number {
   return Math.max(-cap, Math.min(cap, z));
 }
 
+/** False momentum: top-quartile price mom with weak EPS YoY or loss-making TTM profit. */
+export function isMomentumFalseFlag(opts: {
+  z1: number;
+  profitGrowthYoy: number | null;
+  netProfitTtm: number | null;
+  falseFlagZThreshold: number;
+  epsThreshold: number;
+}): boolean {
+  const topQuartile = opts.z1 > opts.falseFlagZThreshold;
+  const epsWeak =
+    opts.profitGrowthYoy != null &&
+    Number.isFinite(opts.profitGrowthYoy) &&
+    opts.profitGrowthYoy < opts.epsThreshold;
+  const lossMaking =
+    opts.netProfitTtm != null && Number.isFinite(opts.netProfitTtm) && opts.netProfitTtm < 0;
+  return topQuartile && (epsWeak || lossMaking);
+}
+
 /** `sortedAsc` must be sorted ascending. q in [0,1]. */
 export function quantileSorted(sortedAsc: number[], q: number): number {
   if (sortedAsc.length === 0) return Number.NaN;
@@ -126,18 +144,25 @@ function loadFactorSnapshots(
   return map;
 }
 
-function loadLatestProfitGrowthYoy(
+interface FundamentalSnapshot {
+  profitGrowthYoy: number | null;
+  netProfitTtm: number | null;
+}
+
+function loadLatestFundamentals(
   universe: string[],
   asOf: string,
   db: DatabaseType,
-): Map<string, number | null> {
-  const out = new Map<string, number | null>();
+): Map<string, FundamentalSnapshot> {
+  const out = new Map<string, FundamentalSnapshot>();
   if (universe.length === 0) return out;
   const ph = universe.map(() => '?').join(',');
   const rows = db
     .prepare(
       `
-      SELECT f.symbol AS symbol, f.profit_growth_yoy AS profit_growth_yoy
+      SELECT f.symbol AS symbol,
+             f.profit_growth_yoy AS profit_growth_yoy,
+             f.net_profit_ttm AS net_profit_ttm
       FROM fundamentals f
       INNER JOIN (
         SELECT symbol, MAX(as_of) AS mx
@@ -148,14 +173,22 @@ function loadLatestProfitGrowthYoy(
       WHERE f.symbol IN (${ph})
     `,
     )
-    .all(asOf, ...universe) as Array<{ symbol: string; profit_growth_yoy: number | null }>;
+    .all(asOf, ...universe) as Array<{
+    symbol: string;
+    profit_growth_yoy: number | null;
+    net_profit_ttm: number | null;
+  }>;
 
   for (const sym of universe) {
-    out.set(sym.toUpperCase(), null);
+    out.set(sym.toUpperCase(), { profitGrowthYoy: null, netProfitTtm: null });
   }
   for (const r of rows) {
-    const v = r.profit_growth_yoy;
-    out.set(r.symbol.toUpperCase(), v != null && Number.isFinite(v) ? v : null);
+    const pg = r.profit_growth_yoy;
+    const np = r.net_profit_ttm;
+    out.set(r.symbol.toUpperCase(), {
+      profitGrowthYoy: pg != null && Number.isFinite(pg) ? pg : null,
+      netProfitTtm: np != null && Number.isFinite(np) ? np : null,
+    });
   }
   return out;
 }
@@ -188,7 +221,7 @@ export function runMomentumRanker(opts: {
   );
 
   const factorMap = loadFactorSnapshots(universe, asOf, db);
-  const epsMap = loadLatestProfitGrowthYoy(universe, asOf, db);
+  const fundMap = loadLatestFundamentals(universe, asOf, db);
 
   const eligible = universe.filter((sym) => {
     const m = factorMap.get(sym)?.mom121;
@@ -232,7 +265,7 @@ export function runMomentumRanker(opts: {
   for (const sym of eligible) {
     const snap = factorMap.get(sym);
     f1.push(snap?.mom121 ?? 0);
-    eps.push(epsMap.get(sym) ?? null);
+    eps.push(fundMap.get(sym)?.profitGrowthYoy ?? null);
     rs.push(snap?.rsBa ?? null);
     const br = snap?.breakout;
     bo.push(br != null && Number.isFinite(br) ? br : null);
@@ -284,9 +317,14 @@ export function runMomentumRanker(opts: {
       bonus * boTerm;
 
     const rawEps = eps[i];
-    const topQuartile = zv1 > zTopQuartileThreshold;
-    const epsWeak = rawEps != null && Number.isFinite(rawEps) && rawEps < epsThreshold;
-    const falseFlag = topQuartile && epsWeak;
+    const netProfitTtm = fundMap.get(sym)?.netProfitTtm ?? null;
+    const falseFlag = isMomentumFalseFlag({
+      z1: zv1,
+      profitGrowthYoy: rawEps ?? null,
+      netProfitTtm,
+      falseFlagZThreshold: zTopQuartileThreshold,
+      epsThreshold,
+    });
 
     scored.push({
       symbol: sym,
