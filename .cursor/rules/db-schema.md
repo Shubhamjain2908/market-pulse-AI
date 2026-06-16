@@ -29,6 +29,7 @@ CREATE TABLE fundamentals (
   roce                         REAL,
   revenue_growth_yoy           REAL,
   profit_growth_yoy            REAL,
+  net_profit_ttm               REAL,
   debt_to_equity               REAL,
   promoter_holding_pct         REAL,
   promoter_holding_change_qoq  REAL,
