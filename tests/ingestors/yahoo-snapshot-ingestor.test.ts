@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   derivePegRatio,
   mapQuoteSummaryToSnapshot,
+  netIncomeToCrores,
+  netProfitTtmFromTimeSeriesRows,
   normalizeDebtToEquity,
+  pickNetIncomeFromTimeSeriesRow,
   toFiniteNumber,
 } from '../../src/ingestors/yahoo-snapshot-ingestor.js';
 
@@ -25,6 +28,37 @@ describe('yahoo-snapshot-ingestor mapping', () => {
     expect(mapQuoteSummaryToSnapshot('RELIANCE', '2026-05-28', {})).toBeNull();
   });
 
+  it('netIncomeToCrores divides absolute INR by 1e7', () => {
+    expect(netIncomeToCrores(-87_000_000_000)).toBeCloseTo(-8700);
+    expect(netIncomeToCrores(null)).toBeNull();
+  });
+
+  it('pickNetIncomeFromTimeSeriesRow prefers normalizedIncome over distorted netIncome', () => {
+    expect(
+      pickNetIncomeFromTimeSeriesRow({
+        netIncome: 345_520_000_000,
+        normalizedIncome: -6_122_000_000,
+      }),
+    ).toBe(-6_122_000_000);
+    expect(
+      pickNetIncomeFromTimeSeriesRow({
+        netIncomeCommonStockholders: 50_000_000_000,
+      }),
+    ).toBe(50_000_000_000);
+  });
+
+  it('netProfitTtmFromTimeSeriesRows uses latest row with income', () => {
+    const crores = netProfitTtmFromTimeSeriesRows([
+      { basicEPS: -2.63, periodType: 'TTM' },
+      {
+        periodType: 'TTM',
+        netIncome: 345_520_000_000,
+        normalizedIncome: -6_122_000_000,
+      },
+    ]);
+    expect(crores).toBeCloseTo(-612.2);
+  });
+
   it('mapQuoteSummaryToSnapshot maps valuation fields', () => {
     const row = mapQuoteSummaryToSnapshot('reliance', '2026-05-28', {
       summaryDetail: {
@@ -33,7 +67,11 @@ describe('yahoo-snapshot-ingestor mapping', () => {
         dividendYield: 0.0035,
       },
       defaultKeyStatistics: { priceToBook: 2.1, trailingPegRatio: 1.4 },
-      financialData: { returnOnEquity: 0.12, debtToEquity: 32.5 },
+      financialData: {
+        returnOnEquity: 0.12,
+        debtToEquity: 32.5,
+        netIncomeToCommon: 50_000_000_000,
+      },
     });
     expect(row).toEqual({
       symbol: 'RELIANCE',
@@ -45,6 +83,7 @@ describe('yahoo-snapshot-ingestor mapping', () => {
       dividendYield: 0.0035,
       roe: 0.12,
       debtToEquity: 0.325,
+      netProfitTtm: 5000,
     });
   });
 
