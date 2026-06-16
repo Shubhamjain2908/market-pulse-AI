@@ -7,8 +7,8 @@
  * placeholder, preventing downstream runtime errors.
  */
 
-import { parseAndValidate } from '../json.js';
 import type { output, ZodType } from 'zod';
+import { parseAndValidate } from '../json.js';
 import type {
   GenerateJsonOptions,
   GenerateTextOptions,

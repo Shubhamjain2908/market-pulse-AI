@@ -3,7 +3,7 @@
  * provider-agnostic so each adapter can call into them.
  */
 
-import { ZodError, type output, type ZodType } from 'zod';
+import { type output, ZodError, type ZodType } from 'zod';
 
 /**
  * Extract the first JSON object/array from a string, tolerating Markdown

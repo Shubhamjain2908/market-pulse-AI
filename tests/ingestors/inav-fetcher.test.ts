@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { HttpClient } from '../../src/ingestors/base/http-client.js';
+import type { NseEtfRowInput } from '../../src/ingestors/inav-fetcher.js';
 
 vi.mock('../../src/ingestors/nse/cookie-jar.js', () => ({
   primeNseCookies: vi.fn().mockResolvedValue(undefined),
@@ -76,9 +77,16 @@ describe('inav-fetcher', () => {
         { assets: 'Equity' },
       ],
     });
+    expect(rows).not.toBeNull();
     expect(rows).toHaveLength(2);
-    expect(pickNseEtfNavAndLast(rows![0]!)).toEqual({ inav: 128.5109, lastPrice: 127.73 });
-    expect(pickNseEtfNavAndLast(rows![1]!)).toEqual({ inav: null, lastPrice: 100 });
+    expect(pickNseEtfNavAndLast(rows?.[0] as NseEtfRowInput)).toEqual({
+      inav: 128.5109,
+      lastPrice: 127.73,
+    });
+    expect(pickNseEtfNavAndLast(rows?.[1] as NseEtfRowInput)).toEqual({
+      inav: null,
+      lastPrice: 100,
+    });
   });
 
   it('fetchInavSnapshots fail-open on request error', async () => {

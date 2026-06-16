@@ -20,7 +20,8 @@ export interface GenerateTextOptions {
   signal?: AbortSignal;
 }
 
-export interface GenerateJsonOptions<TSchema extends ZodType = ZodType> extends GenerateTextOptions {
+export interface GenerateJsonOptions<TSchema extends ZodType = ZodType>
+  extends GenerateTextOptions {
   /** Zod schema the response must conform to. */
   schema: TSchema;
   /** Number of repair attempts on parse/validation failure. Default: 1. */

@@ -102,7 +102,7 @@ export type KiteQuoteEntry = z.infer<typeof KiteQuoteEntrySchema>;
 
 export const KiteEnvelopeSchema = z.object({
   status: z.enum(['success', 'error']),
-  data: z.unknown(),
+  data: z.unknown().optional(),
   message: z.string().optional(),
   error_type: z.string().optional(),
 });

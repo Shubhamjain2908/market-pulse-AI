@@ -95,7 +95,7 @@ function buildPayload(
 export async function runTrailingStopPostMortem(logId: number, db?: DatabaseType): Promise<void> {
   const conn = db ?? getDb();
   const row = getStopLogById(logId, conn);
-  if (!row || row.action !== 'STOPPED_OUT') return;
+  if (row?.action !== 'STOPPED_OUT') return;
 
   const tradeRow = conn
     .prepare(
