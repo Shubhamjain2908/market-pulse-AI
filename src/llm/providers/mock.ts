@@ -7,6 +7,7 @@
  * placeholder, preventing downstream runtime errors.
  */
 
+import type { output, ZodType } from 'zod';
 import { parseAndValidate } from '../json.js';
 import type {
   GenerateJsonOptions,
@@ -130,7 +131,9 @@ export class MockLlmProvider implements LlmProvider {
     };
   }
 
-  async generateJson<T>(opts: GenerateJsonOptions<T>): Promise<LlmJsonResult<T>> {
+  async generateJson<TSchema extends ZodType>(
+    opts: GenerateJsonOptions<TSchema>,
+  ): Promise<LlmJsonResult<output<TSchema>>> {
     this.calls.push({ method: 'generateJson', system: opts.system, user: opts.user });
 
     let raw: string;

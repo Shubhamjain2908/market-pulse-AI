@@ -20,6 +20,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { output, ZodType } from 'zod';
 import { config } from '../../config/env.js';
 import { child } from '../../logger.js';
 import { parseAndValidate } from '../json.js';
@@ -71,7 +72,9 @@ export class CursorAgentProvider implements LlmProvider {
     };
   }
 
-  async generateJson<T>(opts: GenerateJsonOptions<T>): Promise<LlmJsonResult<T>> {
+  async generateJson<TSchema extends ZodType>(
+    opts: GenerateJsonOptions<TSchema>,
+  ): Promise<LlmJsonResult<output<TSchema>>> {
     const maxRetries = opts.maxRetries ?? 1;
     let lastErr: unknown;
     let lastRaw = '';
