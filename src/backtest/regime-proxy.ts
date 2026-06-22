@@ -6,13 +6,13 @@
  * 3-session persistence — labels are path-independent per day for walk-forward sims.
  */
 
+import type { Database as DatabaseType } from 'better-sqlite3';
 import { mean } from '../enrichers/technical/indicators.js';
 import { addCalendarDaysIst } from '../market/trading-days.js';
 import type { Regime } from '../types/regime.js';
 import { loadOhlcvMap } from './quotes-loader.js';
 import type { OHLCVBar } from './signals.js';
 import { filterOptionAUniverse } from './universe-filter.js';
-import type { Database as DatabaseType } from 'better-sqlite3';
 
 /** How regime labels are resolved for Option A (`proxy` = quotes-only; `daily` = `regime_daily`). */
 export type OptionARegimeSource = 'daily' | 'proxy';
