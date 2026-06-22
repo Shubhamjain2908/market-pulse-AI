@@ -25,10 +25,10 @@ import { addCalendarDaysIst, lastOpenOnOrBefore } from '../../market/trading-day
 import { buildTradingDayIndex } from '../../scripts/evaluate-trades.js';
 import type { Regime } from '../../types/regime.js';
 import { scoreMomentumFromFactorRows } from '../momentum-inmemory-rank.js';
-import { initLongTrailState, type LongTrailState, stepLongPositionOneBar } from '../position.js';
+import { type LongTrailState, initLongTrailState, stepLongPositionOneBar } from '../position.js';
 import { loadOhlcvMap } from '../quotes-loader.js';
 import type { OptionARegimeSource, RegimeProxyMap } from '../regime-proxy.js';
-import { computeSignalsForLastBar, type OHLCVBar, SIGNAL_WINDOW_LEN } from '../signals.js';
+import { type OHLCVBar, SIGNAL_WINDOW_LEN, computeSignalsForLastBar } from '../signals.js';
 import type { BacktestExitReason, ClosedSimTrade } from '../types.js';
 import { filterOptionAUniverse } from '../universe-filter.js';
 
@@ -203,9 +203,7 @@ function sliceWindowEndingAt(all: OHLCVBar[], date: string, len: number): OHLCVB
 export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTrade[] {
   const cfg = loadMomentumConfig();
   const sectorMap = loadSectorMap();
-  const universeRaw = (opts.universe ?? getMomentumUniverseSymbols()).map((s) =>
-    s.toUpperCase(),
-  );
+  const universeRaw = (opts.universe ?? getMomentumUniverseSymbols()).map((s) => s.toUpperCase());
   const universe = filterOptionAUniverse(
     universeRaw,
     opts.from,
