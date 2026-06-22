@@ -17,10 +17,10 @@ import {
   isInEarningsBlackoutCalendarWindow,
   upsertSignals,
 } from '../db/index.js';
-import { mean } from './technical/indicators.js';
 import { child } from '../logger.js';
 import { NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
 import type { Signal } from '../types/domain.js';
+import { mean } from './technical/indicators.js';
 
 const log = child({ component: 'momentum-signals' });
 
