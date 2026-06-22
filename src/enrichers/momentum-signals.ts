@@ -17,6 +17,7 @@ import {
   isInEarningsBlackoutCalendarWindow,
   upsertSignals,
 } from '../db/index.js';
+import { mean } from './technical/indicators.js';
 import { child } from '../logger.js';
 import { NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
 import type { Signal } from '../types/domain.js';
@@ -35,12 +36,6 @@ export interface MomentumSignalsStats {
   symbolsColdStart: number;
   blackoutRowsWritten: number;
   factorSignalRowsWritten: number;
-}
-
-function mean(xs: number[]): number {
-  let s = 0;
-  for (const x of xs) s += x;
-  return s / xs.length;
 }
 
 /**

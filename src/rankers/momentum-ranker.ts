@@ -7,6 +7,7 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 
 import { getMomentumUniverseSymbols, loadMomentumConfig } from '../config/loaders.js';
 import { deleteMomentumRankSignals, getDb, upsertSignals } from '../db/index.js';
+import { mean } from '../enrichers/technical/indicators.js';
 import { child } from '../logger.js';
 import type { Signal } from '../types/domain.js';
 
@@ -35,13 +36,6 @@ export interface MomentumRankerResult {
     zBreakout: number;
   }>;
   excludedSymbols: string[];
-}
-
-function mean(xs: number[]): number {
-  if (xs.length === 0) return 0;
-  let s = 0;
-  for (const x of xs) s += x;
-  return s / xs.length;
 }
 
 function stdPop(xs: number[]): number {
