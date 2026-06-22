@@ -467,15 +467,6 @@ two-sentence read plus the Watch sentence.
 Never give investment advice. Present tense. Avoid generic filler ("mixed signals",
 "cautious optimism") unless you tie it to a specific fact from the data.`;
 
-/** Fallback when the full paragraph fails validation: tiny payload, one sentence, ~80 tokens max. */
-const MOOD_MINI_SYSTEM = `You write one sentence only about Indian equity session tone.
-
-You MUST output exactly one English sentence ending with . ! or ?
-Use the four numeric inputs as given (FII/DII in ₹ crore cash; India VIX level; Nifty cash index % change).
-Interpret how flows, volatility, and the index move relate — you may cite these figures in the sentence.
-
-No "Watch:" line. No bullet points. No investment advice. Present tense.`;
-
 /** Rejects truncated / safety-filter one-word outputs so the briefing can omit the block. */
 export function validateMoodNarrative(text: string): void {
   const t = text.trim();
@@ -485,18 +476,7 @@ export function validateMoodNarrative(text: string): void {
   if (!/[.!?]/.test(t)) throw new Error('mood narrative missing sentence terminator');
 }
 
-/** Validates the compact single-sentence fallback from {@link generateMoodNarrativeMini}. */
-export function validateMoodNarrativeMini(text: string): void {
-  const t = text.trim();
-  if (t.length < 35) throw new Error('mini mood narrative too short');
-  const words = t.split(/\s+/).filter(Boolean);
-  if (words.length < 12) throw new Error('mini mood narrative too few words');
-  if (!/[.!?]/.test(t)) throw new Error('mini mood narrative missing sentence terminator');
-  const sentences = t.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
-  if (sentences.length !== 1) throw new Error('mini mood narrative must be one sentence');
-}
-
-/** Non-LLM fallback when Vertex returns empty candidates twice (mood + mini). */
+/** Non-LLM fallback when the LLM call fails. */
 function buildDeterministicMoodNarrative(mood: BriefingData['mood']): string {
   const flowBits: string[] = [];
   if (mood.fiiNet != null) {
@@ -518,27 +498,6 @@ function buildDeterministicMoodNarrative(mood: BriefingData['mood']): string {
       ? `Session tone reflects ${flowBits.join(', ')}, reading cross-currents between foreign portfolio flows and local liquidity.`
       : 'Session tone is data-light until fresh FII/DII and benchmark prints populate; treat positioning as cautious and event-driven.';
   return `${core} Watch: how the tape balances global cues against domestic flows in upcoming sessions.`;
-}
-
-async function generateMoodNarrativeMini(
-  mood: BriefingData['mood'],
-  llm: LlmProvider,
-): Promise<string> {
-  const payload = {
-    fiiNetCr: mood.fiiNet,
-    diiNetCr: mood.diiNet,
-    vix: mood.vix,
-    niftyChangePct: mood.niftyChangePct,
-  };
-  const result = await llm.generateText({
-    system: MOOD_MINI_SYSTEM,
-    user: `session_metrics_json:\n${JSON.stringify(payload)}\n\nWrite the single sentence.`,
-    temperature: 0.2,
-    maxOutputTokens: 80,
-  });
-  const text = result.text.trim();
-  validateMoodNarrativeMini(text);
-  return text;
 }
 
 async function generateMoodNarrative(
@@ -588,11 +547,7 @@ async function generateMoodNarrative(
       return text;
     }
   } catch {
-    try {
-      return await generateMoodNarrativeMini(mood, llm);
-    } catch {
-      return buildDeterministicMoodNarrative(mood);
-    }
+    return buildDeterministicMoodNarrative(mood);
   }
 }
 
