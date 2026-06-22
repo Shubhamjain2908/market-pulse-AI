@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadMomentumConfig } from '../../src/config/loaders.js';
-import {
-  normalizePersistedTrailingMult,
-  trailingStopSizingFromMomentumConfig,
-} from '../../src/config/trailing-stop-sizing.js';
+import { trailingStopSizingFromMomentumConfig } from '../../src/config/trailing-stop-sizing.js';
 
 describe('trailingStopSizingFromMomentumConfig', () => {
   it('loads Phase 2 production values from momentum-config.json', () => {
@@ -12,5 +9,4 @@ describe('trailingStopSizingFromMomentumConfig', () => {
     expect(s.lockInThresholdPct).toBe(18);
     expect(s.tightenedMultiplier).toBe(1.5);
   });
-
 });
