@@ -642,7 +642,7 @@ function loadExtSignalConfig(): ExtSignalProviderFile {
   return extSignalConfigCache;
 }
 
-/** Tests only — separate from `loaders.clearConfigCache()`. */
+/** Tests only — separate from the loaders config cache. */
 export function resetExtSignalConfigCacheForTests(): void {
   extSignalConfigCache = null;
 }

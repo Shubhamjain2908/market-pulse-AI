@@ -7,7 +7,7 @@ import {
 
 describe('trailingStopSizingFromMomentumConfig', () => {
   it('loads Phase 2 production values from momentum-config.json', () => {
-    const s = trailingStopSizingFromMomentumConfig(loadMomentumConfig({ fresh: true }));
+    const s = trailingStopSizingFromMomentumConfig(loadMomentumConfig());
     expect(s.initialMultiplier).toBe(2.5);
     expect(s.lockInThresholdPct).toBe(18);
     expect(s.tightenedMultiplier).toBe(1.5);

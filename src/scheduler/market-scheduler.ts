@@ -202,7 +202,7 @@ async function runSundayEarningsRefresh(): Promise<void> {
   try {
     migrate();
     const date = isoDateIst();
-    const symbols = getMomentumUniverseSymbols({ fresh: true });
+    const symbols = getMomentumUniverseSymbols();
     const result = await syncMomentumEarningsCalendarFromYahoo(symbols, getDb(), { refDate: date });
     log.info(
       { tag: 'sun-0600', health: 'ok', durationMs: Date.now() - t0, ...result },

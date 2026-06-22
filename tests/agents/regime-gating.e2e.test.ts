@@ -25,7 +25,7 @@ describe('regime gating (Phase 4)', () => {
   it('4.5 portfolio_exit_signals + trailing_stop_update stay allowed at full size in CRISIS', () => {
     const db = new Database(':memory:');
     migrate(db);
-    seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
+    seedStrategyGates(loadStrategyGates().rows, db);
     expect(isStrategyAllowed('portfolio_exit_signals', 'CRISIS', db)).toBe(true);
     expect(isStrategyAllowed('trailing_stop_update', 'CRISIS', db)).toBe(true);
     expect(getSizeMultiplier('portfolio_exit_signals', 'CRISIS', db)).toBe(1);
@@ -36,7 +36,7 @@ describe('regime gating (Phase 4)', () => {
   it('CRISIS: every configured screen is gated — no evaluations, no screen rows', () => {
     const db = new Database(':memory:');
     migrate(db);
-    seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
+    seedStrategyGates(loadStrategyGates().rows, db);
 
     const screens: ScreenDefinition[] = [
       {
@@ -72,7 +72,7 @@ describe('regime gating (Phase 4)', () => {
   it('BEAR_TRENDING: momentum_breakout gated; quality_at_value persists __regime_meta 0.25', () => {
     const db = new Database(':memory:');
     migrate(db);
-    seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
+    seedStrategyGates(loadStrategyGates().rows, db);
 
     const date = '2026-06-02';
     /** DbSignalProvider reads fundamental columns from `fundamentals`, not `signals`. */
@@ -132,7 +132,7 @@ describe('regime gating (Phase 4)', () => {
   it('CRISIS: ai_picks_generation gated — zero theses without ranking', async () => {
     const db = new Database(':memory:');
     migrate(db);
-    seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
+    seedStrategyGates(loadStrategyGates().rows, db);
     const llm = new MockLlmProvider();
     setLlmProvider(llm);
 

@@ -71,7 +71,7 @@ function passesAiPickProxy(s: NonNullable<ReturnType<typeof computeSignalsForLas
 
 export function runAiPickBacktest(opts: AiPickBacktestOpts): ClosedSimTrade[] {
   const benchSym = NIFTY_BENCHMARK_SYMBOL.toUpperCase();
-  const universeRaw = (opts.universe ?? getMomentumUniverseSymbols({ fresh: true })).map((s) =>
+  const universeRaw = (opts.universe ?? getMomentumUniverseSymbols()).map((s) =>
     s.toUpperCase(),
   );
   const universe = filterOptionAUniverse(

@@ -107,7 +107,6 @@ describe('ext-signal-holdings-ingestor', () => {
     originalEndpoint = process.env.EXT_SIGNAL_ENDPOINT;
     mockWarn.mockClear();
     vi.unstubAllGlobals();
-    loaders.clearConfigCache();
   });
 
   afterEach(() => {
@@ -132,7 +131,6 @@ describe('ext-signal-holdings-ingestor', () => {
     }
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    loaders.clearConfigCache();
   });
 
   function dbWithMigration() {
@@ -449,7 +447,7 @@ describe('ext-signal-holdings-ingestor', () => {
   });
 
   it('loads committed config file shape', () => {
-    const cfg = loaders.loadExtSignalProvider({ fresh: true });
+    const cfg = loaders.loadExtSignalProvider();
     const onDisk = JSON.parse(
       readFileSync(join(PROJECT_ROOT, 'config', 'ext-signal-provider.json'), 'utf8'),
     ) as { enabled: boolean; strategies: unknown[] };

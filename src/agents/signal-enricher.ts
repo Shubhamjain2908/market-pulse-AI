@@ -42,7 +42,7 @@ export async function runSignalEnricher(opts: EnrichRunOptions = {}): Promise<En
   let momentumFactorSignalsWritten = 0;
 
   try {
-    const momentumUniverse = getMomentumUniverseSymbols({ fresh: true });
+    const momentumUniverse = getMomentumUniverseSymbols();
     const momSyms = opts.symbols?.length
       ? momentumUniverse.filter((s) => symbols.includes(s))
       : momentumUniverse;

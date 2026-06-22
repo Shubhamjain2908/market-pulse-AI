@@ -13,8 +13,6 @@ import type { StrategyGatesFile } from '../types/regime.js';
 import { RegimeSchema, StrategyGatesFileSchema } from '../types/regime.js';
 import { PROJECT_ROOT } from './project-paths.js';
 
-const cache = new Map<string, unknown>();
-
 const WatchlistFileSchema = z.object({
   description: z.string().optional(),
   symbols: z.array(z.string().min(1)).min(1),
@@ -100,8 +98,6 @@ export type EtfExclusionsFile = z.infer<typeof EtfExclusionsFileSchema>;
 export interface LoaderOptions {
   /** Override the path to the config file. */
   path?: string;
-  /** Skip the cache - useful in tests. */
-  fresh?: boolean;
 }
 
 export function loadWatchlist(opts: LoaderOptions = {}): WatchlistFile {
@@ -190,8 +186,7 @@ export function loadEtfExclusions(opts: LoaderOptions = {}): string[] {
   return [...new Set(symbols.map((s) => s.toUpperCase()))].sort((a, b) => a.localeCompare(b));
 }
 
-function readJsonConfig<T>(path: string, schema: z.ZodType<T>, fresh = false): T {
-  if (!fresh && cache.has(path)) return cache.get(path) as T;
+function readJsonConfig<T>(path: string, schema: z.ZodType<T>): T {
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');
@@ -215,13 +210,7 @@ function readJsonConfig<T>(path: string, schema: z.ZodType<T>, fresh = false): T
       .join('\n');
     throw new Error(`config at ${path} failed validation:\n${issues}`);
   }
-  cache.set(path, result.data);
   return result.data;
-}
-
-/** Clear the loader cache. Mostly useful for tests. */
-export function clearConfigCache(): void {
-  cache.clear();
 }
 
 const SectorMapSchema = z.record(z.string(), z.string());
@@ -232,24 +221,17 @@ const SectorMapSchema = z.record(z.string(), z.string());
  */
 export function loadSectorMap(opts: LoaderOptions = {}): Record<string, string> {
   const path = opts.path ?? resolve(process.cwd(), 'config/sector-map.json');
-  const cacheKey = `sector-map:${path}`;
-  if (!opts.fresh && cache.has(cacheKey)) return cache.get(cacheKey) as Record<string, string>;
   try {
     const raw = readFileSync(path, 'utf8');
     const json: unknown = JSON.parse(raw);
     const parsed = SectorMapSchema.safeParse(json);
-    if (!parsed.success) {
-      cache.set(cacheKey, {});
-      return {};
-    }
+    if (!parsed.success) return {};
     const upper: Record<string, string> = {};
     for (const [k, v] of Object.entries(parsed.data)) {
       upper[k.toUpperCase()] = v;
     }
-    cache.set(cacheKey, upper);
     return upper;
   } catch {
-    cache.set(cacheKey, {});
     return {};
   }
 }

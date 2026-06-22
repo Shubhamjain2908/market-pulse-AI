@@ -85,7 +85,7 @@ describe('strategies/momentum-rebalance', () => {
   function openMomentumTestDb(): ReturnType<typeof getDb> {
     const db = getDb({ path: dbPath });
     migrate(db);
-    seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
+    seedStrategyGates(loadStrategyGates().rows, db);
     return db;
   }
 

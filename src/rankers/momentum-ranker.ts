@@ -211,7 +211,7 @@ export function runMomentumRanker(opts: {
   const epsThreshold = cfg.false_flag_eps_threshold_pct;
   const falseFlagZThreshold = cfg.false_flag_z_threshold;
 
-  let universe = (opts.universe ?? getMomentumUniverseSymbols({ fresh: true })).map((s) =>
+  let universe = (opts.universe ?? getMomentumUniverseSymbols()).map((s) =>
     s.toUpperCase(),
   );
   universe = [...new Set(universe)].sort((a, b) => a.localeCompare(b));

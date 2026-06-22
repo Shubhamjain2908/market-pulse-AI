@@ -29,7 +29,7 @@ describe('fundamental-screen-audit', () => {
   it('reports full-pass counts for quality_at_value when fundamentals are percent-scaled', () => {
     const db = getDb({ path: dbPath });
     migrate(db);
-    seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
+    seedStrategyGates(loadStrategyGates().rows, db);
     const date = '2026-06-19';
     db.prepare(
       `INSERT INTO fundamentals (symbol, as_of, roe, profit_growth_yoy, debt_to_equity, pe, source)

@@ -151,7 +151,7 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
     }
   }
 
-  const universe = getMomentumUniverseSymbols({ fresh: true });
+  const universe = getMomentumUniverseSymbols();
   const survivorshipNote =
     'Survivorship bias: symbols absent from quotes are excluded; delisted names may inflate results.';
 
