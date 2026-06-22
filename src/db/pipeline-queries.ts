@@ -2,7 +2,7 @@
  * Pipeline stage audit trail (`pipeline_runs`). Wired from daily-workflow in a later PR.
  */
 
-import type { Database as DatabaseType, Statement } from 'better-sqlite3';
+import type { Database as DatabaseType } from 'better-sqlite3';
 
 import { child } from '../logger.js';
 import { getDb } from './connection.js';
@@ -43,25 +43,6 @@ const SELECT_FAILED_REQUIRED_STAGE_SQL = `
   LIMIT 1
 `;
 
-type PipelineStmts = {
-  insertPipelineStage: Statement;
-  selectFailedRequiredStage: Statement;
-};
-
-const pipelineStmtsByDb = new WeakMap<DatabaseType, PipelineStmts>();
-
-function pipelineStmts(db: DatabaseType): PipelineStmts {
-  let stmts = pipelineStmtsByDb.get(db);
-  if (!stmts) {
-    stmts = {
-      insertPipelineStage: db.prepare(INSERT_PIPELINE_STAGE_SQL),
-      selectFailedRequiredStage: db.prepare(SELECT_FAILED_REQUIRED_STAGE_SQL),
-    };
-    pipelineStmtsByDb.set(db, stmts);
-  }
-  return stmts;
-}
-
 export function recordPipelineStage(
   args: {
     runDate: string;
@@ -72,7 +53,7 @@ export function recordPipelineStage(
   },
   db: DatabaseType = getDb(),
 ): void {
-  pipelineStmts(db).insertPipelineStage.run({
+  db.prepare(INSERT_PIPELINE_STAGE_SQL).run({
     runDate: args.runDate,
     stage: args.stage,
     status: args.status,
@@ -94,7 +75,7 @@ export function recordPipelineStage(
 }
 
 export function hasFailedRequiredStage(runDate: string, db: DatabaseType = getDb()): boolean {
-  const row = pipelineStmts(db).selectFailedRequiredStage.get(runDate) as
+  const row = db.prepare(SELECT_FAILED_REQUIRED_STAGE_SQL).get(runDate) as
     | { found: number }
     | undefined;
   return row !== undefined;
