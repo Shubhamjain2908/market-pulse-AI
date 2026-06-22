@@ -417,9 +417,9 @@ describe('briefing composer (Phase 3–4)', () => {
     expect(result.html).toMatch(/<div class="mood-narrative"[^>]*>/);
   });
 
-  it('skips AI when skipAi=true', async () => {
+  it('skips AI when skipAi=true and no persisted theses', async () => {
     const result = await composeBriefing(
-      { date: today, watchlist: ['RELIANCE'], skipAi: true },
+      { date: today, watchlist: ['INFY'], skipAi: true },
       db,
       llm,
     );
@@ -430,6 +430,19 @@ describe('briefing composer (Phase 3–4)', () => {
     });
     expect(result.data.moodNarrative).toBeUndefined();
     expect(llm.calls).toHaveLength(0);
+  });
+
+  it('shows persisted theses when skipAi=true', async () => {
+    const result = await composeBriefing(
+      { date: today, watchlist: ['RELIANCE'], skipAi: true },
+      db,
+      llm,
+    );
+
+    expect(result.data.aiPicksStatus.kind).toBe('ok');
+    expect(result.data.theses).toHaveLength(1);
+    expect(result.html).toContain('RELIANCE');
+    expect(result.html).not.toContain('--skip-ai');
   });
 
   it('shows holiday messaging when marketClosure is set', async () => {

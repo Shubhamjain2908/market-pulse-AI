@@ -45,6 +45,16 @@ const FUNDAMENTAL_COLUMNS = new Set([
   'dividend_yield',
 ]);
 
+/** Yahoo uses decimal fractions; Screener uses percent — normalize at read time for screen DSL. */
+const PERCENT_SCALE_IF_FRACTION = new Set(['roe', 'roce', 'dividend_yield']);
+
+export function normalizeFundamentalForScreen(column: string, value: number): number {
+  if (!PERCENT_SCALE_IF_FRACTION.has(column)) return value;
+  // ponytail: |v|<1 heuristic; Screener stores e.g. 17.7% as 17.7 (unchanged). Upgrade: tag unit in DB.
+  if (Math.abs(value) > 0 && Math.abs(value) < 1) return value * 100;
+  return value;
+}
+
 const FLOW_SIGNALS = new Set([
   'fii_net',
   'dii_net',
@@ -128,7 +138,9 @@ export class DbSignalProvider implements SignalProvider {
     if (row) {
       for (const col of FUNDAMENTAL_COLUMNS) {
         const v = row[col];
-        if (typeof v === 'number' && Number.isFinite(v)) map.set(col, v);
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          map.set(col, normalizeFundamentalForScreen(col, v));
+        }
       }
     }
     this.fundamentals.set(symbol, map);

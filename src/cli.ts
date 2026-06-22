@@ -26,6 +26,8 @@
  *   mp schedule          Start croner jobs (08:45 / 16:30 weekdays, Sat 08:00, Sun 06:00 earnings)
  *   mp llm-smoke         Quick live LLM text+JSON sanity check for current provider
  *   mp ext-signal-smoke  Live ext-signal ingest + portfolio overlap report
+ *   mp fundamental-screen-audit  quality/dividend screen bottleneck audit
+ *   mp ext-signal-cross-ref  ext signals vs watchlist/momentum/portfolio overlap
  *   mp doctor            Print runtime/config diagnostics
  *   mp regime            Full regime agent (classify + LLM narrative → regime_daily)
  *   mp regime:classify   Deterministic regime only (narrative null)
@@ -75,7 +77,9 @@ import { syncSymbolSectorsFromYahoo } from './market/yahoo-sectors.js';
 import { runMomentumRanker } from './rankers/momentum-ranker.js';
 import { startScheduler } from './scheduler/market-scheduler.js';
 import { runEvaluatePaperTrades } from './scripts/evaluate-trades.js';
+import { runExtSignalCrossRef } from './scripts/ext-signal-cross-ref.js';
 import { runExtSignalSmoke } from './scripts/ext-signal-smoke.js';
+import { runFundamentalScreenAudit } from './scripts/fundamental-screen-audit.js';
 import {
   runMomentumRebalance,
   toMomentumRebalanceBriefingSummary,
@@ -755,6 +759,39 @@ program
       if (result.ingest.strategiesSucceeded === 0) {
         logger.error('ext-signal-smoke: no strategies ingested successfully');
         process.exitCode = 1;
+      }
+    } finally {
+      closeDb();
+    }
+  });
+
+program
+  .command('fundamental-screen-audit')
+  .description('audit quality_at_value / dividend_compounder pass rates and bottlenecks')
+  .action(() => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+    try {
+      const result = runFundamentalScreenAudit({ date });
+      console.log(JSON.stringify(result, null, 2));
+    } finally {
+      closeDb();
+    }
+  });
+
+program
+  .command('ext-signal-cross-ref')
+  .description('overlap ext_signal_holdings vs watchlist, momentum ranks, portfolio, paper trades')
+  .action(() => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+    try {
+      const result = runExtSignalCrossRef({ date });
+      console.log(JSON.stringify(result, null, 2));
+      if (result.summary.extSignalSymbols === 0) {
+        logger.warn(
+          'no ext_signal_holdings rows — run ext-signal-smoke after setting EXT_SIGNAL_* env vars',
+        );
       }
     } finally {
       closeDb();
