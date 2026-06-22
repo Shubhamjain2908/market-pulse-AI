@@ -1,6 +1,7 @@
 packages:
   - '.'
 
-# vite@6.4.x still depends on esbuild@0.25.x; force patched release for audit CI.
+# vite@6.4.x still depends on esbuild@0.25.x; cheerio@1.2.x pins undici@7.25.x — force patched releases for audit CI.
 overrides:
   esbuild: '>=0.28.1'
+  undici: '>=7.28.0'
