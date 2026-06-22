@@ -44,7 +44,7 @@ import { runRegimeAgent } from './agents/regime-agent.js';
 import { runSignalEnricher } from './agents/signal-enricher.js';
 import { runStockScreener } from './agents/stock-screener.js';
 import { generateTheses } from './agents/thesis-generator.js';
-import { deliverBriefing } from './briefing/index.js';
+import { deliverBriefing } from './briefing/dispatch.js';
 import { config } from './config/env.js';
 import { APP_NAME, APP_VERSION } from './constants.js';
 import {

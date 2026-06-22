@@ -3,7 +3,7 @@
  * callers don't need to reach into the harness directly.
  */
 
-import { type BacktestOptions, type BacktestSummary, runBacktest } from '../backtest/index.js';
+import { type BacktestOptions, type BacktestSummary, runBacktest } from '../backtest/harness.js';
 import { child } from '../logger.js';
 
 const log = child({ component: 'backtester' });
