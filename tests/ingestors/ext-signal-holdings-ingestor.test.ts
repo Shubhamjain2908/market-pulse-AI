@@ -21,7 +21,10 @@ vi.mock('../../src/logger.js', () => {
   return { child: stub, logger };
 });
 
-import { runExtSignalHoldingsIngestor } from '../../src/ingestors/ext-signal-holdings-ingestor.js';
+import {
+  runExtSignalHoldingsIngestor,
+  unwrapHoldingsPayload,
+} from '../../src/ingestors/ext-signal-holdings-ingestor.js';
 
 const ENDPOINT = 'https://example.com/mcp/';
 const STRATEGIES = [
@@ -183,6 +186,20 @@ describe('ext-signal-holdings-ingestor', () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mockWarn).toHaveBeenCalled();
+  });
+
+  it('unwraps ftInvstr MCP envelope { data: { positions } }', () => {
+    const payload = unwrapHoldingsPayload({
+      scope: { strategy: 'DCF_Compounder_Stack' },
+      data: {
+        strategy: 'DCF_Compounder_Stack',
+        as_of: '2026-06-19 00:00:00',
+        positions: [{ symbol: 'BSE', price: 4024.9, weight_pct: 6.59 }],
+      },
+      meta: { disclaimer: 'research' },
+    });
+    expect(payload.positions).toHaveLength(1);
+    expect(payload.positions?.[0]?.symbol).toBe('BSE');
   });
 
   it('ingests both strategies on success', async () => {
@@ -439,6 +456,7 @@ describe('ext-signal-holdings-ingestor', () => {
     expect(typeof cfg.enabled).toBe('boolean');
     expect(onDisk.enabled).toBe(true);
     expect(Array.isArray(onDisk.strategies)).toBe(true);
+    expect(onDisk.strategies).toHaveLength(3);
     expect(onDisk).not.toHaveProperty('endpoint');
   });
 });
