@@ -14,7 +14,7 @@ import { addCalendarDaysIst } from '../../market/trading-days.js';
 import { buildTrade } from '../metrics.js';
 import { loadOhlcvMap } from '../quotes-loader.js';
 import type { OptionARegimeSource, RegimeProxyMap } from '../regime-proxy.js';
-import { type OHLCVBar, SIGNAL_WINDOW_LEN, computeSignalsForLastBar } from '../signals.js';
+import { computeSignalsForLastBar, type OHLCVBar, SIGNAL_WINDOW_LEN } from '../signals.js';
 import type { BacktestExitReason, ClosedSimTrade } from '../types.js';
 import { filterOptionAUniverse } from '../universe-filter.js';
 
