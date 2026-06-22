@@ -16,9 +16,9 @@ import { isoDateIst } from '../ingestors/base/dates.js';
 import { applyCorporateActionsFromYahooSplits } from '../ingestors/corporate-actions.js';
 import { runExtSignalHoldingsIngestor } from '../ingestors/ext-signal-holdings-ingestor.js';
 import { fetchInavSnapshots } from '../ingestors/inav-fetcher.js';
-import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { ingestYahooSnapshots } from '../ingestors/yahoo-snapshot-ingestor.js';
-import { clearRunBudget, LlmBudgetExceededError, startRunBudget } from '../llm/index.js';
+import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
+import { LlmBudgetExceededError, clearRunBudget, startRunBudget } from '../llm/index.js';
 import { child } from '../logger.js';
 import { getMarketClosure, isSundayIst } from '../market/nse-calendar.js';
 import { type EvaluateTradesResult, runEvaluatePaperTrades } from '../scripts/evaluate-trades.js';
@@ -70,11 +70,9 @@ export async function runDailyWorkflow(
     const sundayDb = getDb();
     recordPipelineStage({ runDate: date, stage: 'earnings-calendar', status: 'started' }, sundayDb);
     try {
-      await syncMomentumEarningsCalendarFromYahoo(
-        getMomentumUniverseSymbols(),
-        sundayDb,
-        { refDate: date },
-      );
+      await syncMomentumEarningsCalendarFromYahoo(getMomentumUniverseSymbols(), sundayDb, {
+        refDate: date,
+      });
       recordPipelineStage(
         { runDate: date, stage: 'earnings-calendar', status: 'success' },
         sundayDb,
