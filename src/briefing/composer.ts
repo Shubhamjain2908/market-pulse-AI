@@ -14,9 +14,9 @@ import { getThesisRankMeta } from '../agents/thesis-generator.js';
 import { getAlertsForDate } from '../analysers/alerts.js';
 import {
   formatQualityGarpFunnelSummary,
-  QUALITY_GARP_SCREEN,
   readQualityGarpFunnelForDate,
-} from '../analysers/quality-garp.js';
+} from '../analysers/quality-garp-funnel.js';
+import { QUALITY_GARP_SCREEN } from '../analysers/quality-garp-gates.js';
 import { config } from '../config/env.js';
 import { loadScreens, loadSectorMap, loadWatchlist } from '../config/loaders.js';
 import {

@@ -1,6 +1,6 @@
 import Database, { type Database as DatabaseType } from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { resolveQualityGarpSymbols } from '../../src/analysers/quality-garp.js';
+import { resolveQualityGarpSymbols } from '../../src/analysers/quality-garp-universe.js';
 import { migrate } from '../../src/db/migrate.js';
 
 function seedAnnual(db: DatabaseType, symbols: string[]): void {
