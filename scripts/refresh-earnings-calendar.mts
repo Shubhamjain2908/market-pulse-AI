@@ -14,7 +14,7 @@ async function main(): Promise<void> {
   migrate();
   const db = getDb();
   const asOf = process.env.AS_OF?.trim() || isoDateIst();
-  const symbols = getMomentumUniverseSymbols({ fresh: true });
+  const symbols = getMomentumUniverseSymbols();
   const result = await syncMomentumEarningsCalendarFromYahoo(symbols, db, { refDate: asOf });
   console.log(JSON.stringify({ asOf, ...result }, null, 2));
   closeDb();
