@@ -26,10 +26,20 @@ const INSERT_PIPELINE_STAGE_SQL = `
   )
 `;
 
+/** Latest row per required stage — retries must not leave stale failures. */
+const LATEST_REQUIRED_STAGE_STATUS_SQL = `
+  SELECT stage, status FROM (
+    SELECT stage, status,
+      ROW_NUMBER() OVER (PARTITION BY stage ORDER BY id DESC) AS rn
+    FROM pipeline_runs
+    WHERE run_date = ? AND stage IN ('enrich', 'regime', 'screen')
+  )
+  WHERE rn = 1
+`;
+
 const SELECT_FAILED_REQUIRED_STAGE_SQL = `
-  SELECT 1 AS found FROM pipeline_runs
-  WHERE run_date = ? AND status = 'failed'
-    AND stage IN ('enrich', 'regime', 'screen')
+  SELECT 1 AS found FROM (${LATEST_REQUIRED_STAGE_STATUS_SQL})
+  WHERE status = 'failed'
   LIMIT 1
 `;
 
@@ -88,4 +98,15 @@ export function hasFailedRequiredStage(runDate: string, db: DatabaseType = getDb
     | { found: number }
     | undefined;
   return row !== undefined;
+}
+
+export function listFailedRequiredStages(runDate: string, db: DatabaseType = getDb()): string[] {
+  const rows = db
+    .prepare(
+      `SELECT stage FROM (${LATEST_REQUIRED_STAGE_STATUS_SQL})
+     WHERE status = 'failed'
+     ORDER BY stage`,
+    )
+    .all(runDate) as { stage: string }[];
+  return rows.map((r) => r.stage);
 }

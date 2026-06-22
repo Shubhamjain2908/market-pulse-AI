@@ -28,7 +28,11 @@ import {
   listAllowedGatesForRegime,
   type PortfolioHoldingRow,
 } from '../db/index.js';
-import { hasFailedRequiredStage, recordPipelineStage } from '../db/pipeline-queries.js';
+import {
+  hasFailedRequiredStage,
+  listFailedRequiredStages,
+  recordPipelineStage,
+} from '../db/pipeline-queries.js';
 import {
   type FlowAttributionSnapshot,
   getFlowAttribution,
@@ -186,18 +190,6 @@ function pipelineStageSucceeded(runDate: string, stage: string, db: DatabaseType
     )
     .get(runDate, stage) as { ok: number } | undefined;
   return row !== undefined;
-}
-
-function listFailedRequiredStages(runDate: string, db: DatabaseType): string[] {
-  const rows = db
-    .prepare(
-      `SELECT DISTINCT stage FROM pipeline_runs
-       WHERE run_date = ? AND status = 'failed'
-         AND stage IN ('enrich', 'regime', 'screen')
-       ORDER BY stage`,
-    )
-    .all(runDate) as { stage: string }[];
-  return rows.map((r) => r.stage);
 }
 
 export async function composeBriefing(
@@ -428,8 +420,8 @@ function resolveAiPicksStatus(
   thesisRun?: ComposeBriefingOptions['thesisRun'],
 ): AiPicksSectionStatus {
   if (marketClosure) return { kind: 'holiday', label: marketClosure.label };
-  if (skipAi) return { kind: 'skipped', reason: 'skip_ai_flag' };
   if (thesesLen > 0) return { kind: 'ok' };
+  if (skipAi) return { kind: 'skipped', reason: 'skip_ai_flag' };
   if (thesisRun && thesisRun.failed > 0 && thesisRun.generated === 0) {
     return { kind: 'all_failed', failed: thesisRun.failed };
   }
