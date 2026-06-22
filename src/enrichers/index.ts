@@ -14,6 +14,7 @@ export {
   ema,
   type FiftyTwoWeek,
   fiftyTwoWeek,
+  mean,
   type Ohlc,
   rsi,
   sma,
