@@ -13,7 +13,6 @@ function stubClient(payload: unknown): HttpClient {
     name: 'nse-stub',
     got: vi.fn() as unknown as HttpClient['got'],
     cookieJar: undefined,
-    acquire: vi.fn(async () => {}),
     request: vi.fn(async () => payload as never),
   };
 }
@@ -37,8 +36,6 @@ describe('NseIngestor.fetchFiiDii', () => {
       },
     ];
     const client = stubClient(payload);
-    // Bypass cookie priming for the unit test.
-    Object.assign(client, { acquire: vi.fn(async () => {}) });
     const ingestor = new NseIngestor(client);
     Object.assign(ingestor, { cookiesPrimed: true });
 

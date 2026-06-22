@@ -24,7 +24,6 @@ export interface FetchGoldCotResult {
 export async function fetchGoldCot(db: DatabaseType = getDb()): Promise<FetchGoldCotResult> {
   const client = createHttpClient({ name: 'cftc-cot-gold' });
   try {
-    await client.acquire();
     const body = await client.got(CFTC_GOLD_DISAGG_URL).text();
     const parsed = extractComexGoldFromDisaggFile(body);
     if (!parsed) {

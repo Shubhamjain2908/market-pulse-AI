@@ -8,7 +8,6 @@
  * pipeline continue.
  */
 
-import { RATE_LIMITS } from '../../constants.js';
 import { child } from '../../logger.js';
 import { skipScreenerFundamentalsFetch } from '../../market/screener-symbol-skip.js';
 import type { Fundamentals } from '../../types/domain.js';
@@ -53,7 +52,6 @@ export class ScreenerIngestor implements Ingestor {
       client ??
       createHttpClient({
         name: 'screener',
-        rateLimit: { requestsPerSecond: RATE_LIMITS.screener, burst: 2 },
       });
   }
 
@@ -89,7 +87,6 @@ export class ScreenerIngestor implements Ingestor {
   }
 
   private async fetchPage(symbol: string, signal?: AbortSignal): Promise<string> {
-    await this.client.acquire(signal);
     // Try consolidated first (preferred for groups), then standalone.
     const paths = buildScreenerCompanyPaths(symbol);
     let lastErr: unknown;

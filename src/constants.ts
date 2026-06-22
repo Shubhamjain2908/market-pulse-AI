@@ -24,15 +24,4 @@ export const SEBI_DISCLAIMER = [
   'Do not redistribute. Do not automate order placement based on these signals.',
 ].join(' ');
 
-/**
- * Default rate limits per data source (requests per second). Conservative on
- * purpose - exceeding these can get our IP soft-banned.
- */
-export const RATE_LIMITS = {
-  nse: 2,
-  yahoo: 5,
-  screener: 1,
-  rss: 2,
-} as const;
 
-export type DataSourceName = keyof typeof RATE_LIMITS;

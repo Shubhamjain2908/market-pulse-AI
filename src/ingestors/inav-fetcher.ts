@@ -7,7 +7,6 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { z } from 'zod';
 import { loadEtfExclusions } from '../config/loaders.js';
-import { RATE_LIMITS } from '../constants.js';
 import { getDb } from '../db/connection.js';
 import { type InavSnapshotRow, upsertInavSnapshots } from '../db/queries.js';
 import { child } from '../logger.js';
@@ -155,7 +154,6 @@ export async function fetchInavSnapshots(
     opts.client ??
     createHttpClient({
       name: 'nse-inav',
-      rateLimit: { requestsPerSecond: RATE_LIMITS.nse, burst: 2 },
       withCookieJar: true,
     });
 

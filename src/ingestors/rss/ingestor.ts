@@ -13,7 +13,6 @@
  */
 
 import Parser from 'rss-parser';
-import { RATE_LIMITS } from '../../constants.js';
 import { child } from '../../logger.js';
 import type { NewsItem } from '../../types/domain.js';
 import { createHttpClient, type HttpClient } from '../base/http-client.js';
@@ -47,7 +46,6 @@ export class RssNewsIngestor implements Ingestor {
       opts.httpClient ??
       createHttpClient({
         name: 'rss',
-        rateLimit: { requestsPerSecond: RATE_LIMITS.rss, burst: 2 },
       });
   }
 
@@ -86,7 +84,6 @@ export class RssNewsIngestor implements Ingestor {
   }
 
   private async fetchFeedXml(feed: FeedDefinition, signal?: AbortSignal): Promise<string> {
-    await this.client.acquire(signal);
     const headers: Record<string, string> = {
       accept: 'application/rss+xml,application/xml;q=0.9,text/xml;q=0.8,*/*;q=0.5',
     };

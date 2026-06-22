@@ -15,7 +15,6 @@
  */
 
 import { z } from 'zod';
-import { RATE_LIMITS } from '../../constants.js';
 import { child } from '../../logger.js';
 import type { FiiDiiRow, RawQuote } from '../../types/domain.js';
 import { isoDateIst } from '../base/dates.js';
@@ -62,7 +61,6 @@ export class NseIngestor implements Ingestor {
       client ??
       createHttpClient({
         name: 'nse',
-        rateLimit: { requestsPerSecond: RATE_LIMITS.nse, burst: 4 },
         withCookieJar: true,
         // Intentionally no XHR-style defaults here — those are added
         // per-request by `apiHeaders()` to avoid breaking the cookie prime.

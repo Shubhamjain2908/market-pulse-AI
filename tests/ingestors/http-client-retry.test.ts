@@ -89,11 +89,6 @@ describe('HttpClient retry options', () => {
     expect(typeof client.got.extend).toBe('function');
   });
 
-  it('acquire resolves immediately without rate limiter', async () => {
-    const client = createHttpClient({ name: 'test-acquire' });
-    await expect(client.acquire()).resolves.toBeUndefined();
-  });
-
   it('request() accepts a url string and returns a promise', () => {
     const client = createHttpClient({ name: 'test-request' });
     // request() returns a Promise — verify the contract without hitting the network.
@@ -182,15 +177,5 @@ describe('HttpClient with cookie jar', () => {
   it('does not create a cookie jar by default', () => {
     const client = createHttpClient({ name: 'test-no-cookies' });
     expect(client.cookieJar).toBeUndefined();
-  });
-});
-
-describe('HttpClient rate limiting', () => {
-  it('acquire resolves when rate limiter is configured', async () => {
-    const client = createHttpClient({
-      name: 'test-rate-limit',
-      rateLimit: { requestsPerSecond: 100, burst: 10 },
-    });
-    await expect(client.acquire()).resolves.toBeUndefined();
   });
 });

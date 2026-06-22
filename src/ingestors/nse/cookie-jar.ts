@@ -31,7 +31,6 @@ const BROWSER_NAV_HEADERS = {
 
 export async function primeNseCookies(client: HttpClient, signal?: AbortSignal): Promise<void> {
   for (const path of PRIME_PATHS) {
-    await client.acquire(signal);
     await client.got(`${NSE_BASE}${path}`, {
       // Override BOTH the API-style defaults and ensure browser-y headers.
       // Using `headers: undefined` for the API ones forces got to drop them.

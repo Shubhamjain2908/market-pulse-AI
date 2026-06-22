@@ -15,7 +15,6 @@
 import got, { type Got, type OptionsOfTextResponseBody, type RequestError } from 'got';
 import { CookieJar } from 'tough-cookie';
 import { child } from '../../logger.js';
-import { RateLimiter, type RateLimiterOptions } from './rate-limiter.js';
 
 // ---------------------------------------------------------------------------
 // Retry configuration
@@ -87,8 +86,6 @@ export interface HttpClientOptions {
   name: string;
   /** Defaults applied to every request (e.g. `prefixUrl`, `headers`). */
   defaults?: OptionsOfTextResponseBody;
-  /** Token-bucket configuration. Leave undefined to disable rate limiting. */
-  rateLimit?: RateLimiterOptions;
   /** Enable a cookie jar — required for NSE-style session sites. */
   withCookieJar?: boolean;
   /**
@@ -102,8 +99,6 @@ export interface HttpClient {
   readonly name: string;
   readonly got: Got;
   readonly cookieJar: CookieJar | undefined;
-  /** Acquire a rate-limit token. Most callers should use `request()` instead. */
-  acquire(signal?: AbortSignal): Promise<void>;
   /** Convenience wrapper — acquires a token then calls `got()`. */
   request<T>(url: string, options?: OptionsOfTextResponseBody): Promise<T>;
 }
@@ -128,7 +123,6 @@ const DEFAULT_HEADERS = {
 
 export function createHttpClient(opts: HttpClientOptions): HttpClient {
   const cookieJar = opts.withCookieJar ? new CookieJar() : undefined;
-  const limiter = opts.rateLimit ? new RateLimiter(opts.rateLimit) : undefined;
 
   const retryCfg: RetryOptions = { ...DEFAULT_RETRY, ...opts.retry };
 
@@ -185,17 +179,11 @@ export function createHttpClient(opts: HttpClientOptions): HttpClient {
     ...opts.defaults,
   });
 
-  const acquire = async (signal?: AbortSignal): Promise<void> => {
-    if (limiter) await limiter.acquire(signal);
-  };
-
   return {
     name: opts.name,
     got: instance,
     cookieJar,
-    acquire,
     async request<T>(url: string, options?: OptionsOfTextResponseBody): Promise<T> {
-      await acquire(options?.signal ?? undefined);
       return instance(url, options).json<T>();
     },
   };
