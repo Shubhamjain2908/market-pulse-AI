@@ -787,7 +787,7 @@ export function insertPaperTradeIfAbsent(
       timeHorizon: row.timeHorizon,
       maxHoldDays: row.maxHoldDays,
       stopType: row.stopType ?? 'trailing',
-      trailingMultiplier: row.trailingMultiplier ?? 2,
+      trailingMultiplier: row.trailingMultiplier ?? 2.5,
       atr14AtEntry: row.atr14AtEntry ?? null,
       notes: row.notes ?? null,
     });

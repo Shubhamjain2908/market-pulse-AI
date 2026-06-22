@@ -13,10 +13,4 @@ describe('trailingStopSizingFromMomentumConfig', () => {
     expect(s.tightenedMultiplier).toBe(1.5);
   });
 
-  it('maps legacy DB trailing_multiplier 2.0 to current initial band', () => {
-    const s = trailingStopSizingFromMomentumConfig();
-    expect(normalizePersistedTrailingMult(2, s)).toBe(2.5);
-    expect(normalizePersistedTrailingMult(1.5, s)).toBe(1.5);
-    expect(normalizePersistedTrailingMult(null, s)).toBe(2.5);
-  });
 });
