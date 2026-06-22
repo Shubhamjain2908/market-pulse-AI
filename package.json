@@ -26,9 +26,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "migrate": "tsx src/cli.ts migrate",
-    "regime:signals": "tsx src/cli.ts regime-signals",
     "regime": "tsx src/cli.ts regime",
-    "regime:classify": "tsx src/cli.ts regime:classify",
     "regime:gate-summary": "tsx src/cli.ts regime:gate-summary",
     "regime:seed-gates": "tsx scripts/seed-regime-gates.mts",
     "regime:audit-history": "tsx scripts/audit-regime-history.mts",
@@ -49,12 +47,12 @@
     "daily": "tsx src/cli.ts daily",
     "kite-login": "tsx src/cli.ts kite-login",
     "kite-auth": "tsx src/auth/kite-auth-server.ts",
-    "kite-verify": "tsx src/cli.ts kite-verify",
     "scan": "tsx src/cli.ts scan",
     "schedule": "tsx src/cli.ts schedule",
     "healthcheck": "tsx deploy/healthcheck.ts",
     "llm:smoke:google-studio": "LLM_PROVIDER=google-studio tsx scripts/smoke-google-studio.mts",
     "llm:smoke:google-studio:flash": "LLM_PROVIDER=google-studio VERTEX_MODEL=gemini-2.5-flash tsx scripts/smoke-google-studio.mts",
+    "smoke:llm": "tsx scripts/smoke-llm.mts",
     "prepare": "husky",
     "deploy": "pnpm build && pm2 reload deploy/ecosystem.config.cjs"
   },
@@ -98,13 +96,13 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.3",
     "@types/nodemailer": "^8.0.0",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.9",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.7",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.9"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

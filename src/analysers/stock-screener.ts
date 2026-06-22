@@ -18,11 +18,6 @@ import { runScreenEngine } from './engine.js';
 import {
   createEmptyQualityGarpFunnel,
   persistQualityGarpFunnel,
-  type QualityGarpFailGate,
-  type QualityGarpFunnelCounts,
-  recordQualityGarpFunnelFailure,
-} from './quality-garp-funnel.js';
-import {
   QUALITY_GARP_DE_MAX,
   QUALITY_GARP_PB_MAX,
   QUALITY_GARP_PE_MAX,
@@ -33,11 +28,12 @@ import {
   QUALITY_GARP_SCREEN,
   QUALITY_GARP_SMA50_PCT_MAX,
   QUALITY_GARP_TOTAL_GATES,
-} from './quality-garp-gates.js';
-import {
+  type QualityGarpFailGate,
+  type QualityGarpFunnelCounts,
   type QualityGarpUniverseScope,
+  recordQualityGarpFunnelFailure,
   resolveQualityGarpSymbols,
-} from './quality-garp-universe.js';
+} from './quality-garp.js';
 import { DbSignalProvider, type SignalProvider } from './signal-provider.js';
 
 const log = child({ component: 'stock-screener-analyser' });

@@ -19,26 +19,20 @@
  *   mp daily             One-shot: full pipeline + portfolio analysis (recommended)
  *   mp sync-sectors      Cache Yahoo sector/industry in `symbols` (for portfolio sector rollup)
  *   mp kite-login        Refresh Zerodha Kite Connect access_token (run daily)
- *   mp kite-verify       GET portfolio/holdings — verify API key + access_token (same as sync)
  *   mp portfolio-sync    Pull holdings from Kite (or manual) into the DB
  *   mp portfolio-analyse Run LLM-driven HOLD/ADD/TRIM/EXIT analysis per holding
  *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
  *   mp schedule          Start croner jobs (08:45 / 16:30 weekdays, Sat 08:00, Sun 06:00 earnings)
- *   mp llm-smoke         Quick live LLM text+JSON sanity check for current provider
  *   mp ext-signal-smoke  Live ext-signal ingest + portfolio overlap report
  *   mp fundamental-screen-audit  quality/dividend screen bottleneck audit
  *   mp ext-signal-cross-ref  ext signals vs watchlist/momentum/portfolio overlap
  *   mp doctor            Print runtime/config diagnostics
  *   mp regime            Full regime agent (classify + LLM narrative → regime_daily)
- *   mp regime:classify   Deterministic regime only (narrative null)
  *   mp regime:gate-summary  Print allowed strategies for today's regime
- *   mp regime-signals    Print regime inputs + scores for a date (validation)
  * Run `mp --help` or `mp <cmd> --help` for full options.
  */
 
 import { Command } from 'commander';
-import { z } from 'zod';
-import { runBacktester } from './agents/backtester.js';
 import { runBriefingComposer } from './agents/briefing-composer.js';
 import { runDailyIngestor } from './agents/daily-ingestor.js';
 import { runDailyWorkflow } from './agents/daily-workflow.js';
@@ -49,8 +43,8 @@ import { runRegimeAgent } from './agents/regime-agent.js';
 import { runSignalEnricher } from './agents/signal-enricher.js';
 import { runStockScreener } from './agents/stock-screener.js';
 import { generateTheses } from './agents/thesis-generator.js';
-import { runRegimeClassifier } from './analysers/regime-classifier.js';
-import { deliverBriefing } from './briefing/index.js';
+import { runBacktest } from './backtest/harness.js';
+import { deliverBriefing } from './briefing/dispatch.js';
 import { config } from './config/env.js';
 import { APP_NAME, APP_VERSION } from './constants.js';
 import {
@@ -61,12 +55,10 @@ import {
   listAllowedGatesForRegime,
   migrate,
 } from './db/index.js';
-import { computeRegimeSignals } from './enrichers/regime-signals.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
-import { KiteApiError, KiteClient } from './ingestors/kite/client.js';
-import { getLlmProvider } from './llm/index.js';
+
 import { logger } from './logger.js';
 import {
   defaultIngestSymbolUniverse,
@@ -104,17 +96,6 @@ program
   });
 
 program
-  .command('regime-signals')
-  .description('print regime signal inputs + weighted scores for validation (Phase 1)')
-  .action(async () => {
-    ensureDb();
-    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
-    const signals = computeRegimeSignals(getDb(), date);
-    console.log(JSON.stringify(signals, null, 2));
-    closeDb();
-  });
-
-program
   .command('regime:gate-summary')
   .description(
     'print allowed strategies + size multipliers for the regime on the given date (default today)',
@@ -143,21 +124,6 @@ program
         2,
       ),
     );
-    closeDb();
-  });
-
-program
-  .command('regime:classify')
-  .description('deterministic regime only → regime_daily (narrative null; for backfill)')
-  .action(async () => {
-    ensureDb();
-    const date = optionalCliIsoDate(program.opts().date);
-    const result = runRegimeClassifier({ date });
-    logger.info(
-      { regime: result.regime, rawRegime: result.rawRegime, crisis: result.crisisOverride },
-      'regime classified (deterministic)',
-    );
-    console.log(JSON.stringify(result, null, 2));
     closeDb();
   });
 
@@ -351,7 +317,7 @@ program
   .option('-n, --screen <name>', 'restrict to a single screen by name')
   .action(async (opts: { start: string; end: string; holdDays: string; screen?: string }) => {
     ensureDb();
-    const summary = await runBacktester({
+    const summary = runBacktest({
       startDate: opts.start,
       endDate: opts.end,
       holdDays: Number(opts.holdDays) || 10,
@@ -609,48 +575,6 @@ program
   });
 
 program
-  .command('kite-verify')
-  .description(
-    'call GET portfolio/holdings using .env (same auth as portfolio-sync); prints errors from Kite',
-  )
-  .action(async () => {
-    const client = new KiteClient();
-    if (!client.hasSession()) {
-      logger.error(
-        'KITE_API_KEY and KITE_ACCESS_TOKEN must be set. Run `pnpm cli kite-login` first.',
-      );
-      process.exitCode = 1;
-      return;
-    }
-    try {
-      const holdings = await client.getHoldings();
-      logger.info(
-        {
-          apiBase: config.KITE_API_BASE,
-          holdingsCount: holdings.length,
-          sampleSymbols: holdings.slice(0, 5).map((h) => h.tradingsymbol),
-        },
-        'Kite verify OK — portfolio/holdings succeeded',
-      );
-    } catch (err) {
-      if (err instanceof KiteApiError) {
-        logger.error(
-          {
-            message: err.message,
-            errorType: err.errorType,
-            httpStatus: err.statusCode,
-            treatedAsExpiredToken: err.isTokenExpired(),
-          },
-          'Kite verify failed (same request portfolio-sync uses)',
-        );
-      } else {
-        logger.error({ err }, 'Kite verify failed');
-      }
-      process.exitCode = 1;
-    }
-  });
-
-program
   .command('portfolio-sync')
   .description('sync holdings from Kite (or config/portfolio.json) into the DB')
   .action(async () => {
@@ -796,38 +720,6 @@ program
     } finally {
       closeDb();
     }
-  });
-
-program
-  .command('llm-smoke')
-  .description('quick live LLM text + JSON smoke check for active provider')
-  .action(async () => {
-    const provider = getLlmProvider();
-    console.log(`provider: ${provider.name} (model=${provider.model})`);
-
-    const text = await provider.generateText({
-      system: 'You are a concise assistant.',
-      user: 'Reply with exactly: PONG',
-      temperature: 0,
-      maxOutputTokens: 64,
-    });
-    console.log(`text: ${text.text}`);
-
-    const SmokeSchema = z.object({
-      ok: z.boolean(),
-      provider: z.string().min(1),
-    });
-
-    const json = await provider.generateJson({
-      system: 'Return strict JSON only. No markdown.',
-      user: 'Return JSON object: {"ok": true, "provider": "llm-smoke"}',
-      schema: SmokeSchema,
-      maxRetries: 0,
-      temperature: 0,
-      maxOutputTokens: 256,
-    });
-    console.log(`json: ${JSON.stringify(json.data)}`);
-    console.log('LLM smoke test passed.');
   });
 
 program

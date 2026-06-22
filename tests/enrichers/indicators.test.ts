@@ -7,7 +7,7 @@ import {
   rsi,
   sma,
   volumeRatio,
-} from '../../src/enrichers/index.js';
+} from '../../src/enrichers/technical/indicators.js';
 
 describe('indicators/sma', () => {
   it('returns nulls until lookback is satisfied, then a rolling mean', () => {
