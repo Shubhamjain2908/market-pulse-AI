@@ -7,7 +7,7 @@
  */
 
 import { runAlertScan, runStockScreenAnalyser } from '../analysers/index.js';
-import type { QualityGarpFunnelCounts } from '../analysers/quality-garp-funnel.js';
+import type { QualityGarpFunnelCounts } from '../analysers/quality-garp.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 import type { Regime } from '../types/regime.js';

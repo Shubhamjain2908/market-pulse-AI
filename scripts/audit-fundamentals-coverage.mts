@@ -11,7 +11,7 @@ import {
   QUALITY_GARP_PEG_MAX,
   QUALITY_GARP_ROCE_MIN,
   QUALITY_GARP_ROE_MIN,
-} from '../src/analysers/quality-garp-gates.js';
+} from '../src/analysers/quality-garp.js';
 import { closeDb, getDb, migrate } from '../src/db/index.js';
 import { getQualityGarpFundamentals } from '../src/db/queries.js';
 import { isoDateIst } from '../src/ingestors/base/dates.js';
