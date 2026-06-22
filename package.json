@@ -72,7 +72,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.91.1",
+    "@anthropic-ai/sdk": "^0.105.0",
     "@google/genai": "^2.8.0",
     "better-sqlite3": "^11.5.0",
     "cheerio": "^1.2.0",
