@@ -23,5 +23,3 @@ export const SEBI_DISCLAIMER = [
   "All investment decisions are the recipient's sole responsibility.",
   'Do not redistribute. Do not automate order placement based on these signals.',
 ].join(' ');
-
-
