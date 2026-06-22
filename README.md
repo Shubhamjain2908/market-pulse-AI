@@ -233,10 +233,8 @@ pnpm cli fundamental-screen-audit  # quality_at_value / dividend_compounder gate
 pnpm cli ext-signal-cross-ref      # ext_signal_holdings vs watchlist, mom_rank, portfolio
 
 # Phase 6 — Market regime filter
-pnpm regime-signals        # print signal inputs + score buckets (validation)
 pnpm regime                # classify + LLM narrative (or templated fallback) → regime_daily
 pnpm regime --no-narrative # skip LLM; templated fallback narrative only (still upserts regime_daily)
-pnpm regime:classify       # deterministic classification → regime_daily (narrative null)
 pnpm regime:gate-summary   # allowed strategies + multipliers for regime on -d date
 pnpm regime:seed-gates      # upsert config/strategy-gates.json → regime_strategy_gate
 pnpm regime:backfill        # historical regime_daily backfill script
