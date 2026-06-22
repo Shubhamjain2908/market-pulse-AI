@@ -1,13 +1,33 @@
-import Database from 'better-sqlite3';
-import { describe, expect, it } from 'vitest';
+import { rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadStrategyGates } from '../../src/config/loaders.js';
-import { migrate } from '../../src/db/migrate.js';
+import { closeDb, getDb, migrate } from '../../src/db/index.js';
 import { seedStrategyGates } from '../../src/db/regime-queries.js';
 import { runFundamentalScreenAudit } from '../../src/scripts/fundamental-screen-audit.js';
 
 describe('fundamental-screen-audit', () => {
+  let dbPath: string;
+
+  beforeEach(() => {
+    dbPath = join(tmpdir(), `mp-fund-audit-${Date.now()}-${Math.random()}.db`);
+    process.env.DATABASE_PATH = dbPath;
+  });
+
+  afterEach(() => {
+    closeDb();
+    try {
+      rmSync(dbPath);
+      rmSync(`${dbPath}-wal`);
+      rmSync(`${dbPath}-shm`);
+    } catch {
+      // ignore
+    }
+  });
+
   it('reports full-pass counts for quality_at_value when fundamentals are percent-scaled', () => {
-    const db = new Database(':memory:');
+    const db = getDb({ path: dbPath });
     migrate(db);
     seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
     const date = '2026-06-19';
@@ -22,6 +42,5 @@ describe('fundamental-screen-audit', () => {
     const result = runFundamentalScreenAudit({ date, db });
     const qav = result.fundamentals.find((r) => r.screenName === 'quality_at_value');
     expect(qav?.fullPassCount).toBe(1);
-    db.close();
   });
 });

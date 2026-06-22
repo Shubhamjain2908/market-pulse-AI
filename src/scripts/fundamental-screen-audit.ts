@@ -139,12 +139,15 @@ export function runFundamentalScreenAudit(
     (AUDIT_SCREENS as readonly string[]).includes(s.name),
   );
 
-  const engine = runScreenEngine({
-    date: sessionDate,
-    symbols: watchlist,
-    screens,
-    persist: false,
-  });
+  const engine = runScreenEngine(
+    {
+      date: sessionDate,
+      symbols: watchlist,
+      screens,
+      persist: false,
+    },
+    db,
+  );
 
   return {
     sessionDate,
