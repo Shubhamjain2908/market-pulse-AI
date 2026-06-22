@@ -5,7 +5,7 @@
 - Keep stage outputs DB-backed and rerunnable for replay/debug (`src/db/schema.sql`, `src/cli.ts`).
 
 ## Core Architecture
-- Main orchestration is `runDailyWorkflow` in `src/agents/daily-workflow.ts`: optional portfolio sync + stop-loss -> ingest -> enrich -> regime -> gated screens -> sentiment/thesis (if AI enabled) -> paper-trade evaluation -> briefing. Each stage records to `pipeline_runs` via `src/db/pipeline-queries.ts`; briefing degrades when required stages (`enrich`, `regime`, `screen`) failed.
+- Main orchestration is `runDailyWorkflow` in `src/agents/daily-workflow.ts`: optional portfolio sync + stop-loss -> ingest -> enrich -> regime -> gated screens -> sentiment/thesis (if AI enabled) -> paper-trade evaluation -> briefing. Each stage appends to `pipeline_runs` via `src/db/pipeline-queries.ts`; briefing degrades when the **latest** status for required stages (`enrich`, `regime`, `screen`) is `failed` (retries on the same `run_date` can clear degraded mode).
 - `src/cli.ts` stays thin command wiring; domain logic belongs under `src/agents`, `src/analysers`, `src/enrichers`, `src/strategies`.
 - Market-closure mode is first-class: weekends/holidays skip ingest and fresh LLM calls but still compose a persisted-data briefing.
 
@@ -36,6 +36,7 @@
 - Bootstrap: `pnpm install`, `pnpm migrate`, `pnpm cli doctor`.
 - Main runs: `pnpm daily`, `pnpm daily --skip-ai`, `pnpm cli run-all`.
 - Stage debugging: `pnpm cli ingest -d YYYY-MM-DD`, `pnpm cli enrich -d YYYY-MM-DD`, `pnpm cli regime -d YYYY-MM-DD --no-narrative`, `pnpm cli screen -d YYYY-MM-DD`, `pnpm cli brief -d YYYY-MM-DD --skip-ai`.
+- Diagnostics: `pnpm cli fundamental-screen-audit -d YYYY-MM-DD`, `pnpm cli ext-signal-cross-ref -d YYYY-MM-DD`, `pnpm cli ext-signal-smoke`.
 - Quality gate before handoff: `pnpm typecheck && pnpm test && pnpm lint`.
 
 ## Scheduler and Tests

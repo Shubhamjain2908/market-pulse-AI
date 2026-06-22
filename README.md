@@ -228,6 +228,9 @@ pnpm cli schedule          # start built-in croner schedule (Asia/Kolkata):
 pnpm cli schedule --run-now
 
 pnpm cli doctor            # config diagnostics (no secrets)
+pnpm cli ext-signal-smoke  # live ftInvstr holdings ingest + overlap smoke
+pnpm cli fundamental-screen-audit  # quality_at_value / dividend_compounder gate bottlenecks
+pnpm cli ext-signal-cross-ref      # ext_signal_holdings vs watchlist, mom_rank, portfolio
 
 # Phase 6 — Market regime filter
 pnpm regime-signals        # print signal inputs + score buckets (validation)
@@ -308,7 +311,7 @@ sources transparently:
 | Source                    | Signals                                                                      |
 | ------------------------- | ---------------------------------------------------------------------------- |
 | `signals` table (technical + optional momentum) | Technical (`pnpm cli enrich`): `close`, `sma_20`, `sma_50`, `sma_200`, `ema_9`, `ema_21`, `rsi_14`, `atr_14`, `volume_ratio_20d`, `pct_from_52w_high`, `pct_from_52w_low`. **Momentum factors + blackout** (same enrich path, momentum-universe symbols): `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`, `mom_earnings_blackout`. **Momentum rank** (`pnpm cli momentum-rank`): `mom_rank`, `mom_composite_score`, `mom_false_flag`, `mom_rank_excluded`. |
-| `fundamentals` table      | `pe`, `pb`, `peg`, `roe`, `roce`, `debt_to_equity`, `revenue_growth_yoy`, `profit_growth_yoy`, `promoter_holding_pct`, `promoter_holding_change_qoq`, `dividend_yield`, `market_cap` |
+| `fundamentals` table      | `pe`, `pb`, `peg`, `roe`, `roce`, `debt_to_equity`, `revenue_growth_yoy`, `profit_growth_yoy`, `promoter_holding_pct`, `promoter_holding_change_qoq`, `dividend_yield`, `market_cap`. **Unit mix:** Yahoo snapshot stores `roe` / `roce` / `dividend_yield` as decimals (e.g. `0.18`); Screener uses percent (`18`). [`normalizeFundamentalForScreen`](src/analysers/signal-provider.ts) scales `|v| < 1` × 100 at read time so DSL thresholds match. |
 | `fii_dii` table (computed) | `fii_net`, `dii_net`, `fii_net_5d_sum`, `dii_net_5d_sum`, `fii_net_streak_days`, `dii_net_streak_days` |
 
 Operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `between` (tuple value),
@@ -452,7 +455,7 @@ A **meta-layer** on top of the existing pipeline: each open session gets a singl
 - **Screen engine** ([`src/analysers/engine.ts`](src/analysers/engine.ts)): skips screens disallowed for the current regime; applies size multiplier into persisted match metadata (`__regime_meta`).
 - **Stock screener** passes through the active regime; **thesis generator** skips `ai_picks_generation` when the gate says so ([`src/agents/thesis-generator.ts`](src/agents/thesis-generator.ts)).
 - **Risk tooling** (`portfolio_exit_signals`, `trailing_stop_update`) stays on across regimes per config.
-- **Briefing**: [`src/briefing/regime-card.ts`](src/briefing/regime-card.ts) renders a card + optional change banner; [`src/briefing/composer.ts`](src/briefing/composer.ts) loads `regime_daily` for the briefing session date (including weekend/holiday handling via last open session). **Pipeline audit:** each `daily-workflow` stage writes to `pipeline_runs`; if `enrich`, `regime`, or `screen` failed today, the brief degrades (banner only — screens, AI picks, portfolio, and momentum omitted; regime card shown only when regime succeeded). Email delivery sets `briefings.delivered_at` only after SMTP accepts ≥1 recipient.
+- **Briefing**: [`src/briefing/regime-card.ts`](src/briefing/regime-card.ts) renders a card + optional change banner; [`src/briefing/composer.ts`](src/briefing/composer.ts) loads `regime_daily` for the briefing session date (including weekend/holiday handling via last open session). **Pipeline audit:** each `daily-workflow` stage appends to `pipeline_runs`; `hasFailedRequiredStage` uses the **latest** row per required stage (`enrich`, `regime`, `screen`) so a successful retry clears degraded mode. When any of those stages' latest status is `failed`, the brief degrades (banner — screens, AI picks, portfolio, and momentum omitted; regime card shown only when regime's latest status succeeded). `brief --skip-ai` still renders persisted theses from `theses` when present. Email delivery sets `briefings.delivered_at` only after SMTP accepts ≥1 recipient.
 - **FII/DII flow attribution** (rule-based, no LLM): [`getFlowAttribution`](src/db/queries.ts) sums the last up to **five cash-segment trading sessions** on or before the briefing date; [`classifyFlowAttribution`](src/briefing/composer.ts) maps rolling FII/DII nets (₹ crore) to **INSTITUTIONAL_ROTATION**, **BROAD_EXIT**, or **FII_ACCUMULATION** (thresholds in composer). **BALANCED** and windows with **&lt; 3 sessions** are suppressed. The block sits in the regime card **between the score tiles and the regime narrative**, with table + inline styles for email (juice-inlined from [`renderBriefing`](src/briefing/template.ts)).
 - **ETF iNAV pricing** (rule-based, fail-open): [`fetchInavSnapshots`](src/ingestors/inav-fetcher.ts) runs after Yahoo snapshot ingest (before regime classify), reads NSE [`/api/etf`](https://www.nseindia.com/api/etf) for symbols in [`config/etf-exclusions.json`](config/etf-exclusions.json), persists [`inav_snapshots`](src/db/migrations/0018_inav_snapshots.sql). Briefing **ETF Pricing** section ([`etf-pricing-card.ts`](src/briefing/etf-pricing-card.ts)) shows **WARN** when held ETF premium **&gt; 0.5%**, **NOTE** when discount **&gt; 0.25%**; mid-band and missing NSE data produce no section.
 - **COMEX gold COT** (weekly, fail-open): [`pnpm cot:gold`](scripts/cot-gold-fetch.ts) pulls CFTC disaggregated [`f_disagg.txt`](https://www.cftc.gov/dea/newcot/f_disagg.txt) (COMEX / `CMX` gold; managed-money as non-commercial proxy; columns resolved by CFTC header names). Stores [`cot_gold`](src/db/migrations/0019_cot_gold.sql). Regime card shows one line when **CROWDED_LONG** (managed-money net/OI **&gt; 35%**) or **CROWDED_SHORT** (managed-money **net short**, `mm_net &lt; 0`); **NEUTRAL** suppressed. Scheduled **Sunday 07:45 IST** before momentum rebalance (briefing-only; momentum rebalance does not read `cot_gold`).
@@ -556,7 +559,7 @@ A **regime-gated**, long-horizon sleeve that combines Yahoo annual/snapshot fund
 
 Hard-null on `pe`, `pb`, `third_roe`, `latest_roce`, `debt_to_equity`, `peg`, `sma_50`, `close` blocks the symbol (guardrail). ETF list enforced; **no** `alreadyOwned` filter on the screener itself (thesis generator still skips held / open-paper symbols).
 
-**Refresh fundamentals:** `pnpm fundamentals:refresh` (Python annual backfill + screener + Yahoo snapshot). Coverage audit: `pnpm fundamentals:audit`.
+**Refresh fundamentals:** `pnpm fundamentals:refresh` (Python annual backfill + screener + Yahoo snapshot). Coverage audit: `pnpm fundamentals:audit`. Screen gate audit (watchlist vs full fundamentals universe, per-criterion pass counts): `pnpm cli fundamental-screen-audit -d YYYY-MM-DD`.
 
 **Universe:** live `cli screen` and backtest both evaluate all symbols with `yahoo_annual` rows (~241), not the watchlist. Funnel log (`data/quality_garp_funnel.jsonl`) records `universe_scope` per run.
 
