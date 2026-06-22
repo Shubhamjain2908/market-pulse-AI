@@ -24,21 +24,19 @@ export function trailingStopSizingFromMomentumConfig(
 
 const TIGHT_EPS = 1e-6;
 
-/** True when persisted mult is in the tightened band (incl. legacy 1.5). */
+/** True when persisted mult is in the tightened band. */
 export function isTightenedTrailingMult(stored: number, sizing: TrailingStopSizing): boolean {
   if (Math.abs(stored - sizing.tightenedMultiplier) < TIGHT_EPS) return true;
-  if (sizing.tightenedMultiplier === 1.5 && Math.abs(stored - 1.5) < TIGHT_EPS) return true;
   return false;
 }
 
-/** True when persisted mult is in the initial band (incl. legacy 2.0). */
+/** True when persisted mult is in the initial band. */
 export function isInitialTrailingMult(stored: number, sizing: TrailingStopSizing): boolean {
   if (Math.abs(stored - sizing.initialMultiplier) < TIGHT_EPS) return true;
-  if (Math.abs(stored - 2) < TIGHT_EPS && sizing.initialMultiplier !== 2) return true;
   return false;
 }
 
-/** Map DB `trailing_multiplier` to config bands (legacy 2.0 → 2.5 initial). */
+/** Map DB `trailing_multiplier` to config bands. */
 export function normalizePersistedTrailingMult(
   stored: number | null | undefined,
   sizing: TrailingStopSizing,
