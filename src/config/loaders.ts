@@ -13,8 +13,6 @@ import type { StrategyGatesFile } from '../types/regime.js';
 import { RegimeSchema, StrategyGatesFileSchema } from '../types/regime.js';
 import { PROJECT_ROOT } from './project-paths.js';
 
-const cache = new Map<string, unknown>();
-
 const WatchlistFileSchema = z.object({
   description: z.string().optional(),
   symbols: z.array(z.string().min(1)).min(1),
@@ -100,24 +98,22 @@ export type EtfExclusionsFile = z.infer<typeof EtfExclusionsFileSchema>;
 export interface LoaderOptions {
   /** Override the path to the config file. */
   path?: string;
-  /** Skip the cache - useful in tests. */
-  fresh?: boolean;
 }
 
 export function loadWatchlist(opts: LoaderOptions = {}): WatchlistFile {
   const path = opts.path ?? resolve(process.cwd(), 'config/watchlist.json');
-  return readJsonConfig(path, WatchlistFileSchema, opts.fresh);
+  return readJsonConfig(path, WatchlistFileSchema);
 }
 
 export function loadScreens(opts: LoaderOptions = {}): ScreenDefinition[] {
   const path = opts.path ?? resolve(process.cwd(), 'config/screens.json');
-  const file = readJsonConfig(path, ScreensFileSchema, opts.fresh);
+  const file = readJsonConfig(path, ScreensFileSchema);
   return file.screens;
 }
 
 export function loadPortfolio(opts: LoaderOptions = {}): Portfolio {
   const path = opts.path ?? resolve(process.cwd(), 'config/portfolio.json');
-  const file = readJsonConfig(path, PortfolioFileSchema, opts.fresh);
+  const file = readJsonConfig(path, PortfolioFileSchema);
   // Drop helper fields and zero-qty placeholders.
   return {
     currency: file.currency,
@@ -128,13 +124,13 @@ export function loadPortfolio(opts: LoaderOptions = {}): Portfolio {
 
 export function loadStrategyGates(opts: LoaderOptions = {}): StrategyGatesFile {
   const path = opts.path ?? resolve(process.cwd(), 'config/strategy-gates.json');
-  return readJsonConfig(path, StrategyGatesFileSchema, opts.fresh);
+  return readJsonConfig(path, StrategyGatesFileSchema);
 }
 
 /** Bucketed symbol lists for the momentum screener (~150-name union). */
 export function loadMomentumUniverse(opts: LoaderOptions = {}): MomentumUniverseFile {
   const path = opts.path ?? resolve(process.cwd(), 'config/momentum-universe.json');
-  return readJsonConfig(path, MomentumUniverseFileSchema, opts.fresh);
+  return readJsonConfig(path, MomentumUniverseFileSchema);
 }
 
 /** Deduped union of all momentum universe buckets, uppercased and sorted. */
@@ -149,7 +145,7 @@ export function getMomentumUniverseSymbols(opts: LoaderOptions = {}): string[] {
 
 export function loadMomentumConfig(opts: LoaderOptions = {}): MomentumConfig {
   const path = opts.path ?? resolve(process.cwd(), 'config/momentum-config.json');
-  return readJsonConfig(path, MomentumConfigSchema, opts.fresh);
+  return readJsonConfig(path, MomentumConfigSchema);
 }
 
 const ExtSignalProviderFileSchema = z.object({
@@ -176,7 +172,7 @@ const EXT_SIGNAL_PROVIDER_DISABLED: ExtSignalProviderFile = {
 export function loadExtSignalProvider(opts: LoaderOptions = {}): ExtSignalProviderFile {
   const path = opts.path ?? resolve(PROJECT_ROOT, 'config/ext-signal-provider.json');
   try {
-    return readJsonConfig(path, ExtSignalProviderFileSchema, opts.fresh);
+    return readJsonConfig(path, ExtSignalProviderFileSchema);
   } catch {
     return EXT_SIGNAL_PROVIDER_DISABLED;
   }
@@ -185,13 +181,12 @@ export function loadExtSignalProvider(opts: LoaderOptions = {}): ExtSignalProvid
 /** Configurable symbol list where RSI/volume heuristics should be ignored. */
 export function loadEtfExclusions(opts: LoaderOptions = {}): string[] {
   const path = opts.path ?? resolve(process.cwd(), 'config/etf-exclusions.json');
-  const file = readJsonConfig(path, EtfExclusionsFileSchema, opts.fresh);
+  const file = readJsonConfig(path, EtfExclusionsFileSchema);
   const symbols = file.symbols ?? [];
   return [...new Set(symbols.map((s) => s.toUpperCase()))].sort((a, b) => a.localeCompare(b));
 }
 
-function readJsonConfig<T>(path: string, schema: z.ZodType<T>, fresh = false): T {
-  if (!fresh && cache.has(path)) return cache.get(path) as T;
+function readJsonConfig<T>(path: string, schema: z.ZodType<T>): T {
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');
@@ -215,13 +210,7 @@ function readJsonConfig<T>(path: string, schema: z.ZodType<T>, fresh = false): T
       .join('\n');
     throw new Error(`config at ${path} failed validation:\n${issues}`);
   }
-  cache.set(path, result.data);
   return result.data;
-}
-
-/** Clear the loader cache. Mostly useful for tests. */
-export function clearConfigCache(): void {
-  cache.clear();
 }
 
 const SectorMapSchema = z.record(z.string(), z.string());
@@ -232,24 +221,17 @@ const SectorMapSchema = z.record(z.string(), z.string());
  */
 export function loadSectorMap(opts: LoaderOptions = {}): Record<string, string> {
   const path = opts.path ?? resolve(process.cwd(), 'config/sector-map.json');
-  const cacheKey = `sector-map:${path}`;
-  if (!opts.fresh && cache.has(cacheKey)) return cache.get(cacheKey) as Record<string, string>;
   try {
     const raw = readFileSync(path, 'utf8');
     const json: unknown = JSON.parse(raw);
     const parsed = SectorMapSchema.safeParse(json);
-    if (!parsed.success) {
-      cache.set(cacheKey, {});
-      return {};
-    }
+    if (!parsed.success) return {};
     const upper: Record<string, string> = {};
     for (const [k, v] of Object.entries(parsed.data)) {
       upper[k.toUpperCase()] = v;
     }
-    cache.set(cacheKey, upper);
     return upper;
   } catch {
-    cache.set(cacheKey, {});
     return {};
   }
 }

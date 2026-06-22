@@ -7,7 +7,7 @@ import { closeDb, getDb, migrate, seedStrategyGates } from '../src/db/index.js';
 
 migrate();
 const db = getDb();
-const file = loadStrategyGates({ fresh: true });
+const file = loadStrategyGates();
 const n = seedStrategyGates(file.rows, db);
 console.log(`Upserted ${n} regime_strategy_gate rows`);
 closeDb();

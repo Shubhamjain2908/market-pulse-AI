@@ -70,11 +70,9 @@ export async function runDailyWorkflow(
     const sundayDb = getDb();
     recordPipelineStage({ runDate: date, stage: 'earnings-calendar', status: 'started' }, sundayDb);
     try {
-      await syncMomentumEarningsCalendarFromYahoo(
-        getMomentumUniverseSymbols({ fresh: true }),
-        sundayDb,
-        { refDate: date },
-      );
+      await syncMomentumEarningsCalendarFromYahoo(getMomentumUniverseSymbols(), sundayDb, {
+        refDate: date,
+      });
       recordPipelineStage(
         { runDate: date, stage: 'earnings-calendar', status: 'success' },
         sundayDb,

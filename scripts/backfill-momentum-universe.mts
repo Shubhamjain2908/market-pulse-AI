@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   migrate();
   const db = getDb();
   const asOf = process.env.AS_OF?.trim() || isoDateIst();
-  const symbols = getMomentumUniverseSymbols({ fresh: true });
+  const symbols = getMomentumUniverseSymbols();
   const ingestor = new YahooIngestor({ lookbackDays: LOOKBACK_DAYS });
 
   let rowsUpserted = 0;

@@ -131,7 +131,7 @@ describe('regime_strategy_gate helpers', () => {
   it('momentum_breakout + BEAR_TRENDING → not allowed', () => {
     const db = new Database(':memory:');
     migrate(db);
-    seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
+    seedStrategyGates(loadStrategyGates().rows, db);
     expect(isStrategyAllowed('momentum_breakout', 'BEAR_TRENDING', db)).toBe(false);
     db.close();
   });
@@ -139,7 +139,7 @@ describe('regime_strategy_gate helpers', () => {
   it('quality_at_value + CHOPPY → size multiplier 0.5 (maps spec quality_garp)', () => {
     const db = new Database(':memory:');
     migrate(db);
-    seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
+    seedStrategyGates(loadStrategyGates().rows, db);
     expect(getSizeMultiplier('quality_at_value', 'CHOPPY', db)).toBe(0.5);
     db.close();
   });
