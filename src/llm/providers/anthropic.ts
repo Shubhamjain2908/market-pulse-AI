@@ -36,18 +36,7 @@ async function withTimeout<T>(
 }
 
 function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
-  if (typeof AbortSignal.any === 'function') {
-    return AbortSignal.any([a, b]);
-  }
-  const merged = new AbortController();
-  const abort = () => merged.abort();
-  if (a.aborted || b.aborted) {
-    merged.abort();
-    return merged.signal;
-  }
-  a.addEventListener('abort', abort, { once: true });
-  b.addEventListener('abort', abort, { once: true });
-  return merged.signal;
+  return AbortSignal.any([a, b]);
 }
 
 export class AnthropicProvider implements LlmProvider {

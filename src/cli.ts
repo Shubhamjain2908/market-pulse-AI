@@ -33,7 +33,6 @@
  */
 
 import { Command } from 'commander';
-import { runBacktester } from './agents/backtester.js';
 import { runBriefingComposer } from './agents/briefing-composer.js';
 import { runDailyIngestor } from './agents/daily-ingestor.js';
 import { runDailyWorkflow } from './agents/daily-workflow.js';
@@ -44,6 +43,7 @@ import { runRegimeAgent } from './agents/regime-agent.js';
 import { runSignalEnricher } from './agents/signal-enricher.js';
 import { runStockScreener } from './agents/stock-screener.js';
 import { generateTheses } from './agents/thesis-generator.js';
+import { runBacktest } from './backtest/harness.js';
 import { deliverBriefing } from './briefing/index.js';
 import { config } from './config/env.js';
 import { APP_NAME, APP_VERSION } from './constants.js';
@@ -317,7 +317,7 @@ program
   .option('-n, --screen <name>', 'restrict to a single screen by name')
   .action(async (opts: { start: string; end: string; holdDays: string; screen?: string }) => {
     ensureDb();
-    const summary = await runBacktester({
+    const summary = runBacktest({
       startDate: opts.start,
       endDate: opts.end,
       holdDays: Number(opts.holdDays) || 10,
