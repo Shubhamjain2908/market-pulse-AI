@@ -96,13 +96,13 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.3",
     "@types/nodemailer": "^8.0.0",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.9",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.7",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.9"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
