@@ -1,11 +1,83 @@
+/**
+ * Quality-GARP screener: gate thresholds, funnel tracking, symbol resolution.
+ * Consolidated from quality-garp-gates.ts, quality-garp-funnel.ts, quality-garp-universe.ts.
+ */
+
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import type { Database as DatabaseType } from 'better-sqlite3';
 import { config } from '../config/env.js';
+import { loadWatchlist } from '../config/loaders.js';
 import { child } from '../logger.js';
 import type { Regime } from '../types/regime.js';
-import type { QualityGarpUniverseScope } from './quality-garp-universe.js';
 
 const log = child({ component: 'quality-garp-funnel' });
+
+// ---------------------------------------------------------------------------
+// Symbol resolution (universe)
+// ---------------------------------------------------------------------------
+
+/** How the quality_garp symbol list was resolved for this run. */
+export type QualityGarpUniverseScope = 'yahoo_annual' | 'watchlist' | 'override';
+
+export interface QualityGarpSymbolResolution {
+  symbols: string[];
+  universeScope: QualityGarpUniverseScope;
+}
+
+/**
+ * Live + backtest default: all symbols with `yahoo_annual` fundamentals (~241).
+ * Matches audit denominators and backtest `resolveBacktestSymbols`.
+ */
+export function resolveQualityGarpSymbols(
+  db: DatabaseType,
+  overrideSymbols?: string[],
+): QualityGarpSymbolResolution {
+  if (overrideSymbols != null) {
+    return {
+      symbols: overrideSymbols.map((s) => s.toUpperCase()),
+      universeScope: 'override',
+    };
+  }
+
+  const symbols = (
+    db
+      .prepare(`SELECT DISTINCT symbol FROM fundamentals WHERE source = 'yahoo_annual'`)
+      .pluck()
+      .all() as string[]
+  ).map((s) => s.toUpperCase());
+
+  return { symbols, universeScope: 'yahoo_annual' };
+}
+
+/** Watchlist-only resolution (legacy); not used by live quality_garp today. */
+export function resolveQualityGarpWatchlistSymbols(): QualityGarpSymbolResolution {
+  return {
+    symbols: loadWatchlist().symbols.map((s) => s.toUpperCase()),
+    universeScope: 'watchlist',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Gate thresholds
+// ---------------------------------------------------------------------------
+
+/** Shared Quality-GARP v2 gate thresholds (screener + audit). */
+
+export const QUALITY_GARP_SCREEN = 'quality_garp';
+export const QUALITY_GARP_TOTAL_GATES = 10;
+export const QUALITY_GARP_PE_MAX = 35;
+export const QUALITY_GARP_PB_MAX = 6;
+export const QUALITY_GARP_ROCE_MIN = 0.2;
+export const QUALITY_GARP_DE_MAX = 0.5;
+export const QUALITY_GARP_PEG_MAX = 1.2;
+export const QUALITY_GARP_ROE_MIN = 0.18;
+export const QUALITY_GARP_RSI_MAX = 45;
+export const QUALITY_GARP_SMA50_PCT_MAX = 5;
+
+// ---------------------------------------------------------------------------
+// Funnel types
+// ---------------------------------------------------------------------------
 
 export type QualityGarpFailGate =
   | 'etf_exclusion'
@@ -50,6 +122,10 @@ export interface QualityGarpFunnelRecord {
   funnel: QualityGarpFunnelCounts;
   recordedAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// Funnel helpers
+// ---------------------------------------------------------------------------
 
 export function createEmptyQualityGarpFunnel(): QualityGarpFunnelCounts {
   return {
