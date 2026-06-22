@@ -2,10 +2,7 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  composeBriefing,
-  validateMoodNarrative,
-} from '../../src/briefing/composer.js';
+import { composeBriefing, validateMoodNarrative } from '../../src/briefing/composer.js';
 import {
   closeDb,
   getDb,
@@ -623,8 +620,6 @@ describe('briefing composer (Phase 3–4)', () => {
     expect(() => validateMoodNarrative('Aggressive')).toThrow();
     expect(() => validateMoodNarrative('Only three words here')).toThrow();
   });
-
-
 
   it('includes signal performance (paper) section', async () => {
     const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
