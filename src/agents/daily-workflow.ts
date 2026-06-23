@@ -54,7 +54,7 @@ export interface DailyWorkflowResult {
   portfolioCount: number;
   hasNarrative: boolean;
   html: string;
-  delivery: 'file' | 'email' | 'slack' | 'telegram';
+  delivery: 'file' | 'email';
   /** True when `date` was a weekend or NSE holiday — no ingest / enrichment / fresh LLMs ran. */
   holidayMode?: boolean;
   /** Human-readable closure label when `holidayMode` is true. */

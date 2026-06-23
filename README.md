@@ -109,7 +109,7 @@ flowchart LR
     Regime --> Analyse["Stage 3 - Analyser<br/>gated screens + Thesis LLM"]
     Analyse --> ScreensDB[("screens table")]
     ScreensDB --> Brief["Stage 4 - Briefing Composer<br/>(LLM HTML + regime card)"]
-    Brief --> Deliver{{"file / email / slack / telegram"}}
+    Brief --> Deliver{{"file / email"}}
     LlmAbstraction["LlmProvider<br/>(Cursor / Anthropic / Vertex / OpenAI)"] -.-> Regime
     LlmAbstraction -.-> Analyse
     LlmAbstraction -.-> Brief

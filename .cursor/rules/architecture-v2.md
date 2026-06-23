@@ -288,7 +288,7 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 
 ### Infrastructure
 - **`briefings`** — `(id)` PK, index on `date`. Columns: `date, html_content, 
-  delivery_method, delivered_at`. Delivery methods: `file | email | slack | telegram`.
+  delivery_method, delivered_at`. Delivery methods: `file | email`.
   Email: `delivered_at` is set only when SMTP accepts ≥1 recipient (`src/briefing/delivery/email.ts`).
 - **`pipeline_runs`** — append-only stage audit (migration `0022`). Columns: `run_date, stage, status, started_at, finished_at, error_msg, metadata` (JSON). Index `(run_date, stage)`. Multiple rows per `(run_date, stage)` on retries; `hasFailedRequiredStage` uses latest `id` per required stage. Written by `daily-workflow.ts` and `composeBriefing`.
 - **`portfolio_analysis_llm`** — view over `portfolio_analysis` excluding `model = 'none'` stale-holdings placeholders (migration `0022`).

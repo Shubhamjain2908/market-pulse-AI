@@ -13,7 +13,7 @@ const log = child({ component: 'briefing-composer' });
 
 export interface BriefRunOptions {
   date?: string;
-  delivery?: 'file' | 'email' | 'slack' | 'telegram';
+  delivery?: 'file' | 'email';
   /** Skip LLM-generated sections (narrative, etc.). */
   skipAi?: boolean;
   /** Weekend / NSE holiday — closed-market brief from persisted DB rows only. */

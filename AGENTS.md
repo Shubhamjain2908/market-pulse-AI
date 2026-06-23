@@ -14,7 +14,7 @@
 - DB pattern is explicit prepared statements + transactions (no ORM) in `src/db/queries.ts` and domain helpers (`src/db/pipeline-queries.ts`, `src/db/regime-queries.ts`, etc.).
 - Migrations are append-only SQL in `src/db/migrations`; `schema.sql` is base migration in `src/db/migrate.ts`.
 - LLM abstraction is `LlmProvider` (`src/llm/types.ts`); provider selection is centralized in `src/llm/factory.ts`.
-- External surfaces: market data (`free` Yahoo/NSE/Screener or Kite), delivery (`file`/`email`/`slack`/`telegram`), providers (`cursor-agent`, `vertex`, `anthropic`, `openai`, `google-studio`, `mock`).
+- External surfaces: market data (`free` Yahoo/NSE/Screener or Kite), delivery (`file`/`email`), providers (`cursor-agent`, `vertex`, `anthropic`, `openai`, `google-studio`, `mock`).
 
 ## Project Conventions
 - Validate env/config/LLM JSON with zod (`src/config/env.ts`, `src/config/loaders.ts`); avoid unvalidated parsing paths.

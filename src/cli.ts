@@ -432,24 +432,19 @@ program
 program
   .command('brief')
   .description('stage 4: compose + deliver the daily briefing')
-  .option(
-    '--delivery <method>',
-    "override delivery method ('file' | 'email' | 'slack' | 'telegram')",
-  )
+  .option('--delivery <method>', "override delivery method ('file' | 'email')")
   .option('--skip-ai', 'skip LLM narrative generation in the briefing')
-  .action(
-    async (opts: { delivery?: 'file' | 'email' | 'slack' | 'telegram'; skipAi?: boolean }) => {
-      ensureDb();
-      const date = optionalCliIsoDate(program.opts().date);
-      const result = await runBriefingComposer({
-        date,
-        delivery: opts.delivery,
-        skipAi: opts.skipAi,
-      });
-      await deliverBriefing(result.html, result.date, opts.delivery ?? config.BRIEFING_DELIVERY);
-      closeDb();
-    },
-  );
+  .action(async (opts: { delivery?: 'file' | 'email'; skipAi?: boolean }) => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date);
+    const result = await runBriefingComposer({
+      date,
+      delivery: opts.delivery,
+      skipAi: opts.skipAi,
+    });
+    await deliverBriefing(result.html, result.date, opts.delivery ?? config.BRIEFING_DELIVERY);
+    closeDb();
+  });
 
 program
   .command('evaluate')
@@ -753,8 +748,7 @@ program
         },
         googleApplicationCredentials: redact(config.GOOGLE_APPLICATION_CREDENTIALS),
         smtp: redact(config.SMTP_USER),
-        slack: redact(config.SLACK_WEBHOOK_URL),
-        telegram: redact(config.TELEGRAM_BOT_TOKEN),
+
         extSignalEndpoint: redact(process.env.EXT_SIGNAL_ENDPOINT),
         extSignalApiKey: redact(process.env.EXT_SIGNAL_API_KEY),
         vertexProject: config.GOOGLE_VERTEX_PROJECT ? 'set' : 'missing',
