@@ -119,7 +119,7 @@ Two abstractions keep the system portable:
 
 | Interface       | Purpose                                                   | Default                                           |
 | --------------- | --------------------------------------------------------- | ------------------------------------------------- |
-| `Ingestor`      | Pluggable data sources (`NSE`, `Yahoo`, `Screener`, `Kite`) | Yahoo + NSE + Screener + RSS (free tier)          |
+| `Ingestor`      | Fixed data source adapters for daily ingest (`NSE`, `Yahoo`, `Screener`, `RSS`) | Yahoo + NSE + Screener + RSS (free tier)          |
 | `LlmProvider`   | Pluggable LLM backend (`cursor-agent`, `anthropic`, `vertex`, `openai`) | `cursor-agent` (uses your existing subscription)  |
 
 ---
@@ -341,14 +341,13 @@ configured screen against historical EOD data:
 
 **Live `regime_daily` vs backtest proxy** — Full classifier (`runRegimeClassifier` / `computeRegimeSignals`) uses VIX, FII, and `signals` breadth; persisted labels use **3-session** agreement (`applyPersistence`). The Option A **proxy** intentionally diverges for runnable backtests without historical enrich. Audit persisted rows: `pnpm exec tsx scripts/audit-regime-history.mts --from … --to …`.
 
-### Switching the market data provider
+### Kite / live portfolio settings
 
-Set `MARKET_DATA_PROVIDER`:
+`daily`/`ingest` always use the fixed free ingestors (`YahooIngestor`, `NseIngestor`, `ScreenerIngestor`, `RssNewsIngestor`).
+Set `MARKET_DATA_PROVIDER` only for live Kite-backed paths:
 
-- `free` (default) — NSE public JSON endpoints + Yahoo Finance + Screener.in
-- `kite` — adds Zerodha Kite Connect for live portfolio + LTP. EOD
-  historical data still comes from Yahoo (Kite's historical API is a
-  paid add-on we don't depend on).
+- `free` (default) — no Kite live portfolio/LTP; daily ingest still stays on Yahoo/NSE/Screener/RSS.
+- `kite` — enables Zerodha Kite Connect for live portfolio + LTP. EOD historical data still comes from Yahoo (Kite's historical API is a paid add-on we don't depend on).
 
 ### Connecting Zerodha Kite (Phase 5)
 
@@ -366,7 +365,7 @@ To enable it:
    configured.
 2. Fill these into `.env`:
    ```
-   MARKET_DATA_PROVIDER=kite
+   MARKET_DATA_PROVIDER=kite   # live portfolio/LTP only; daily ingest stays on Yahoo/NSE/Screener/RSS
    PORTFOLIO_SOURCE=kite
    KITE_API_KEY=...
    KITE_API_SECRET=...

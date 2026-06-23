@@ -10,12 +10,11 @@
 import { config } from '../config/env.js';
 import { getDb, insertNews, upsertFiiDii, upsertFundamentals, upsertQuotes } from '../db/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
-import {
-  bootstrapIngestors,
-  type IngestorCapability,
-  type IngestorContext,
-  pickIngestor,
-} from '../ingestors/index.js';
+import { NseIngestor } from '../ingestors/nse/ingestor.js';
+import { RssNewsIngestor } from '../ingestors/rss/ingestor.js';
+import { ScreenerIngestor } from '../ingestors/screener/ingestor.js';
+import type { IngestorCapability, IngestorContext } from '../ingestors/types.js';
+import { YahooIngestor } from '../ingestors/yahoo/ingestor.js';
 import { child } from '../logger.js';
 import { defaultIngestSymbolUniverse } from '../market/ingest-symbols.js';
 import { syncSymbolSectorsFromYahoo } from '../market/yahoo-sectors.js';
@@ -44,7 +43,10 @@ export interface IngestRunResult {
 }
 
 export async function runDailyIngestor(opts: IngestRunOptions = {}): Promise<IngestRunResult> {
-  bootstrapIngestors();
+  const quoteIngestor = new YahooIngestor();
+  const fiiIngestor = new NseIngestor();
+  const newsIngestor = new RssNewsIngestor();
+  const fundIngestor = new ScreenerIngestor();
 
   const date = opts.date ?? isoDateIst();
   const symbols = opts.symbols
@@ -63,10 +65,8 @@ export async function runDailyIngestor(opts: IngestRunOptions = {}): Promise<Ing
   };
 
   // ---- Quotes (Yahoo by default for bulk historical) ----
-  const quoteIngestor = pickIngestor('quotes');
-  if (quoteIngestor?.fetchQuotes) {
+  if (quoteIngestor.fetchQuotes) {
     try {
-      await quoteIngestor.init?.(ctx);
       const maxR = config.INGEST_QUOTES_MAX_RETRIES;
       let pending = symbols;
       let totalWritten = 0;
@@ -119,8 +119,7 @@ export async function runDailyIngestor(opts: IngestRunOptions = {}): Promise<Ing
   }
 
   // ---- FII / DII (NSE) ----
-  const fiiIngestor = pickIngestor('fii_dii');
-  if (fiiIngestor?.fetchFiiDii) {
+  if (fiiIngestor.fetchFiiDii) {
     try {
       const r = await fiiIngestor.fetchFiiDii(ctx);
       result.fiiDiiWritten = upsertFiiDii(r.data);
@@ -136,8 +135,7 @@ export async function runDailyIngestor(opts: IngestRunOptions = {}): Promise<Ing
   }
 
   // ---- News (RSS) ----
-  const newsIngestor = pickIngestor('news');
-  if (newsIngestor?.fetchNews) {
+  if (newsIngestor.fetchNews) {
     try {
       const r = await newsIngestor.fetchNews(ctx);
       result.newsWritten = insertNews(r.data);
@@ -160,8 +158,7 @@ export async function runDailyIngestor(opts: IngestRunOptions = {}): Promise<Ing
   }
 
   // ---- Fundamentals (Screener.in) ----
-  const fundIngestor = pickIngestor('fundamentals');
-  if (fundIngestor?.fetchFundamentals) {
+  if (fundIngestor.fetchFundamentals) {
     try {
       const r = await fundIngestor.fetchFundamentals(ctx);
       result.fundamentalsWritten = upsertFundamentals(r.data);
