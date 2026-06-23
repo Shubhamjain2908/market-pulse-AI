@@ -74,7 +74,7 @@ const EnvSchema = z.object({
 
   NEWS_API_KEY: z.string().optional(),
 
-  BRIEFING_DELIVERY: z.enum(['file', 'email', 'slack', 'telegram']).default('file'),
+  BRIEFING_DELIVERY: z.enum(['file', 'email']).default('file'),
   BRIEFING_OUTPUT_DIR: z.string().default('./briefings'),
 
   SMTP_HOST: z.string().default('smtp.gmail.com'),
@@ -83,11 +83,6 @@ const EnvSchema = z.object({
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().optional(),
   SMTP_TO: z.string().optional(),
-
-  SLACK_WEBHOOK_URL: z.string().url().optional(),
-
-  TELEGRAM_BOT_TOKEN: z.string().optional(),
-  TELEGRAM_CHAT_ID: z.string().optional(),
 
   /**
    * Parallel LLM calls when analysing portfolio holdings (`mp daily`,

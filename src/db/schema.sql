@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS briefings (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   date            TEXT NOT NULL,
   html_content    TEXT NOT NULL,
-  delivery_method TEXT NOT NULL, -- 'file' | 'email' | 'slack' | 'telegram'
+  delivery_method TEXT NOT NULL, -- 'file' | 'email'
   delivered_at    TEXT,
   created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
