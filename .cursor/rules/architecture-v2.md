@@ -39,7 +39,7 @@ Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evalua
 
 | Stage | File | What it does |
 |---|---|---|
-| **Ingest** | `src/agents/daily-ingestor.ts` | Quote batch (often Yahoo), NSE FII/DII, RSS news, optional Yahoo sector metadata on symbols; failures per capability are logged and do not abort the run. |
+| **Ingest** | `src/agents/daily-ingestor.ts` | Directly wires Yahoo/NSE/RSS/Screener ingestors for the fixed free tier; failures per capability are logged and do not abort the run. |
 | **Corporate actions** | `src/ingestors/corporate-actions.ts` | After ingest, before enrich: for symbols with OPEN `paper_trades`, pull Yahoo split events (`chart`, `events: 'split'` — same ratios as bonus-as-split). Last 5 IST calendar days → `corporate_actions` row + divide OPEN notionals (`entry_price`, `stop_loss`, `target`, `highest_close_since_entry`, `atr14_at_entry`); append one-time SPLIT audit to `trailing_stop_log.notes` per trade. Idempotent via `INSERT OR IGNORE` + `run().changes`. |
 | **Enrich** | `src/enrichers/technical.ts` + `momentum-signals.ts` | SMA20/50/200, EMA9/21, RSI14, ATR14, Volume Ratio, 52W High/Low%. Plus daily momentum factors: `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`. |
 | **Yahoo snapshot** | `src/ingestors/yahoo-snapshot-ingestor.ts` | After enrich: batched `quoteSummary` valuation fields → `fundamentals` (`source = yahoo_snapshot` on insert; `ON CONFLICT` updates valuation columns only, preserving screener-owned fields and existing `source`). Fail-open. |
