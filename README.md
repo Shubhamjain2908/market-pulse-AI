@@ -14,9 +14,9 @@ short, actionable briefing before market open.
 > `regime_daily` + `regime_strategy_gate` tables, per-screen and per-agent
 > gating with size multipliers, regime card + change banner + rule-based FII/DII
 > flow attribution (5-session cash, no extra LLM) in the HTML briefing,
-> and wiring in `pnpm daily` / `pnpm run-all` before screening and thesis
+> and wiring in `pnpm daily` / `pnpm cli run-all` before screening and thesis
 > generation. **Momentum screener (multi-factor)** shipped: `mom_*` signals +
-> weekly ranker / rebalance into `paper_trades` (`momentum_mf`), regime-gated
+> daily rank refresh / weekly rebalance into `paper_trades` (`momentum_mf`), regime-gated
 > entries with sector cap + earnings blackout, HTML **Momentum screener** card
 > (rank decay + open-book monitor), thesis/portfolio context that **merges latest
 > values per signal name** (so weekday technical enrich does not drop stale
@@ -164,8 +164,9 @@ pnpm regime:seed-gates
 
 # 7. The single-command morning run
 pnpm daily
-# -> portfolio sync + stop-loss (optional) → ingest → enrich → regime agent →
-#    gated screen → sentiment → gated AI thesis → portfolio analysis → HTML briefing
+# -> portfolio sync + stop-loss (optional) → ingest → corporate actions → enrich →
+#    yahoo-snapshot → momentum-rank → ext-signal → inav → regime agent →
+#    gated screen → sentiment → gated AI thesis → portfolio analysis → evaluate → HTML briefing
 # -> writes briefings/briefing-YYYY-MM-DD.html with regime card + "My Portfolio"
 #    section for every holding (HOLD / ADD / TRIM / EXIT + reason).
 
@@ -208,7 +209,7 @@ pnpm cli momentum-rebalance --skip-thesis  # skip LLM entry thesis (paper sizing
 pnpm cli momentum-rebalance --brief         # after rebalance: compose skip-AI briefing + rebalance summary + deliver (same idea as Sunday scheduler)
 
 # One-shot pipelines
-pnpm cli run-all           # ingest → enrich → yahoo-snapshot → momentum-rank → regime → screen → thesis → brief
+pnpm cli run-all           # alias for daily: full workflow + Kite portfolio sync + per-holding LLM analysis
 pnpm cli daily             # full workflow + Kite portfolio sync + per-holding LLM analysis
 
 # Phase 5 — Zerodha Kite + portfolio
@@ -462,7 +463,7 @@ A **meta-layer** on top of the existing pipeline: each open session gets a singl
 
 **Orchestration**
 
-- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) and `pnpm cli run-all` run **ingest → enrich → yahoo-snapshot → momentum-rank → regime → gated screen → gated thesis → paper-trade evaluate → briefing** (stage outcomes in `pipeline_runs`).
+- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) is the canonical one-shot workflow used by both `pnpm cli daily` and `pnpm cli run-all`: optional portfolio sync + stop-loss → ingest → corporate actions → enrich → yahoo-snapshot → momentum-rank → ext-signal → iNAV → regime → gated screen → gated thesis → paper-trade evaluate → briefing; portfolio analysis runs when AI and portfolio sync are enabled. Stage outcomes are persisted in `pipeline_runs`.
 
 ---
 
@@ -489,7 +490,7 @@ Shortcuts: `pnpm momentum:rank` / `pnpm momentum:rebalance` (wrappers around the
 
 **Signal snapshots (important)**
 
-Technical enrich runs **daily**; momentum ranks are typically **weekly** (rebalance session). Lookups use **`getLatestSignalsMap`** ([`src/agents/portfolio-trigger.ts`](src/agents/portfolio-trigger.ts)): **latest row per `signals.name`** on or before the as-of date (window function), then merged into one map. That way **`mom_rank` / `mom_false_flag` do not disappear** after a newer RSI-only session row is written.
+Technical enrich and momentum rank refresh run **daily** in the main workflow; `momentum_mf` entries still rebalance weekly. Lookups use **`getLatestSignalsMap`** ([`src/agents/portfolio-trigger.ts`](src/agents/portfolio-trigger.ts)): **latest row per `signals.name`** on or before the as-of date (window function), then merged into one map. That way mixed-frequency signals stay coherent when a stage is skipped or retried.
 
 **Thesis generator**
 
@@ -639,7 +640,7 @@ End-to-end feature for **paper** positions with **`stop_type='trailing'`** (defa
 
 **`catalyst_entry`** rows use **`stop_type='fixed'`** instead — static levels only; see [Catalyst-driven entry](#catalyst-driven-entry-pre-earnings).
 
-**`AI_PICK` entry stops** ([`src/briefing/paper-trade-writer.ts`](src/briefing/paper-trade-writer.ts)): reject when LLM `stopLoss ≥ entryPrice` (`log.error`, no row); otherwise `effectiveStop = MAX(stopLoss, entry × 0.92)` with `log.warn` when the 8% hard floor binds (same discipline as `momentum_mf`).
+**`AI_PICK` entry stops** ([`src/briefing/ai-pick-stop.ts`](src/briefing/ai-pick-stop.ts), [`paper-trade-writer.ts`](src/briefing/paper-trade-writer.ts)): reject when LLM `stopLoss ≥ entryPrice` (`log.error`, no row); then require minimum distance `max(entry × 2%, ATR14 × 1)` and block when that minimum exceeds the 8% risk cap. Stops tighter than the minimum are widened (`ai_pick_stop_normalized`), and overly wide LLM stops are raised to the `entry × 0.92` hard floor with explicit `ai_pick_stop_floor_applied` audit logging.
 
 **Production parameters** (authoritative: [`config/momentum-config.json`](config/momentum-config.json), loaded via [`src/config/trailing-stop-sizing.ts`](src/config/trailing-stop-sizing.ts)):
 
@@ -661,7 +662,7 @@ Legacy open trades with `trailing_multiplier = 2.0` in DB are normalized to the 
 **Evaluation**
 
 - [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) + [`src/scripts/trailing-stop-engine.ts`](src/scripts/trailing-stop-engine.ts) — branches on **`stop_type`**: **trailing** path uses config-driven mults (no inline 2.0/1.5/15%), bar walk from `source_date` to `asOf`, **incremental resume** from the last `trailing_stop_log` bar (non-`STOPPED_OUT`), idempotent log inserts; **fixed** path skips trailing math/logs and evaluates persisted `stop_loss` / `target` / `max_hold_days` under the same **circuit-breaker envelope** (gap-down skips SL/TP; gap-up suppresses fake `highest_close` only); Day-1 ATR latch uses [`nextOpenOnOrAfter`](src/market/trading-days.ts) when `source_date` is a non-session day; prior-close / corp-action lookups via [`getPrevClose`](src/db/queries.ts) / [`hasCorporateActionInRange`](src/db/queries.ts); **`pnpm cli evaluate`** / **`pnpm evaluate`** with **`--skip-ai`**
-- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` after the briefing is composed (same ordering as before)
+- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` before briefing composition so same-run closures appear in the brief
 
 **Briefing**
 
@@ -744,7 +745,7 @@ phases 0–6 in the table below).
 
 | Step | Theme                         | Status     | Highlights                                                                 |
 | ---- | ----------------------------- | ---------- | -------------------------------------------------------------------------- |
-| 1    | Trust-breaking output         | ✅ shipped | `getMarketClosure()` + early exit in `runDailyWorkflow` / `run-all`; persistent-data brief with banner; `gatherMood` reads `NIFTY_50` / `INDIA_VIX` from `quotes`; `AiPicksSectionStatus` + `thesisRun` metadata; thesis ranking uses screens, alerts, portfolio loss threshold |
+| 1    | Trust-breaking output         | ✅ shipped | `getMarketClosure()` + early exit in `runDailyWorkflow`; `run-all` delegates to the same workflow; persistent-data brief with banner; `gatherMood` reads `NIFTY_50` / `INDIA_VIX` from `quotes`; `AiPicksSectionStatus` + `thesisRun` metadata; thesis ranking uses screens, alerts, portfolio loss threshold |
 | 2    | Portfolio analysis quality    | ✅ shipped | Trigger gate (`needsPortfolioLlmReview`), deep-loss prompt addon, portfolio-specific stock context, ingest/enrich universe includes holdings + benchmarks, portfolio sync before ingest in `runDailyWorkflow`, briefing cards show `technicalSummaryLine` |
 | 3    | Noise vs actionability        | ✅ shipped | Mood narrative avoids repeating the mood grid; `gatherNews` uses briefing-date window, dedupes headlines, prioritises watchlist-tagged items; section ledes; thesis cards promote **Why now**; clearer framing for alerts, screens, movers, portfolio |
 | 4    | Global cues & calibration     | ✅ shipped | Macro Yahoo symbols ingested into `quotes`; **Global Cues** section (Nifty spot + macro row labels); `BRIEFING_*` / `THESIS_MAX_PER_RUN` / `INGEST_QUOTES_MAX_RETRIES` / `BRIEFING_RUN_SUMMARY_JSON`; thesis **#N by signal score**; weighted ranking + rank blurbs; quote-ingest retries; scheduler duration logs; tests for news window, deep-loss prompt, ranking |

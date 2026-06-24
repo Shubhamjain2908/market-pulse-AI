@@ -15,7 +15,7 @@
  *   mp sentiment         Score news headlines via LLM
  *   mp thesis            Generate AI theses for top-signal stocks
  *   mp evaluate           Mark outcomes for open paper trades vs EOD quotes
- *   mp run-all           Full pipeline (ingest → enrich → yahoo-snapshot → momentum-rank → regime → screen → thesis → brief)
+ *   mp run-all           Alias for full daily workflow (portfolio sync + all stages + brief)
  *   mp daily             One-shot: full pipeline + portfolio analysis (recommended)
  *   mp sync-sectors      Cache Yahoo sector/industry in `symbols` (for portfolio sector rollup)
  *   mp kite-login        Refresh Zerodha Kite Connect access_token (run daily)
@@ -35,7 +35,7 @@
 import { Command } from 'commander';
 import { runBriefingComposer } from './agents/briefing-composer.js';
 import { runDailyIngestor } from './agents/daily-ingestor.js';
-import { runDailyWorkflow, runMomentumRankStage } from './agents/daily-workflow.js';
+import { runDailyWorkflow } from './agents/daily-workflow.js';
 import { runLiveScan } from './agents/live-scanner.js';
 import { analysePortfolio } from './agents/portfolio-analyser.js';
 import { runPortfolioSync } from './agents/portfolio-sync.js';
@@ -58,7 +58,6 @@ import {
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
-import { ingestYahooSnapshots } from './ingestors/yahoo-snapshot-ingestor.js';
 import { logger } from './logger.js';
 import {
   defaultIngestSymbolUniverse,
@@ -462,81 +461,29 @@ program
 
 program
   .command('run-all')
-  .description(
-    'run full pipeline: ingest -> enrich -> yahoo-snapshot -> momentum-rank -> regime -> gated screen -> sentiment -> thesis -> brief',
-  )
+  .description('alias for daily: full workflow + portfolio sync + all pipeline stages + briefing')
   .option('--skip-ai', 'skip all LLM stages (sentiment, thesis, narrative)')
   .action(async (opts: { skipAi?: boolean }) => {
     ensureDb();
     const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
-    const closure = getMarketClosure(date);
-    if (closure) {
-      const result = await runBriefingComposer({
-        date,
-        skipAi: true,
-        marketClosure: closure,
-        delivery: config.BRIEFING_DELIVERY,
-      });
-      await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
-      logger.info(
-        { date: result.date, delivery: result.delivery, holiday: closure.label },
-        'pipeline complete (market closed)',
-      );
-      closeDb();
-      return;
-    }
-
-    await runDailyIngestor({ date });
-    await runSignalEnricher({ date });
-    const db = getDb();
-    try {
-      await ingestYahooSnapshots(db, { date });
-    } catch (err) {
-      logger.warn(
-        { err: (err as Error).message },
-        'yahoo snapshot ingest failed in run-all; continuing',
-      );
-    }
-    runMomentumRankStage(date, date, db);
-    const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
-    await runStockScreener({ date, regime: regimeAgent.regime });
-
-    let thesisRun:
-      | {
-          generated: number;
-          failed: number;
-          candidateCount: number;
-          eligibleUniverseSize: number;
-          watchlistSize: number;
-        }
-      | undefined;
-
-    if (!opts.skipAi) {
-      const sentimentResult = await enrichSentiment();
-      logger.info(sentimentResult, 'sentiment scoring done');
-
-      const thesisResult = await generateTheses({ date, regime: regimeAgent.regime });
-      thesisRun = {
-        generated: thesisResult.generated,
-        failed: thesisResult.failed,
-        candidateCount: thesisResult.candidateCount,
-        eligibleUniverseSize: thesisResult.eligibleUniverseSize,
-        watchlistSize: thesisResult.watchlistSize,
-      };
-      logger.info(
-        { generated: thesisResult.generated, failed: thesisResult.failed },
-        'thesis generation done',
-      );
-    }
-
-    const result = await runBriefingComposer({
+    const result = await runDailyWorkflow({
       date,
       skipAi: opts.skipAi,
-      thesisRun: opts.skipAi ? undefined : thesisRun,
-      delivery: config.BRIEFING_DELIVERY,
     });
     await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
-    logger.info({ date: result.date, delivery: result.delivery }, 'pipeline complete');
+    logger.info(
+      {
+        date: result.date,
+        delivery: config.BRIEFING_DELIVERY,
+        portfolioCount: result.portfolioCount,
+        thesesCount: result.thesesCount,
+        screenMatchesCount: result.screenMatchesCount,
+        alertCount: result.alertCount,
+        holidayMode: result.holidayMode ?? false,
+        marketClosureLabel: result.marketClosureLabel,
+      },
+      'run-all complete',
+    );
     closeDb();
   });
 

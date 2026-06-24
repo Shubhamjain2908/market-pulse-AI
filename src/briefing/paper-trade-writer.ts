@@ -205,6 +205,19 @@ export function recordPaperTrades(
         'AI_PICK stop widened to minimum distance',
       );
     }
+    if (stopResult.floorApplied) {
+      log.warn(
+        {
+          event: 'ai_pick_stop_floor_applied',
+          symbol: t.symbol,
+          parsedStop: stopResult.parsedStop,
+          normalizedStop: stopResult.normalizedStop,
+          hardFloor: stopResult.hardFloor,
+          effectiveStop: stopResult.effectiveStop,
+        },
+        'AI_PICK stop raised to 8% hard floor',
+      );
+    }
 
     const { horizon, maxHoldDays } = horizonToDays(t.timeHorizon ?? 'medium');
     if (blockIfOpenPaperTradeExists(t.symbol, 'AI_PICK', db)) {

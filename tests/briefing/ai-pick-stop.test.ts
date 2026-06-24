@@ -28,6 +28,8 @@ describe('resolveAiPickStop', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.effectiveStop).toBe(92);
+    expect(r.floorApplied).toBe(true);
+    expect(r.hardFloor).toBe(92);
   });
 
   it('blocks when min distance exceeds 8% cap', () => {
