@@ -208,7 +208,7 @@ pnpm cli momentum-rebalance --skip-thesis  # skip LLM entry thesis (paper sizing
 pnpm cli momentum-rebalance --brief         # after rebalance: compose skip-AI briefing + rebalance summary + deliver (same idea as Sunday scheduler)
 
 # One-shot pipelines
-pnpm cli run-all           # ingest → enrich → regime → gated screen → sentiment → thesis → brief
+pnpm cli run-all           # ingest → enrich → yahoo-snapshot → momentum-rank → regime → screen → thesis → brief
 pnpm cli daily             # full workflow + Kite portfolio sync + per-holding LLM analysis
 
 # Phase 5 — Zerodha Kite + portfolio
@@ -462,7 +462,7 @@ A **meta-layer** on top of the existing pipeline: each open session gets a singl
 
 **Orchestration**
 
-- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) and `pnpm cli run-all` run **ingest → enrich → regime → gated screen → gated thesis → paper-trade evaluate → briefing** (stage outcomes in `pipeline_runs`).
+- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) and `pnpm cli run-all` run **ingest → enrich → yahoo-snapshot → momentum-rank → regime → gated screen → gated thesis → paper-trade evaluate → briefing** (stage outcomes in `pipeline_runs`).
 
 ---
 

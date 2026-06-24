@@ -5,7 +5,7 @@
 - Keep stage outputs DB-backed and rerunnable for replay/debug (`src/db/schema.sql`, `src/cli.ts`).
 
 ## Core Architecture
-- Main orchestration is `runDailyWorkflow` in `src/agents/daily-workflow.ts`: optional portfolio sync + stop-loss -> ingest -> enrich -> regime -> gated screens -> sentiment/thesis (if AI enabled) -> paper-trade evaluation -> briefing. Each stage appends to `pipeline_runs` via `src/db/pipeline-queries.ts`; briefing degrades when the **latest** status for required stages (`enrich`, `regime`, `screen`) is `failed` (retries on the same `run_date` can clear degraded mode).
+- Main orchestration is `runDailyWorkflow` in `src/agents/daily-workflow.ts`: optional portfolio sync + stop-loss -> ingest -> enrich -> yahoo-snapshot -> momentum-rank -> ext-signal -> regime -> gated screens -> sentiment/thesis (if AI enabled) -> paper-trade evaluation -> briefing. Each stage appends to `pipeline_runs` via `src/db/pipeline-queries.ts`; briefing degrades when the **latest** status for required stages (`enrich`, `regime`, `screen`) is `failed` (retries on the same `run_date` can clear degraded mode).
 - `src/cli.ts` stays thin command wiring; domain logic belongs under `src/agents`, `src/analysers`, `src/enrichers`, `src/strategies`.
 - Market-closure mode is first-class: weekends/holidays skip ingest and fresh LLM calls but still compose a persisted-data briefing.
 

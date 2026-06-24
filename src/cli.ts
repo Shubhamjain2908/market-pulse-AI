@@ -15,7 +15,7 @@
  *   mp sentiment         Score news headlines via LLM
  *   mp thesis            Generate AI theses for top-signal stocks
  *   mp evaluate           Mark outcomes for open paper trades vs EOD quotes
- *   mp run-all           Full pipeline (ingest → enrich → regime → screen → thesis → brief)
+ *   mp run-all           Full pipeline (ingest → enrich → yahoo-snapshot → momentum-rank → regime → screen → thesis → brief)
  *   mp daily             One-shot: full pipeline + portfolio analysis (recommended)
  *   mp sync-sectors      Cache Yahoo sector/industry in `symbols` (for portfolio sector rollup)
  *   mp kite-login        Refresh Zerodha Kite Connect access_token (run daily)
@@ -35,7 +35,7 @@
 import { Command } from 'commander';
 import { runBriefingComposer } from './agents/briefing-composer.js';
 import { runDailyIngestor } from './agents/daily-ingestor.js';
-import { runDailyWorkflow } from './agents/daily-workflow.js';
+import { runDailyWorkflow, runMomentumRankStage } from './agents/daily-workflow.js';
 import { runLiveScan } from './agents/live-scanner.js';
 import { analysePortfolio } from './agents/portfolio-analyser.js';
 import { runPortfolioSync } from './agents/portfolio-sync.js';
@@ -58,7 +58,7 @@ import {
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
-
+import { ingestYahooSnapshots } from './ingestors/yahoo-snapshot-ingestor.js';
 import { logger } from './logger.js';
 import {
   defaultIngestSymbolUniverse,
@@ -224,6 +224,7 @@ program
   .action(async (opts: { symbols?: string }) => {
     ensureDb();
     const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+    const db = getDb();
     const universe = opts.symbols
       ?.split(',')
       .map((s) => s.trim())
@@ -231,6 +232,7 @@ program
       .map((s) => s.toUpperCase());
     const result = runMomentumRanker({
       asOf: date,
+      db,
       universe: universe?.length ? universe : undefined,
     });
     logger.info(result, 'momentum-rank complete');
@@ -461,7 +463,7 @@ program
 program
   .command('run-all')
   .description(
-    'run full pipeline: ingest -> enrich -> regime -> gated screen -> sentiment -> thesis -> brief',
+    'run full pipeline: ingest -> enrich -> yahoo-snapshot -> momentum-rank -> regime -> gated screen -> sentiment -> thesis -> brief',
   )
   .option('--skip-ai', 'skip all LLM stages (sentiment, thesis, narrative)')
   .action(async (opts: { skipAi?: boolean }) => {
@@ -486,6 +488,16 @@ program
 
     await runDailyIngestor({ date });
     await runSignalEnricher({ date });
+    const db = getDb();
+    try {
+      await ingestYahooSnapshots(db, { date });
+    } catch (err) {
+      logger.warn(
+        { err: (err as Error).message },
+        'yahoo snapshot ingest failed in run-all; continuing',
+      );
+    }
+    runMomentumRankStage(date, date, db);
     const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
     await runStockScreener({ date, regime: regimeAgent.regime });
 
