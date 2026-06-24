@@ -51,7 +51,7 @@ function getLatestSignal(
   return { value: row.value, date: row.date };
 }
 
-/** ponytail: NIFTY_50 quotes as session calendar (same pattern as evaluate-trades). */
+/** Point-in-time NIFTY_50 quotes as session calendar (same pattern as evaluate-trades). */
 export function getTwoSessionsBackDate(db: DatabaseType, sourceDate: string): string | null {
   return (
     (
@@ -116,6 +116,10 @@ function evaluatePathB(
   return close > sma50.value && close > sma200.value;
 }
 
+function signalFacts(sig: SignalPoint | null, fresh?: boolean): Record<string, unknown> {
+  return { value: sig?.value ?? null, date: sig?.date ?? null, fresh };
+}
+
 function evaluatePathC(
   rank: SignalPoint | null,
   falseFlag: SignalPoint | null,
@@ -162,13 +166,13 @@ export function evaluateAiPickEligibility(
   db: DatabaseType,
 ): AiPickGateResult {
   const sym = symbol.toUpperCase();
-  const facts: Record<string, unknown> = { symbol: sym, sourceDate };
+  const facts: Record<string, unknown> = { symbol: sym, sourceDate, confidence: thesis.confidence };
 
   if (thesis.confidence < 6) {
     return {
       eligible: false,
       reasons: ['confidence_low'],
-      facts: { ...facts, confidence: thesis.confidence },
+      facts,
     };
   }
 
@@ -186,13 +190,35 @@ export function evaluateAiPickEligibility(
   const sma200Sig = getLatestSignal(sym, 'sma_200', sourceDate, db);
   const volRatioSig = getLatestSignal(sym, 'volume_ratio_20d', sourceDate, db);
   const close = getClose(sym, sourceDate, db);
+  const near52wHighAlert = hasAlert(sym, sourceDate, 'near_52w_high', db);
+  const volumeSpikeAlert = hasAlert(sym, sourceDate, 'volume_spike', db);
+  const rankFresh = isSignalFresh(rankSig, twoBack);
+  const falseFlagFresh = isSignalFresh(falseFlagSig, twoBack);
 
+  facts.signals = {
+    momRank: signalFacts(rankSig, rankFresh),
+    momFalseFlag: signalFacts(falseFlagSig, falseFlagFresh),
+    relativeStrength: signalFacts(rsSig),
+    sma50: signalFacts(sma50Sig),
+    sma200: signalFacts(sma200Sig),
+    volumeRatio20d: signalFacts(volRatioSig),
+  };
+  facts.close = close;
+  facts.alerts = { near52wHigh: near52wHighAlert, volumeSpike: volumeSpikeAlert };
+  facts.technicals = {
+    closeAboveSma50: close != null && sma50Sig != null ? close > sma50Sig.value : null,
+    closeAboveSma200: close != null && sma200Sig != null ? close > sma200Sig.value : null,
+    volumeRatioOk15: volRatioSig != null ? volRatioSig.value >= 1.5 : null,
+    volumeRatioOk12: volRatioSig != null ? volRatioSig.value >= 1.2 : null,
+  };
   facts.momRank = rankSig?.value ?? null;
   facts.momRankDate = rankSig?.date ?? null;
   facts.momFalseFlag = falseFlagSig?.value ?? null;
   facts.momFalseFlagDate = falseFlagSig?.date ?? null;
+  facts.rankFresh = rankFresh;
+  facts.falseFlagFresh = falseFlagFresh;
 
-  if (falseFlagSig != null && falseFlagSig.value === 1) {
+  if (falseFlagFresh && falseFlagSig != null && falseFlagSig.value === 1) {
     return { eligible: false, reasons: ['false_momentum_flag'], facts };
   }
 
@@ -219,11 +245,6 @@ export function evaluateAiPickEligibility(
       facts,
     };
   }
-
-  const rankFresh = isSignalFresh(rankSig, twoBack);
-  const falseFlagFresh = isSignalFresh(falseFlagSig, twoBack);
-  facts.rankFresh = rankFresh;
-  facts.falseFlagFresh = falseFlagFresh;
 
   if (regime === 'CHOPPY' && hasGoldenCross) {
     const pathC = evaluatePathC(

@@ -203,4 +203,30 @@ describe('evaluateAiPickEligibility', () => {
     expect(r.eligible).toBe(false);
     expect(r.reasons).toContain('false_momentum_flag');
   });
+
+  it('allows Path A when false_momentum_flag=1 is stale', () => {
+    insertRegimeChoppy(SOURCE_DATE);
+    screen('TATASTEEL', SOURCE_DATE, 'rsi_oversold_bounce');
+    sig('TATASTEEL', '2026-06-17', 'mom_false_flag', 1);
+    const r = evaluateAiPickEligibility('TATASTEEL', SOURCE_DATE, thesis(8), db);
+    expect(r.eligible).toBe(true);
+    expect(r.path).toBe('path_a_non_generic_screen');
+    expect(r.facts.falseFlagFresh).toBe(false);
+  });
+
+  it('allows Path B when false_momentum_flag=1 is stale', () => {
+    const sym = 'BHARATFORG';
+    insertRegimeChoppy(SOURCE_DATE);
+    screen(sym, SOURCE_DATE, 'golden_cross');
+    quote(sym, SOURCE_DATE, 2022);
+    sig(sym, SOURCE_DATE, 'sma_50', 1900);
+    sig(sym, SOURCE_DATE, 'sma_200', 1800);
+    sig(sym, SOURCE_DATE, 'volume_ratio_20d', 1.6);
+    sig(sym, '2026-06-17', 'mom_false_flag', 1);
+    alert(sym, SOURCE_DATE, 'near_52w_high');
+    const r = evaluateAiPickEligibility(sym, SOURCE_DATE, thesis(8), db);
+    expect(r.eligible).toBe(true);
+    expect(r.path).toBe('path_b_alert_breakout');
+    expect(r.facts.falseFlagFresh).toBe(false);
+  });
 });
