@@ -11,13 +11,11 @@ import {
 } from '../db/queries.js';
 import { child } from '../logger.js';
 import { evaluateAiPickEligibility } from './ai-pick-gate.js';
+import { getAtr14AtEntry, resolveAiPickStop } from './ai-pick-stop.js';
 import { parseInrPriceMidpoint } from './paper-trade-parsers.js';
 import type { PortfolioSummary, ThesisCard } from './template.js';
 
 const log = child({ component: 'paper-trade-writer' });
-
-/** Matches momentum_mf hard stop floor (entry × 0.92). */
-const AI_PICK_HARD_STOP_FLOOR_MULT = 0.92;
 
 function horizonToDays(horizon: string): { horizon: PaperTradeHorizon; maxHoldDays: number } {
   const h = horizon.toLowerCase().trim();
@@ -168,15 +166,6 @@ export function recordPaperTrades(
       continue;
     }
 
-    const hardFloor = entry * AI_PICK_HARD_STOP_FLOOR_MULT;
-    const effectiveStop = Math.max(stop, hardFloor);
-    if (effectiveStop !== stop) {
-      log.warn(
-        { symbol: t.symbol, originalStop: stop, effectiveStop },
-        'AI_PICK stop raised to 8% hard floor',
-      );
-    }
-
     const gate = evaluateAiPickEligibility(t.symbol, sourceDate, t, db);
     if (!gate.eligible) {
       blockedAiPick++;
@@ -185,6 +174,36 @@ export function recordPaperTrades(
         'AI_PICK blocked by eligibility gate',
       );
       continue;
+    }
+
+    const atr14 = getAtr14AtEntry(t.symbol, sourceDate, db);
+    const stopResult = resolveAiPickStop(entry, stop, atr14);
+    if (!stopResult.ok) {
+      blockedAiPick++;
+      log.info(
+        {
+          event: 'ai_pick_blocked',
+          symbol: t.symbol,
+          reason: stopResult.reason,
+          entry,
+          parsedStop: stop,
+          atr14,
+        },
+        'AI_PICK blocked by stop distance guard',
+      );
+      continue;
+    }
+    if (stopResult.normalized) {
+      log.warn(
+        {
+          event: 'ai_pick_stop_normalized',
+          symbol: t.symbol,
+          parsedStop: stopResult.parsedStop,
+          normalizedStop: stopResult.normalizedStop,
+          effectiveStop: stopResult.effectiveStop,
+        },
+        'AI_PICK stop widened to minimum distance',
+      );
     }
 
     const { horizon, maxHoldDays } = horizonToDays(t.timeHorizon ?? 'medium');
@@ -198,10 +217,11 @@ export function recordPaperTrades(
         signalType: 'AI_PICK',
         sourceDate,
         entryPrice: entry,
-        stopLoss: effectiveStop,
+        stopLoss: stopResult.effectiveStop,
         target,
         timeHorizon: horizon,
         maxHoldDays,
+        atr14AtEntry: stopResult.atr14AtEntry,
       },
       db,
     );

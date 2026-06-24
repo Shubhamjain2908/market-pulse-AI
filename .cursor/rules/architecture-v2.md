@@ -132,7 +132,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 ### 3.3 Paper Trades Ledger
 
 **Signal types currently active:**
-- `AI_PICK` — from thesis generator on screened candidates. **Admission gate** ([`ai-pick-gate.ts`](src/briefing/ai-pick-gate.ts)): deterministic eligibility before `paper_trades` insert (`confidence ≥ 6`, no false-momentum flag, confirmation path). Thesis cards still appear in briefing when blocked. Entry stop: reject when `stopLoss ≥ entryPrice` (`log.error`); else `effectiveStop = MAX(stopLoss, entry × 0.92)` with `log.warn` when raised ([`paper-trade-writer.ts`](src/briefing/paper-trade-writer.ts)).
+- `AI_PICK` — from thesis generator on screened candidates. **Admission gate** ([`ai-pick-gate.ts`](src/briefing/ai-pick-gate.ts)): deterministic eligibility before `paper_trades` insert (`confidence ≥ 6`, no false-momentum flag, confirmation path). **Stop distance** ([`ai-pick-stop.ts`](src/briefing/ai-pick-stop.ts)): normalize-then-kill — widen stops tighter than `max(2%, 1×ATR)`; block when that minimum exceeds 8% risk. Thesis cards still appear in briefing when blocked. Reject when `stopLoss ≥ entryPrice` (`log.error`).
 - `PORTFOLIO_ADD` — from portfolio analyser ADD recommendations
 - `momentum_mf` — from Sunday momentum rebalance (**requires `atr_14` at entry**; no 2% proxy)
 - `catalyst_entry` — from catalyst-driven screen hits (fixed stop)
