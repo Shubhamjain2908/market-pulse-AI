@@ -49,7 +49,17 @@ describe('recordPaperTrades', () => {
     }
   });
 
+  function seedPathAScreen(symbol: string, date: string): void {
+    db.prepare(
+      `
+      INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+      VALUES (?, ?, 'rsi_oversold_bounce', 1, '{}')
+    `,
+    ).run(symbol, date);
+  }
+
   it('inserts AI_PICK from thesis cards with valid levels', () => {
+    seedPathAScreen('ABCD', '2026-05-01');
     const theses: ThesisCard[] = [
       {
         symbol: 'ABCD',
@@ -178,6 +188,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('raises AI_PICK stop to 8% hard floor when LLM stop is too wide', () => {
+    seedPathAScreen('WIDE', '2026-05-01');
     const r = recordPaperTrades(
       '2026-05-01',
       [aiPickThesis('WIDE', '₹100', '₹88', '₹120')],
@@ -194,6 +205,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('inserts AI_PICK with LLM stop when above hard floor', () => {
+    seedPathAScreen('OK', '2026-05-01');
     const r = recordPaperTrades(
       '2026-05-01',
       [aiPickThesis('OK', '₹100', '₹95', '₹120')],
@@ -219,12 +231,23 @@ describe('recordPaperTrades', () => {
       stopLoss: '₹95',
       target: '₹120',
       timeHorizon: 'medium',
-      confidence: 5,
+      confidence: 7,
       triggerReason: 't',
     };
   }
 
+  it('blocks AI_PICK via eligibility gate when no confirmation path', () => {
+    const r = recordPaperTrades('2026-05-01', [aiPickThesisCard('NOGATE')], undefined, db);
+    expect(r.insertedAiPick).toBe(0);
+    expect(r.blockedAiPick).toBe(1);
+    expect(mockInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'ai_pick_blocked', symbol: 'NOGATE' }),
+      'AI_PICK blocked by eligibility gate',
+    );
+  });
+
   it('blocks AI_PICK when OPEN momentum_mf exists for the symbol', () => {
+    seedPathAScreen('RELIANCE', '2026-05-01');
     db.prepare(
       `
       INSERT INTO paper_trades (
@@ -371,6 +394,7 @@ describe('recordPaperTrades', () => {
     `,
     ).run();
     seedCatalystScreen('RELIANCE', '2026-05-01');
+    seedPathAScreen('INFY', '2026-05-01');
 
     const portfolio: PortfolioSummary = {
       totalValue: 1,
@@ -414,6 +438,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('allows AI_PICK when prior paper trade is CLOSED', () => {
+    seedPathAScreen('RELIANCE', '2026-05-01');
     db.prepare(
       `
       INSERT INTO paper_trades (

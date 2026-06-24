@@ -10,6 +10,7 @@ import {
   type PaperTradeSignalType,
 } from '../db/queries.js';
 import { child } from '../logger.js';
+import { evaluateAiPickEligibility } from './ai-pick-gate.js';
 import { parseInrPriceMidpoint } from './paper-trade-parsers.js';
 import type { PortfolioSummary, ThesisCard } from './template.js';
 
@@ -72,6 +73,7 @@ export interface PaperTradeRecordResult {
   insertedPortfolioAdd: number;
   insertedCatalystEntry: number;
   crossStrategyBlocked: number;
+  blockedAiPick: number;
 }
 
 function blockIfOpenPaperTradeExists(
@@ -100,6 +102,7 @@ export function recordPaperTrades(
   let insertedPortfolioAdd = 0;
   let insertedCatalystEntry = 0;
   let crossStrategyBlocked = 0;
+  let blockedAiPick = 0;
 
   for (const t of theses) {
     const entry = parseInrPriceMidpoint(t.entryZone);
@@ -174,6 +177,16 @@ export function recordPaperTrades(
       );
     }
 
+    const gate = evaluateAiPickEligibility(t.symbol, sourceDate, t, db);
+    if (!gate.eligible) {
+      blockedAiPick++;
+      log.info(
+        { event: 'ai_pick_blocked', symbol: t.symbol, reasons: gate.reasons, facts: gate.facts },
+        'AI_PICK blocked by eligibility gate',
+      );
+      continue;
+    }
+
     const { horizon, maxHoldDays } = horizonToDays(t.timeHorizon ?? 'medium');
     if (blockIfOpenPaperTradeExists(t.symbol, 'AI_PICK', db)) {
       crossStrategyBlocked++;
@@ -233,5 +246,11 @@ export function recordPaperTrades(
     }
   }
 
-  return { insertedAiPick, insertedPortfolioAdd, insertedCatalystEntry, crossStrategyBlocked };
+  return {
+    insertedAiPick,
+    insertedPortfolioAdd,
+    insertedCatalystEntry,
+    crossStrategyBlocked,
+    blockedAiPick,
+  };
 }
