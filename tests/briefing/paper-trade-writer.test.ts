@@ -187,7 +187,7 @@ describe('recordPaperTrades', () => {
     );
   });
 
-  it('raises AI_PICK stop to 8% hard floor when LLM stop is too wide', () => {
+  it('applies 8% floor backstop when LLM stop is too wide', () => {
     seedPathAScreen('WIDE', '2026-05-01');
     const r = recordPaperTrades(
       '2026-05-01',
@@ -198,9 +198,29 @@ describe('recordPaperTrades', () => {
     expect(r.insertedAiPick).toBe(1);
     const trade = getOpenPaperTrades(db)[0];
     expect(trade?.stopLoss).toBe(92);
-    expect(mockWarn).toHaveBeenCalledWith(
-      { symbol: 'WIDE', originalStop: 88, effectiveStop: 92 },
+    expect(mockWarn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originalStop: expect.any(Number) }),
       'AI_PICK stop raised to 8% hard floor',
+    );
+  });
+
+  it('widens tight AI_PICK stop to minimum distance', () => {
+    seedPathAScreen('TIGHT', '2026-05-01');
+    db.prepare(
+      `INSERT INTO signals (symbol, date, name, value, source) VALUES ('TIGHT', '2026-05-01', 'atr_14', 2.5, 'test')`,
+    ).run();
+    const r = recordPaperTrades(
+      '2026-05-01',
+      [aiPickThesis('TIGHT', '₹100', '₹99.5', '₹120')],
+      undefined,
+      db,
+    );
+    expect(r.insertedAiPick).toBe(1);
+    const trade = getOpenPaperTrades(db)[0];
+    expect(trade?.stopLoss).toBe(97.5);
+    expect(mockWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'ai_pick_stop_normalized', symbol: 'TIGHT' }),
+      'AI_PICK stop widened to minimum distance',
     );
   });
 
