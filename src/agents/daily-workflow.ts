@@ -21,6 +21,7 @@ import { ingestYahooSnapshots } from '../ingestors/yahoo-snapshot-ingestor.js';
 import { clearRunBudget, LlmBudgetExceededError, startRunBudget } from '../llm/index.js';
 import { child } from '../logger.js';
 import { getMarketClosure, isSundayIst } from '../market/nse-calendar.js';
+import { runMomentumRanker } from '../rankers/momentum-ranker.js';
 import { type EvaluateTradesResult, runEvaluatePaperTrades } from '../scripts/evaluate-trades.js';
 import { applyMomentumRegimeGateExits } from '../strategies/momentum-rebalance.js';
 import { type BriefRunResult, runBriefingComposer } from './briefing-composer.js';
@@ -35,6 +36,36 @@ import { detectStopLossBreaches } from './stop-loss-detector.js';
 import { generateTheses } from './thesis-generator.js';
 
 const log = child({ component: 'daily-workflow' });
+
+/** Fail-open momentum rank refresh (writes `mom_rank` / `mom_false_flag` for thesis + gate). */
+export function runMomentumRankStage(
+  runDate: string,
+  asOf: string,
+  db: ReturnType<typeof getDb>,
+): ReturnType<typeof runMomentumRanker> | null {
+  recordPipelineStage({ runDate, stage: 'momentum-rank', status: 'started' }, db);
+  try {
+    const rankResult = runMomentumRanker({ asOf, db });
+    recordPipelineStage(
+      {
+        runDate,
+        stage: 'momentum-rank',
+        status: 'success',
+        metadata: {
+          signalsWritten: rankResult.signalsWritten,
+          eligibleCount: rankResult.eligibleCount,
+        },
+      },
+      db,
+    );
+    return rankResult;
+  } catch (err) {
+    const msg = (err as Error).message;
+    recordPipelineStage({ runDate, stage: 'momentum-rank', status: 'failed', errorMsg: msg }, db);
+    log.warn({ err: msg }, 'momentum rank failed; continuing workflow');
+    return null;
+  }
+}
 
 export interface DailyWorkflowOptions {
   /** ISO date (YYYY-MM-DD). Defaults to today IST. */
@@ -262,6 +293,17 @@ export async function runDailyWorkflow(
       log.warn(
         { err: (err as Error).message },
         'yahoo snapshot ingest failed unexpectedly; continuing workflow',
+      );
+    }
+
+    const rankResult = runMomentumRankStage(runDate, date, db);
+    if (rankResult) {
+      log.info(
+        {
+          signalsWritten: rankResult.signalsWritten,
+          eligibleCount: rankResult.eligibleCount,
+        },
+        'momentum rank complete',
       );
     }
 
