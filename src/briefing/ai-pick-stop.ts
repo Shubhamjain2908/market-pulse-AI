@@ -16,8 +16,10 @@ export type AiPickStopResult =
       effectiveStop: number;
       atr14AtEntry: number | null;
       normalized: boolean;
+      floorApplied: boolean;
       parsedStop: number;
       normalizedStop: number;
+      hardFloor: number;
     }
   | { ok: false; reason: AiPickStopBlockReason };
 
@@ -53,14 +55,18 @@ export function resolveAiPickStop(
   const normalizedStop = entry - minDist;
   const normalized = parsedStop > normalizedStop;
   const effectiveStop = normalized ? normalizedStop : parsedStop;
-  const finalStop = Math.max(effectiveStop, entry * (1 - MAX_RISK_PCT));
+  const hardFloor = entry * (1 - MAX_RISK_PCT);
+  const floorApplied = effectiveStop < hardFloor;
+  const finalStop = Math.max(effectiveStop, hardFloor);
 
   return {
     ok: true,
     effectiveStop: finalStop,
     atr14AtEntry: atr14,
     normalized,
+    floorApplied,
     parsedStop,
     normalizedStop,
+    hardFloor,
   };
 }
