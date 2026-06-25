@@ -4,11 +4,15 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   analysePortfolio,
-  applyMomentumPortfolioGuardrails,
   applyPortfolioAddGuardrails,
   type PortfolioAction,
   PortfolioActionSchema,
 } from '../../src/agents/portfolio-analyser.js';
+import {
+  applyMomentumPortfolioGuardrails,
+  applyStrategyPortfolioGuardrails,
+  resolveHoldingEntrySource,
+} from '../../src/agents/portfolio-strategy-guardrails.js';
 import {
   closeDb,
   getDb,
@@ -478,6 +482,87 @@ describe('portfolio analyser', () => {
     expect(capturedUser).not.toContain('rsi_14:');
     expect(capturedUser).not.toContain('volume_ratio_20d:');
     expect(capturedUser).not.toContain('rsi_overbought');
+  });
+
+  describe('resolveHoldingEntrySource', () => {
+    it('infers quality_garp from recent screen when no paper trade exists', () => {
+      db.prepare(
+        `INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+         VALUES ('INFY', '2026-06-20', 'quality_garp', 8, '{}')`,
+      ).run();
+      expect(resolveHoldingEntrySource('INFY', '2026-06-25', db)).toBe('quality_garp');
+    });
+
+    it('infers catalyst_entry from recent screen', () => {
+      db.prepare(
+        `INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+         VALUES ('TCS', '2026-06-18', 'catalyst_entry', 7, '{"days_to_earnings":10}')`,
+      ).run();
+      expect(resolveHoldingEntrySource('TCS', '2026-06-25', db)).toBe('catalyst_entry');
+    });
+  });
+
+  describe('applyStrategyPortfolioGuardrails', () => {
+    const strategyHold = (symbol = 'ITC'): PortfolioAction => ({
+      symbol,
+      action: 'HOLD',
+      conviction: 0.55,
+      thesis: 'Hold line.',
+      bullPoints: ['Trend'],
+      bearPoints: ['Macro'],
+      triggerReason: 'No change.',
+      suggestedStop: null,
+      suggestedTarget: null,
+    });
+
+    it('forces EXIT on severe quality_garp deterioration', () => {
+      for (const asOf of ['2024-03-31', '2023-03-31', '2022-03-31']) {
+        db.prepare(
+          `INSERT INTO fundamentals (symbol, as_of, source, roe, roce, peg, debt_to_equity)
+           VALUES ('QG', ?, 'yahoo_annual', 0.2, 0.25, 1, 0.2)`,
+        ).run(asOf);
+      }
+      db.prepare(
+        `INSERT INTO fundamentals (symbol, as_of, source, pe, pb, peg, debt_to_equity, profit_growth_yoy)
+         VALUES ('QG', '2026-06-25', 'yahoo_snapshot', 20, 3, 1, 0.2, -4)`,
+      ).run();
+      db.prepare(
+        `INSERT INTO fundamentals (symbol, as_of, source, promoter_holding_pct, promoter_holding_change_qoq)
+         VALUES ('QG', '2026-06-24', 'screener', 50, -2)`,
+      ).run();
+      const out = applyStrategyPortfolioGuardrails(
+        strategyHold('QG'),
+        {},
+        { entrySource: 'quality_garp', symbol: 'QG', date: '2026-06-25', db, pnlPct: 5 },
+      );
+      expect(out.action).toBe('EXIT');
+      expect(out.triggerReason).toContain('GUARDRAIL_OVERRIDE');
+    });
+
+    it('trims catalyst_entry when hold window expired', () => {
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'CAT2',
+          signalType: 'catalyst_entry',
+          sourceDate: '2026-06-01',
+          entryPrice: 100,
+          stopLoss: 96,
+          target: 108,
+          timeHorizon: 'short',
+          maxHoldDays: 5,
+          stopType: 'fixed',
+          trailingMultiplier: 0,
+        },
+        db,
+      );
+      const out = applyStrategyPortfolioGuardrails(
+        strategyHold('CAT2'),
+        {},
+        { entrySource: 'catalyst_entry', symbol: 'CAT2', date: '2026-06-10', db, pnlPct: 2 },
+      );
+      expect(out.action).toBe('TRIM');
+      expect(out.triggerReason).toContain('Catalyst');
+    });
   });
 });
 
