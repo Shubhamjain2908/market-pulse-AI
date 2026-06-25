@@ -10,10 +10,11 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import pLimit from 'p-limit';
 import { z } from 'zod';
 import { config } from '../config/env.js';
-import { loadEtfExclusions, loadMomentumConfig } from '../config/loaders.js';
+import { loadEtfExclusions } from '../config/loaders.js';
 import {
   getDb,
   getLatestHoldings,
+  getQualityGarpFundamentals,
   type PaperTradeSignalType,
   type PortfolioAnalysisRow,
   type PortfolioHoldingRow,
@@ -25,12 +26,23 @@ import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { lastOpenOnOrBefore } from '../market/trading-days.js';
 import {
+  type PortfolioEntrySource,
+  resolveHoldingEntrySource,
+  resolvePaperEntrySource,
+} from './portfolio-entry-source.js';
+import {
+  applyStrategyPortfolioGuardrails,
+  type StrategyGuardrailCtx,
+} from './portfolio-strategy-guardrails.js';
+import {
   buildLiteSnapshotCopy,
   getLatestSignalsMap,
   getPortfolioDeepLossPct,
   needsPortfolioLlmReview,
 } from './portfolio-trigger.js';
 import { buildStockContext } from './thesis-generator.js';
+
+export { applyMomentumPortfolioGuardrails } from './portfolio-strategy-guardrails.js';
 
 const log = child({ component: 'portfolio-analyser' });
 
@@ -72,8 +84,6 @@ export const PortfolioActionSchema = z.object({
   suggestedTarget: z.number().nullable().optional(),
 });
 export type PortfolioAction = z.infer<typeof PortfolioActionSchema>;
-
-type PortfolioEntrySource = PaperTradeSignalType | 'quality_garp' | 'unknown';
 
 const PORTFOLIO_SYSTEM = `You are a senior Indian-equity portfolio review analyst. The user already
 OWNS the position you are analysing. Recommend ONE of four actions based ONLY on the data provided:
@@ -134,62 +144,6 @@ Otherwise prefer TRIM or EXIT and say why. Cite the drawdown magnitude in trigge
 function truncateTriggerReason(s: string): string {
   if (s.length <= 280) return s;
   return `${s.slice(0, 276)}…`;
-}
-
-function prependTriggerReason(prefix: string, s: string): string {
-  const out = `${prefix} — ${s}`;
-  if (out.length <= 280) return out;
-  return `${out.slice(0, 276)}…`;
-}
-
-/**
- * Momentum overlay (spec §6.4): momentum-sleeve rank decay → TRIM/EXIT; false-flag → block ADD.
- * No-op when `mom_rank` / `mom_false_flag` are absent from `signals`.
- */
-export function applyMomentumPortfolioGuardrails(
-  action: PortfolioAction,
-  signals: Record<string, number>,
-  opts: { entrySource?: PortfolioEntrySource | null } = {},
-): PortfolioAction {
-  const cfg = loadMomentumConfig();
-  const rank = signals.mom_rank;
-  const exitTh = cfg.exit_rank_threshold;
-
-  if (
-    opts.entrySource === 'momentum_mf' &&
-    rank != null &&
-    Number.isFinite(rank) &&
-    rank > exitTh
-  ) {
-    if (action.action === 'EXIT') return action;
-    const severeTh = exitTh + 5;
-    const nextAction: PortfolioAction['action'] = rank > severeTh ? 'EXIT' : 'TRIM';
-    if (action.action === nextAction) return action;
-    const prefix = `GUARDRAIL_OVERRIDE[mom_rank=${rank}>threshold=${exitTh}]`;
-    const suffix =
-      nextAction === 'EXIT'
-        ? `[Momentum: severe rank decay ${rank} > ${severeTh} — EXIT.]`
-        : `[Momentum: rank decay ${rank} > ${exitTh} — TRIM review before EXIT.]`;
-    return {
-      ...action,
-      action: nextAction,
-      conviction: Math.max(action.conviction, nextAction === 'EXIT' ? 0.68 : 0.6),
-      triggerReason: prependTriggerReason(prefix, `${action.triggerReason} ${suffix}`),
-    };
-  }
-
-  const falseFlag = signals.mom_false_flag === 1;
-  if (falseFlag && action.action === 'ADD') {
-    const suffix = '[Guardrail: mom_false_flag=1 — do not ADD.]';
-    return {
-      ...action,
-      action: 'HOLD',
-      conviction: Math.min(action.conviction, 0.55),
-      triggerReason: truncateTriggerReason(`${action.triggerReason} ${suffix}`),
-    };
-  }
-
-  return action;
 }
 
 /** Code-level enforcement: ADD into extension (RSI / 52W) and averaging-down R:R. */
@@ -322,28 +276,25 @@ function getMostRecentPaperTradeEntry(
   if (!row) return null;
   return {
     ...row,
-    entrySource: resolveEntrySource(symbol, row.sourceDate, row.signalType, db),
+    entrySource: resolvePaperEntrySource(symbol, row.sourceDate, row.signalType, db),
   };
 }
 
-function resolveEntrySource(
+function buildQualityGarpFundamentalsMap(date: string, db: DatabaseType) {
+  return new Map(
+    getQualityGarpFundamentals(date, db).map((row) => [row.symbol.toUpperCase(), row]),
+  );
+}
+
+function strategyGuardrailCtx(
   symbol: string,
-  sourceDate: string,
-  signalType: PaperTradeSignalType,
+  date: string,
+  entrySource: PortfolioEntrySource,
   db: DatabaseType,
-): PortfolioEntrySource {
-  if (signalType !== 'AI_PICK') return signalType;
-  const qualityGarp = db
-    .prepare(
-      `
-      SELECT 1
-      FROM screens
-      WHERE symbol = ? AND date = ? AND screen_name = 'quality_garp'
-      LIMIT 1
-    `,
-    )
-    .get(symbol.toUpperCase(), sourceDate);
-  return qualityGarp ? 'quality_garp' : 'AI_PICK';
+  qualityGarpBySymbol: Map<string, ReturnType<typeof getQualityGarpFundamentals>[number]>,
+  pnlPct: number | null,
+): StrategyGuardrailCtx {
+  return { symbol, date, entrySource, db, qualityGarpBySymbol, pnlPct };
 }
 
 function sanitizeStockContextForExcludedSignals(symbol: string, context: string): string {
@@ -450,14 +401,15 @@ export async function analysePortfolio(
     'portfolio analyser starting',
   );
 
-  const liteRows = liteQueue.map((h) => buildLitePortfolioRow(h, date, db));
+  const qualityGarpBySymbol = buildQualityGarpFundamentalsMap(date, db);
+  const liteRows = liteQueue.map((h) => buildLitePortfolioRow(h, date, db, qualityGarpBySymbol));
 
   const limit = pLimit(concurrency);
   const outcomes = await Promise.all(
     fullQueue.map((h) =>
       limit(async () => {
         try {
-          const row = await analyseOne(h, date, db, llm);
+          const row = await analyseOne(h, date, db, llm, qualityGarpBySymbol);
           return { ok: true as const, row };
         } catch (err) {
           log.warn(
@@ -510,10 +462,12 @@ function buildLitePortfolioRow(
   h: PortfolioHoldingRow,
   date: string,
   db: DatabaseType,
+  qualityGarpBySymbol: Map<string, ReturnType<typeof getQualityGarpFundamentals>[number]>,
 ): PortfolioAnalysisRow {
   const copy = buildLiteSnapshotCopy(h, date, db);
   const signals = getLatestSignalsMap(h.symbol, date, db);
   const latestPaperEntry = getMostRecentPaperTradeEntry(h.symbol, date, db);
+  const entrySource = resolveHoldingEntrySource(h.symbol, date, db);
   const baseAction: PortfolioAction = {
     symbol: h.symbol,
     action: 'HOLD' as const,
@@ -525,7 +479,7 @@ function buildLitePortfolioRow(
     suggestedStop: null,
     suggestedTarget: null,
   };
-  const g = applyMomentumPortfolioGuardrails(
+  const g = applyStrategyPortfolioGuardrails(
     applyPortfolioAddGuardrails(
       baseAction,
       signals,
@@ -533,7 +487,7 @@ function buildLitePortfolioRow(
       latestPaperEntry,
     ),
     signals,
-    { entrySource: latestPaperEntry?.entrySource ?? null },
+    strategyGuardrailCtx(h.symbol, date, entrySource, db, qualityGarpBySymbol, h.pnlPct ?? null),
   );
 
   return {
@@ -558,6 +512,7 @@ async function analyseOne(
   date: string,
   db: DatabaseType,
   llm: LlmProvider,
+  qualityGarpBySymbol: Map<string, ReturnType<typeof getQualityGarpFundamentals>[number]>,
 ): Promise<PortfolioAnalysisRow> {
   const stockContext = sanitizeStockContextForExcludedSignals(
     h.symbol,
@@ -577,7 +532,8 @@ async function analyseOne(
   });
   const signals = getLatestSignalsMap(h.symbol, date, db);
   const latestPaperEntry = getMostRecentPaperTradeEntry(h.symbol, date, db);
-  const a: PortfolioAction = applyMomentumPortfolioGuardrails(
+  const entrySource = resolveHoldingEntrySource(h.symbol, date, db);
+  const a: PortfolioAction = applyStrategyPortfolioGuardrails(
     applyPortfolioAddGuardrails(
       applyOpenPaperTradeAddBlock(result.data, openPaperTradeCount),
       signals,
@@ -588,7 +544,7 @@ async function analyseOne(
       latestPaperEntry,
     ),
     signals,
-    { entrySource: latestPaperEntry?.entrySource ?? null },
+    strategyGuardrailCtx(h.symbol, date, entrySource, db, qualityGarpBySymbol, h.pnlPct ?? null),
   );
 
   return {
@@ -632,16 +588,16 @@ function buildPositionContext(h: PortfolioHoldingRow, date: string, db: Database
 
   const openPaperTradeCount = getOpenPaperTradeCountForSymbol(symbol, db);
   const latestPaperEntry = getMostRecentPaperTradeEntry(symbol, date, db);
+  const entrySource = resolveHoldingEntrySource(symbol, date, db);
   lines.push('\n## Paper Trade Ledger Context');
   lines.push(`Open paper trades: ${openPaperTradeCount}`);
+  lines.push(`Entry source: ${entrySource}`);
   if (latestPaperEntry) {
-    lines.push(`Entry source: ${latestPaperEntry.entrySource}`);
     lines.push(`Paper signal type: ${latestPaperEntry.signalType}`);
     lines.push(
       `Most recent paper trade entry: ₹${latestPaperEntry.entryPrice.toFixed(2)} (${latestPaperEntry.sourceDate})`,
     );
   } else {
-    lines.push('Entry source: unknown');
     lines.push('Most recent paper trade entry: none');
   }
 
