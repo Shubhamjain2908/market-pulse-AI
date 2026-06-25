@@ -499,7 +499,7 @@ Technical enrich and momentum rank refresh run **daily** in the main workflow; `
 
 **Portfolio analyser**
 
-- [`applyStrategyPortfolioGuardrails`](src/agents/portfolio-strategy-guardrails.ts): **`momentum_mf`** — `mom_rank > exit_rank_threshold` → **TRIM**; severe (`threshold + 5`) → **EXIT**; **`mom_false_flag === 1`** downgrades **ADD** → **HOLD**. **`quality_garp`** — fundamental deterioration (inverse gate flags) → **TRIM**/**EXIT**. **`catalyst_entry`** — hold window / post-earnings expiry → **TRIM**/**EXIT**. Entry origin from [`resolveHoldingEntrySource`](src/agents/portfolio-entry-source.ts). Overrides prefix `GUARDRAIL_OVERRIDE[...]` on `trigger_reason` (thesis text unchanged).
+- [`applyStrategyPortfolioGuardrails`](src/agents/portfolio-strategy-guardrails.ts): **`momentum_mf`** — `mom_rank > exit_rank_threshold` → **TRIM**; severe (`threshold + 5`) → **EXIT**; **`mom_false_flag === 1`** downgrades **ADD** → **HOLD**. **`quality_garp`** — fundamental deterioration (inverse gate flags) → **TRIM**/**EXIT**. **`catalyst_entry`** — hold window / post-earnings expiry → **TRIM**/**EXIT**. Entry origin from [`resolveHoldingEntrySource`](src/agents/portfolio-strategy-guardrails.ts). Overrides prefix `GUARDRAIL_OVERRIDE[...]` on `trigger_reason` (thesis text unchanged).
 
 **Briefing**
 
