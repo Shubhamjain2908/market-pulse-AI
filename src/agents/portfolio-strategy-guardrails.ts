@@ -1,5 +1,5 @@
 /**
- * Strategy-aware portfolio action guardrails (momentum, quality-GARP, catalyst).
+ * Strategy-aware portfolio guardrails + entry-source inference.
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
@@ -10,20 +10,24 @@ import {
   QUALITY_GARP_ROE_MIN,
 } from '../analysers/quality-garp.js';
 import { loadMomentumConfig } from '../config/loaders.js';
-import type { QualityGarpFundamentalRow } from '../db/queries.js';
+import {
+  getQualityGarpFundamentals,
+  type PaperTradeSignalType,
+  type QualityGarpFundamentalRow,
+} from '../db/queries.js';
 import type { PortfolioAction } from './portfolio-analyser.js';
-import type { PortfolioEntrySource } from './portfolio-entry-source.js';
+
+export type PortfolioEntrySource = PaperTradeSignalType | 'quality_garp' | 'unknown';
 
 export interface StrategyGuardrailCtx {
   entrySource: PortfolioEntrySource;
   symbol: string;
   date: string;
   db: DatabaseType;
-  qualityGarpBySymbol?: Map<string, QualityGarpFundamentalRow>;
   pnlPct?: number | null;
 }
 
-function truncateTriggerReason(s: string): string {
+export function truncateTriggerReason(s: string): string {
   if (s.length <= 280) return s;
   return `${s.slice(0, 276)}…`;
 }
@@ -58,6 +62,139 @@ function escalate(
   };
 }
 
+// ponytail: load QG universe only on first quality_garp guardrail hit per session date
+let qgCacheDate: string | null = null;
+let qgCache: Map<string, QualityGarpFundamentalRow> | null = null;
+const profitGrowthCache = new Map<string, number | null>();
+
+function qualityGarpRow(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+): QualityGarpFundamentalRow | undefined {
+  if (qgCacheDate !== date || !qgCache) {
+    qgCacheDate = date;
+    qgCache = new Map(
+      getQualityGarpFundamentals(date, db).map((row) => [row.symbol.toUpperCase(), row]),
+    );
+    profitGrowthCache.clear();
+  }
+  return qgCache.get(symbol.toUpperCase());
+}
+
+function profitGrowthYoy(symbol: string, db: DatabaseType): number | null {
+  const sym = symbol.toUpperCase();
+  if (!profitGrowthCache.has(sym)) {
+    const row = db
+      .prepare(
+        `
+        SELECT profit_growth_yoy AS profitGrowthYoy
+        FROM fundamentals
+        WHERE symbol = ?
+        ORDER BY as_of DESC
+        LIMIT 1
+      `,
+      )
+      .get(sym) as { profitGrowthYoy: number | null } | undefined;
+    profitGrowthCache.set(sym, row?.profitGrowthYoy ?? null);
+  }
+  return profitGrowthCache.get(sym) ?? null;
+}
+
+export function resolvePaperEntrySource(
+  symbol: string,
+  sourceDate: string,
+  signalType: PaperTradeSignalType,
+  db: DatabaseType,
+): PortfolioEntrySource {
+  if (signalType !== 'AI_PICK') return signalType;
+  const qualityGarp = db
+    .prepare(
+      `
+      SELECT 1
+      FROM screens
+      WHERE symbol = ? AND date = ? AND screen_name = 'quality_garp'
+      LIMIT 1
+    `,
+    )
+    .get(symbol.toUpperCase(), sourceDate);
+  return qualityGarp ? 'quality_garp' : 'AI_PICK';
+}
+
+export function resolveHoldingEntrySource(
+  symbol: string,
+  asOfDate: string,
+  db: DatabaseType,
+): PortfolioEntrySource {
+  const sym = symbol.toUpperCase();
+
+  const paper = db
+    .prepare(
+      `
+      SELECT source_date AS sourceDate, signal_type AS signalType
+      FROM paper_trades
+      WHERE symbol = ? AND source_date <= ?
+      ORDER BY source_date DESC, id DESC
+      LIMIT 1
+    `,
+    )
+    .get(sym, asOfDate) as { sourceDate: string; signalType: PaperTradeSignalType } | undefined;
+  if (paper) {
+    return resolvePaperEntrySource(sym, paper.sourceDate, paper.signalType, db);
+  }
+
+  const screen = db
+    .prepare(
+      `
+      SELECT screen_name AS screenName
+      FROM screens
+      WHERE symbol = ?
+        AND date <= ?
+        AND date >= date(?, '-365 days')
+        AND screen_name IN ('quality_garp', 'catalyst_entry', 'momentum_mf')
+      ORDER BY date DESC
+      LIMIT 1
+    `,
+    )
+    .get(sym, asOfDate, asOfDate) as { screenName: string } | undefined;
+  if (screen?.screenName === 'quality_garp') return 'quality_garp';
+  if (screen?.screenName === 'catalyst_entry') return 'catalyst_entry';
+  if (screen?.screenName === 'momentum_mf') return 'momentum_mf';
+
+  const openMom = db
+    .prepare(
+      `
+      SELECT 1
+      FROM paper_trades
+      WHERE symbol = ? AND status = 'OPEN' AND signal_type = 'momentum_mf'
+      LIMIT 1
+    `,
+    )
+    .get(sym);
+  if (openMom) return 'momentum_mf';
+
+  const thesis = db
+    .prepare(
+      `
+      SELECT trigger_reason AS triggerReason
+      FROM theses
+      WHERE symbol = ? AND date <= ?
+      ORDER BY date DESC
+      LIMIT 1
+    `,
+    )
+    .get(sym, asOfDate) as { triggerReason: string } | undefined;
+  if (thesis?.triggerReason) {
+    const lower = thesis.triggerReason.toLowerCase();
+    for (const name of ['quality_garp', 'catalyst_entry'] as const) {
+      if (lower.includes(name)) return name;
+    }
+    if (lower.includes('momentum')) return 'momentum_mf';
+  }
+
+  return 'unknown';
+}
+
 export function applyMomentumPortfolioGuardrails(
   action: PortfolioAction,
   signals: Record<string, number>,
@@ -73,21 +210,14 @@ export function applyMomentumPortfolioGuardrails(
     Number.isFinite(rank) &&
     rank > exitTh
   ) {
-    if (action.action === 'EXIT') return action;
     const severeTh = exitTh + 5;
-    const nextAction: PortfolioAction['action'] = rank > severeTh ? 'EXIT' : 'TRIM';
-    if (action.action === nextAction) return action;
+    const next: 'TRIM' | 'EXIT' = rank > severeTh ? 'EXIT' : 'TRIM';
     const prefix = `GUARDRAIL_OVERRIDE[mom_rank=${rank}>threshold=${exitTh}]`;
-    const suffix =
-      nextAction === 'EXIT'
+    const detail =
+      next === 'EXIT'
         ? `[Momentum: severe rank decay ${rank} > ${severeTh} — EXIT.]`
         : `[Momentum: rank decay ${rank} > ${exitTh} — TRIM review before EXIT.]`;
-    return {
-      ...action,
-      action: nextAction,
-      conviction: Math.max(action.conviction, nextAction === 'EXIT' ? 0.68 : 0.6),
-      triggerReason: prependTriggerReason(prefix, `${action.triggerReason} ${suffix}`),
-    };
+    return escalate(action, next, prefix, detail, next === 'EXIT' ? 0.68 : 0.6);
   }
 
   const falseFlag = signals.mom_false_flag === 1;
@@ -104,16 +234,16 @@ export function applyMomentumPortfolioGuardrails(
   return action;
 }
 
-export function assessQualityGarpDeterioration(
+function qualityGarpDeteriorationFlags(
   fundamentals: QualityGarpFundamentalRow | undefined,
-  profitGrowthYoy: number | null,
+  profitGrowth: number | null,
 ): string[] {
   if (!fundamentals) return [];
   const flags: string[] = [];
   if (fundamentals.promoterHoldingChangeQoQ != null && fundamentals.promoterHoldingChangeQoQ < 0) {
     flags.push('promoter selling');
   }
-  if (profitGrowthYoy != null && profitGrowthYoy < 0) {
+  if (profitGrowth != null && profitGrowth < 0) {
     flags.push('profit decline');
   }
   if (fundamentals.debtToEquity != null && fundamentals.debtToEquity >= QUALITY_GARP_DE_MAX) {
@@ -131,31 +261,15 @@ export function assessQualityGarpDeterioration(
   return flags;
 }
 
-function getProfitGrowthYoy(symbol: string, db: DatabaseType): number | null {
-  const row = db
-    .prepare(
-      `
-      SELECT profit_growth_yoy AS profitGrowthYoy
-      FROM fundamentals
-      WHERE symbol = ?
-      ORDER BY as_of DESC
-      LIMIT 1
-    `,
-    )
-    .get(symbol.toUpperCase()) as { profitGrowthYoy: number | null } | undefined;
-  return row?.profitGrowthYoy ?? null;
-}
-
-export function applyQualityGarpPortfolioGuardrails(
+function applyQualityGarpPortfolioGuardrails(
   action: PortfolioAction,
   ctx: StrategyGuardrailCtx,
 ): PortfolioAction {
   if (ctx.entrySource !== 'quality_garp') return action;
 
-  const fundamentals = ctx.qualityGarpBySymbol?.get(ctx.symbol.toUpperCase());
-  const flags = assessQualityGarpDeterioration(
-    fundamentals,
-    getProfitGrowthYoy(ctx.symbol, ctx.db),
+  const flags = qualityGarpDeteriorationFlags(
+    qualityGarpRow(ctx.symbol, ctx.date, ctx.db),
+    profitGrowthYoy(ctx.symbol, ctx.db),
   );
   if (flags.length === 0) return action;
 
@@ -175,7 +289,7 @@ function calendarDaysBetween(from: string, to: string): number {
   return Math.round((b - a) / 86400000);
 }
 
-export function assessCatalystHoldExpired(
+function catalystHoldExpired(
   symbol: string,
   asOfDate: string,
   db: DatabaseType,
@@ -237,13 +351,13 @@ export function assessCatalystHoldExpired(
   return { expired: false, daysPastMax: 0, reason: null };
 }
 
-export function applyCatalystPortfolioGuardrails(
+function applyCatalystPortfolioGuardrails(
   action: PortfolioAction,
   ctx: StrategyGuardrailCtx,
 ): PortfolioAction {
   if (ctx.entrySource !== 'catalyst_entry') return action;
 
-  const { expired, daysPastMax, reason } = assessCatalystHoldExpired(ctx.symbol, ctx.date, ctx.db);
+  const { expired, daysPastMax, reason } = catalystHoldExpired(ctx.symbol, ctx.date, ctx.db);
   if (!expired || !reason) return action;
 
   const severe = daysPastMax >= 5 || (ctx.pnlPct != null && ctx.pnlPct < -5);
