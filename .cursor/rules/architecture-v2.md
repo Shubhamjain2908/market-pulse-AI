@@ -178,7 +178,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 **Lifecycle:**
 - Enter: top 10 by composite rank, Sunday EOD
 - Exit triggers (priority order): trailing stop → hard −8% stop → rank drops > 20 (daily check) → target hit → regime changes from BULL_TRENDING
-- Portfolio analyser mirror: `mom_rank` action overrides are strategy-aware. Only holdings whose latest paper-trade origin resolves to `momentum_mf` are rank-decay routed; first breach becomes `TRIM` review with `GUARDRAIL_OVERRIDE[...]`, severe breach (`exit_rank_threshold + 5`) becomes `EXIT`. Quality-GARP / AI_PICK / catalyst / unknown origins do not exit on rank alone.
+- Portfolio analyser mirror: strategy-aware guardrails in `portfolio-strategy-guardrails.ts`. `momentum_mf` origins: rank-decay routing (`TRIM` then `EXIT` at `threshold + 5`). `quality_garp` origins: fundamental deterioration flags → `TRIM`/`EXIT`. `catalyst_entry` origins: hold-window / post-earnings → `TRIM`/`EXIT`. Entry origin resolved via `portfolio-entry-source.ts` (paper ledger, screens, thesis text). Non-matching origins do not exit on rank alone.
 - Rebalance: Sunday 8:00 AM IST — entries Sunday only, rank exits evaluated daily
 - Sector cap: max 3 stocks per NSE sector
 - Earnings blackout: block entries within ±3 calendar days of earnings (from `earnings_calendar` table, sourced via Yahoo Finance). **Sunday sync:** [`replaceMomentumEarningsCalendarForSymbol`](src/db/momentum-queries.ts) replaces rows per symbol when Yahoo returns data; **empty Yahoo response retains** existing calendar rows (fail-closed against outage clearing blackouts).
