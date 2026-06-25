@@ -10,7 +10,7 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import pLimit from 'p-limit';
 import { z } from 'zod';
 import { config } from '../config/env.js';
-import { loadEtfExclusions, loadMomentumConfig } from '../config/loaders.js';
+import { loadEtfExclusions } from '../config/loaders.js';
 import {
   getDb,
   getLatestHoldings,
@@ -24,6 +24,13 @@ import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { lastOpenOnOrBefore } from '../market/trading-days.js';
+import {
+  applyStrategyPortfolioGuardrails,
+  type PortfolioEntrySource,
+  resolveHoldingEntrySource,
+  type StrategyGuardrailCtx,
+  truncateTriggerReason,
+} from './portfolio-strategy-guardrails.js';
 import {
   buildLiteSnapshotCopy,
   getLatestSignalsMap,
@@ -72,8 +79,6 @@ export const PortfolioActionSchema = z.object({
   suggestedTarget: z.number().nullable().optional(),
 });
 export type PortfolioAction = z.infer<typeof PortfolioActionSchema>;
-
-type PortfolioEntrySource = PaperTradeSignalType | 'quality_garp' | 'unknown';
 
 const PORTFOLIO_SYSTEM = `You are a senior Indian-equity portfolio review analyst. The user already
 OWNS the position you are analysing. Recommend ONE of four actions based ONLY on the data provided:
@@ -129,67 +134,6 @@ function portfolioDeepLossAddon(): string {
 CRITICAL — UNREALISED LOSS >= ${t}%:
 HOLD is only acceptable if idiosyncratic recovery evidence exists in the supplied data.
 Otherwise prefer TRIM or EXIT and say why. Cite the drawdown magnitude in triggerReason.`;
-}
-
-function truncateTriggerReason(s: string): string {
-  if (s.length <= 280) return s;
-  return `${s.slice(0, 276)}…`;
-}
-
-function prependTriggerReason(prefix: string, s: string): string {
-  const out = `${prefix} — ${s}`;
-  if (out.length <= 280) return out;
-  return `${out.slice(0, 276)}…`;
-}
-
-/**
- * Momentum overlay (spec §6.4): momentum-sleeve rank decay → TRIM/EXIT; false-flag → block ADD.
- * No-op when `mom_rank` / `mom_false_flag` are absent from `signals`.
- */
-export function applyMomentumPortfolioGuardrails(
-  action: PortfolioAction,
-  signals: Record<string, number>,
-  opts: { entrySource?: PortfolioEntrySource | null } = {},
-): PortfolioAction {
-  const cfg = loadMomentumConfig();
-  const rank = signals.mom_rank;
-  const exitTh = cfg.exit_rank_threshold;
-
-  if (
-    opts.entrySource === 'momentum_mf' &&
-    rank != null &&
-    Number.isFinite(rank) &&
-    rank > exitTh
-  ) {
-    if (action.action === 'EXIT') return action;
-    const severeTh = exitTh + 5;
-    const nextAction: PortfolioAction['action'] = rank > severeTh ? 'EXIT' : 'TRIM';
-    if (action.action === nextAction) return action;
-    const prefix = `GUARDRAIL_OVERRIDE[mom_rank=${rank}>threshold=${exitTh}]`;
-    const suffix =
-      nextAction === 'EXIT'
-        ? `[Momentum: severe rank decay ${rank} > ${severeTh} — EXIT.]`
-        : `[Momentum: rank decay ${rank} > ${exitTh} — TRIM review before EXIT.]`;
-    return {
-      ...action,
-      action: nextAction,
-      conviction: Math.max(action.conviction, nextAction === 'EXIT' ? 0.68 : 0.6),
-      triggerReason: prependTriggerReason(prefix, `${action.triggerReason} ${suffix}`),
-    };
-  }
-
-  const falseFlag = signals.mom_false_flag === 1;
-  if (falseFlag && action.action === 'ADD') {
-    const suffix = '[Guardrail: mom_false_flag=1 — do not ADD.]';
-    return {
-      ...action,
-      action: 'HOLD',
-      conviction: Math.min(action.conviction, 0.55),
-      triggerReason: truncateTriggerReason(`${action.triggerReason} ${suffix}`),
-    };
-  }
-
-  return action;
 }
 
 /** Code-level enforcement: ADD into extension (RSI / 52W) and averaging-down R:R. */
@@ -298,7 +242,6 @@ interface LatestPaperTradeContext {
   entryPrice: number;
   sourceDate: string;
   signalType: PaperTradeSignalType;
-  entrySource: PortfolioEntrySource;
 }
 
 function getMostRecentPaperTradeEntry(
@@ -319,31 +262,7 @@ function getMostRecentPaperTradeEntry(
     .get(symbol.toUpperCase(), asOfDate) as
     | { entryPrice: number; sourceDate: string; signalType: PaperTradeSignalType }
     | undefined;
-  if (!row) return null;
-  return {
-    ...row,
-    entrySource: resolveEntrySource(symbol, row.sourceDate, row.signalType, db),
-  };
-}
-
-function resolveEntrySource(
-  symbol: string,
-  sourceDate: string,
-  signalType: PaperTradeSignalType,
-  db: DatabaseType,
-): PortfolioEntrySource {
-  if (signalType !== 'AI_PICK') return signalType;
-  const qualityGarp = db
-    .prepare(
-      `
-      SELECT 1
-      FROM screens
-      WHERE symbol = ? AND date = ? AND screen_name = 'quality_garp'
-      LIMIT 1
-    `,
-    )
-    .get(symbol.toUpperCase(), sourceDate);
-  return qualityGarp ? 'quality_garp' : 'AI_PICK';
+  return row ?? null;
 }
 
 function sanitizeStockContextForExcludedSignals(symbol: string, context: string): string {
@@ -514,6 +433,14 @@ function buildLitePortfolioRow(
   const copy = buildLiteSnapshotCopy(h, date, db);
   const signals = getLatestSignalsMap(h.symbol, date, db);
   const latestPaperEntry = getMostRecentPaperTradeEntry(h.symbol, date, db);
+  const entrySource = resolveHoldingEntrySource(h.symbol, date, db);
+  const guardCtx: StrategyGuardrailCtx = {
+    symbol: h.symbol,
+    date,
+    entrySource,
+    db,
+    pnlPct: h.pnlPct ?? null,
+  };
   const baseAction: PortfolioAction = {
     symbol: h.symbol,
     action: 'HOLD' as const,
@@ -525,7 +452,7 @@ function buildLitePortfolioRow(
     suggestedStop: null,
     suggestedTarget: null,
   };
-  const g = applyMomentumPortfolioGuardrails(
+  const g = applyStrategyPortfolioGuardrails(
     applyPortfolioAddGuardrails(
       baseAction,
       signals,
@@ -533,7 +460,7 @@ function buildLitePortfolioRow(
       latestPaperEntry,
     ),
     signals,
-    { entrySource: latestPaperEntry?.entrySource ?? null },
+    guardCtx,
   );
 
   return {
@@ -559,11 +486,12 @@ async function analyseOne(
   db: DatabaseType,
   llm: LlmProvider,
 ): Promise<PortfolioAnalysisRow> {
+  const entrySource = resolveHoldingEntrySource(h.symbol, date, db);
   const stockContext = sanitizeStockContextForExcludedSignals(
     h.symbol,
     buildStockContext(h.symbol, date, db, 'portfolio'),
   );
-  const positionContext = buildPositionContext(h, date, db);
+  const positionContext = buildPositionContext(h, date, db, entrySource);
   const openPaperTradeCount = getOpenPaperTradeCountForSymbol(h.symbol, db);
   const deep = h.pnlPct != null && h.pnlPct <= getPortfolioDeepLossPct();
   const system = deep ? `${PORTFOLIO_SYSTEM}${portfolioDeepLossAddon()}` : PORTFOLIO_SYSTEM;
@@ -577,7 +505,14 @@ async function analyseOne(
   });
   const signals = getLatestSignalsMap(h.symbol, date, db);
   const latestPaperEntry = getMostRecentPaperTradeEntry(h.symbol, date, db);
-  const a: PortfolioAction = applyMomentumPortfolioGuardrails(
+  const guardCtx: StrategyGuardrailCtx = {
+    symbol: h.symbol,
+    date,
+    entrySource,
+    db,
+    pnlPct: h.pnlPct ?? null,
+  };
+  const a: PortfolioAction = applyStrategyPortfolioGuardrails(
     applyPortfolioAddGuardrails(
       applyOpenPaperTradeAddBlock(result.data, openPaperTradeCount),
       signals,
@@ -588,7 +523,7 @@ async function analyseOne(
       latestPaperEntry,
     ),
     signals,
-    { entrySource: latestPaperEntry?.entrySource ?? null },
+    guardCtx,
   );
 
   return {
@@ -608,7 +543,12 @@ async function analyseOne(
   };
 }
 
-function buildPositionContext(h: PortfolioHoldingRow, date: string, db: DatabaseType): string {
+function buildPositionContext(
+  h: PortfolioHoldingRow,
+  date: string,
+  db: DatabaseType,
+  entrySource: PortfolioEntrySource,
+): string {
   const symbol = h.symbol.toUpperCase();
   const isSignalExcluded = EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol);
   const positionValue = h.qty * (h.lastPrice ?? h.avgPrice);
@@ -634,14 +574,13 @@ function buildPositionContext(h: PortfolioHoldingRow, date: string, db: Database
   const latestPaperEntry = getMostRecentPaperTradeEntry(symbol, date, db);
   lines.push('\n## Paper Trade Ledger Context');
   lines.push(`Open paper trades: ${openPaperTradeCount}`);
+  lines.push(`Entry source: ${entrySource}`);
   if (latestPaperEntry) {
-    lines.push(`Entry source: ${latestPaperEntry.entrySource}`);
     lines.push(`Paper signal type: ${latestPaperEntry.signalType}`);
     lines.push(
       `Most recent paper trade entry: ₹${latestPaperEntry.entryPrice.toFixed(2)} (${latestPaperEntry.sourceDate})`,
     );
   } else {
-    lines.push('Entry source: unknown');
     lines.push('Most recent paper trade entry: none');
   }
 

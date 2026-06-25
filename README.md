@@ -499,7 +499,7 @@ Technical enrich and momentum rank refresh run **daily** in the main workflow; `
 
 **Portfolio analyser**
 
-- [`applyMomentumPortfolioGuardrails`](src/agents/portfolio-analyser.ts): **`mom_rank` > exit threshold** → **EXIT** (unless already EXIT); **`mom_false_flag === 1`** downgrades **ADD** → **HOLD** with an explicit guardrail suffix. Uses the same merged signal map as lite/full paths.
+- [`applyStrategyPortfolioGuardrails`](src/agents/portfolio-strategy-guardrails.ts): **`momentum_mf`** — `mom_rank > exit_rank_threshold` → **TRIM**; severe (`threshold + 5`) → **EXIT**; **`mom_false_flag === 1`** downgrades **ADD** → **HOLD**. **`quality_garp`** — fundamental deterioration (inverse gate flags) → **TRIM**/**EXIT**. **`catalyst_entry`** — hold window / post-earnings expiry → **TRIM**/**EXIT**. Entry origin from [`resolveHoldingEntrySource`](src/agents/portfolio-strategy-guardrails.ts). Overrides prefix `GUARDRAIL_OVERRIDE[...]` on `trigger_reason` (thesis text unchanged).
 
 **Briefing**
 
