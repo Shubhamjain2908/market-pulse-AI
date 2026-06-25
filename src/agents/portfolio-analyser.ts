@@ -14,7 +14,6 @@ import { loadEtfExclusions } from '../config/loaders.js';
 import {
   getDb,
   getLatestHoldings,
-  getQualityGarpFundamentals,
   type PaperTradeSignalType,
   type PortfolioAnalysisRow,
   type PortfolioHoldingRow,
@@ -26,13 +25,11 @@ import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { lastOpenOnOrBefore } from '../market/trading-days.js';
 import {
+  applyStrategyPortfolioGuardrails,
   type PortfolioEntrySource,
   resolveHoldingEntrySource,
-  resolvePaperEntrySource,
-} from './portfolio-entry-source.js';
-import {
-  applyStrategyPortfolioGuardrails,
   type StrategyGuardrailCtx,
+  truncateTriggerReason,
 } from './portfolio-strategy-guardrails.js';
 import {
   buildLiteSnapshotCopy,
@@ -41,8 +38,6 @@ import {
   needsPortfolioLlmReview,
 } from './portfolio-trigger.js';
 import { buildStockContext } from './thesis-generator.js';
-
-export { applyMomentumPortfolioGuardrails } from './portfolio-strategy-guardrails.js';
 
 const log = child({ component: 'portfolio-analyser' });
 
@@ -139,11 +134,6 @@ function portfolioDeepLossAddon(): string {
 CRITICAL — UNREALISED LOSS >= ${t}%:
 HOLD is only acceptable if idiosyncratic recovery evidence exists in the supplied data.
 Otherwise prefer TRIM or EXIT and say why. Cite the drawdown magnitude in triggerReason.`;
-}
-
-function truncateTriggerReason(s: string): string {
-  if (s.length <= 280) return s;
-  return `${s.slice(0, 276)}…`;
 }
 
 /** Code-level enforcement: ADD into extension (RSI / 52W) and averaging-down R:R. */
@@ -252,7 +242,6 @@ interface LatestPaperTradeContext {
   entryPrice: number;
   sourceDate: string;
   signalType: PaperTradeSignalType;
-  entrySource: PortfolioEntrySource;
 }
 
 function getMostRecentPaperTradeEntry(
@@ -273,28 +262,7 @@ function getMostRecentPaperTradeEntry(
     .get(symbol.toUpperCase(), asOfDate) as
     | { entryPrice: number; sourceDate: string; signalType: PaperTradeSignalType }
     | undefined;
-  if (!row) return null;
-  return {
-    ...row,
-    entrySource: resolvePaperEntrySource(symbol, row.sourceDate, row.signalType, db),
-  };
-}
-
-function buildQualityGarpFundamentalsMap(date: string, db: DatabaseType) {
-  return new Map(
-    getQualityGarpFundamentals(date, db).map((row) => [row.symbol.toUpperCase(), row]),
-  );
-}
-
-function strategyGuardrailCtx(
-  symbol: string,
-  date: string,
-  entrySource: PortfolioEntrySource,
-  db: DatabaseType,
-  qualityGarpBySymbol: Map<string, ReturnType<typeof getQualityGarpFundamentals>[number]>,
-  pnlPct: number | null,
-): StrategyGuardrailCtx {
-  return { symbol, date, entrySource, db, qualityGarpBySymbol, pnlPct };
+  return row ?? null;
 }
 
 function sanitizeStockContextForExcludedSignals(symbol: string, context: string): string {
@@ -401,15 +369,14 @@ export async function analysePortfolio(
     'portfolio analyser starting',
   );
 
-  const qualityGarpBySymbol = buildQualityGarpFundamentalsMap(date, db);
-  const liteRows = liteQueue.map((h) => buildLitePortfolioRow(h, date, db, qualityGarpBySymbol));
+  const liteRows = liteQueue.map((h) => buildLitePortfolioRow(h, date, db));
 
   const limit = pLimit(concurrency);
   const outcomes = await Promise.all(
     fullQueue.map((h) =>
       limit(async () => {
         try {
-          const row = await analyseOne(h, date, db, llm, qualityGarpBySymbol);
+          const row = await analyseOne(h, date, db, llm);
           return { ok: true as const, row };
         } catch (err) {
           log.warn(
@@ -462,12 +429,18 @@ function buildLitePortfolioRow(
   h: PortfolioHoldingRow,
   date: string,
   db: DatabaseType,
-  qualityGarpBySymbol: Map<string, ReturnType<typeof getQualityGarpFundamentals>[number]>,
 ): PortfolioAnalysisRow {
   const copy = buildLiteSnapshotCopy(h, date, db);
   const signals = getLatestSignalsMap(h.symbol, date, db);
   const latestPaperEntry = getMostRecentPaperTradeEntry(h.symbol, date, db);
   const entrySource = resolveHoldingEntrySource(h.symbol, date, db);
+  const guardCtx: StrategyGuardrailCtx = {
+    symbol: h.symbol,
+    date,
+    entrySource,
+    db,
+    pnlPct: h.pnlPct ?? null,
+  };
   const baseAction: PortfolioAction = {
     symbol: h.symbol,
     action: 'HOLD' as const,
@@ -487,7 +460,7 @@ function buildLitePortfolioRow(
       latestPaperEntry,
     ),
     signals,
-    strategyGuardrailCtx(h.symbol, date, entrySource, db, qualityGarpBySymbol, h.pnlPct ?? null),
+    guardCtx,
   );
 
   return {
@@ -512,13 +485,13 @@ async function analyseOne(
   date: string,
   db: DatabaseType,
   llm: LlmProvider,
-  qualityGarpBySymbol: Map<string, ReturnType<typeof getQualityGarpFundamentals>[number]>,
 ): Promise<PortfolioAnalysisRow> {
+  const entrySource = resolveHoldingEntrySource(h.symbol, date, db);
   const stockContext = sanitizeStockContextForExcludedSignals(
     h.symbol,
     buildStockContext(h.symbol, date, db, 'portfolio'),
   );
-  const positionContext = buildPositionContext(h, date, db);
+  const positionContext = buildPositionContext(h, date, db, entrySource);
   const openPaperTradeCount = getOpenPaperTradeCountForSymbol(h.symbol, db);
   const deep = h.pnlPct != null && h.pnlPct <= getPortfolioDeepLossPct();
   const system = deep ? `${PORTFOLIO_SYSTEM}${portfolioDeepLossAddon()}` : PORTFOLIO_SYSTEM;
@@ -532,7 +505,13 @@ async function analyseOne(
   });
   const signals = getLatestSignalsMap(h.symbol, date, db);
   const latestPaperEntry = getMostRecentPaperTradeEntry(h.symbol, date, db);
-  const entrySource = resolveHoldingEntrySource(h.symbol, date, db);
+  const guardCtx: StrategyGuardrailCtx = {
+    symbol: h.symbol,
+    date,
+    entrySource,
+    db,
+    pnlPct: h.pnlPct ?? null,
+  };
   const a: PortfolioAction = applyStrategyPortfolioGuardrails(
     applyPortfolioAddGuardrails(
       applyOpenPaperTradeAddBlock(result.data, openPaperTradeCount),
@@ -544,7 +523,7 @@ async function analyseOne(
       latestPaperEntry,
     ),
     signals,
-    strategyGuardrailCtx(h.symbol, date, entrySource, db, qualityGarpBySymbol, h.pnlPct ?? null),
+    guardCtx,
   );
 
   return {
@@ -564,7 +543,12 @@ async function analyseOne(
   };
 }
 
-function buildPositionContext(h: PortfolioHoldingRow, date: string, db: DatabaseType): string {
+function buildPositionContext(
+  h: PortfolioHoldingRow,
+  date: string,
+  db: DatabaseType,
+  entrySource: PortfolioEntrySource,
+): string {
   const symbol = h.symbol.toUpperCase();
   const isSignalExcluded = EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol);
   const positionValue = h.qty * (h.lastPrice ?? h.avgPrice);
@@ -588,7 +572,6 @@ function buildPositionContext(h: PortfolioHoldingRow, date: string, db: Database
 
   const openPaperTradeCount = getOpenPaperTradeCountForSymbol(symbol, db);
   const latestPaperEntry = getMostRecentPaperTradeEntry(symbol, date, db);
-  const entrySource = resolveHoldingEntrySource(symbol, date, db);
   lines.push('\n## Paper Trade Ledger Context');
   lines.push(`Open paper trades: ${openPaperTradeCount}`);
   lines.push(`Entry source: ${entrySource}`);
