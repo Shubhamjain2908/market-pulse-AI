@@ -11,6 +11,7 @@ import {
 import {
   applyMomentumPortfolioGuardrails,
   applyStrategyPortfolioGuardrails,
+  resetPortfolioGuardrailCachesForTests,
   resolveHoldingEntrySource,
 } from '../../src/agents/portfolio-strategy-guardrails.js';
 import {
@@ -503,6 +504,10 @@ describe('portfolio analyser', () => {
   });
 
   describe('applyStrategyPortfolioGuardrails', () => {
+    beforeEach(() => {
+      resetPortfolioGuardrailCachesForTests();
+    });
+
     const strategyHold = (symbol = 'ITC'): PortfolioAction => ({
       symbol,
       action: 'HOLD',
@@ -539,6 +544,50 @@ describe('portfolio analyser', () => {
       expect(out.triggerReason).toContain('GUARDRAIL_OVERRIDE');
     });
 
+    it('leaves quality_garp unchanged on a single deterioration flag', () => {
+      for (const asOf of ['2024-03-31', '2023-03-31', '2022-03-31']) {
+        db.prepare(
+          `INSERT INTO fundamentals (symbol, as_of, source, roe, roce, peg, debt_to_equity)
+           VALUES ('QG1', ?, 'yahoo_annual', 0.2, 0.25, 1, 0.2)`,
+        ).run(asOf);
+      }
+      db.prepare(
+        `INSERT INTO fundamentals (symbol, as_of, source, pe, pb, peg, debt_to_equity)
+         VALUES ('QG1', '2026-06-25', 'yahoo_snapshot', 20, 3, 1.5, 0.2)`,
+      ).run();
+      const out = applyStrategyPortfolioGuardrails(
+        strategyHold('QG1'),
+        {},
+        { entrySource: 'quality_garp', symbol: 'QG1', date: '2026-06-25', db, pnlPct: 5 },
+      );
+      expect(out.action).toBe('HOLD');
+      expect(out.triggerReason).toBe('No change.');
+    });
+
+    it('applies quality_garp guardrails with fundamentals before analysis date', () => {
+      for (const asOf of ['2024-03-31', '2023-03-31', '2022-03-31']) {
+        db.prepare(
+          `INSERT INTO fundamentals (symbol, as_of, source, roe, roce, peg, debt_to_equity)
+           VALUES ('QGPIT', ?, 'yahoo_annual', 0.2, 0.25, 1, 0.2)`,
+        ).run(asOf);
+      }
+      db.prepare(
+        `INSERT INTO fundamentals (symbol, as_of, source, pe, pb, peg, debt_to_equity, profit_growth_yoy)
+         VALUES ('QGPIT', '2026-06-20', 'yahoo_snapshot', 20, 3, 1, 0.2, -4)`,
+      ).run();
+      db.prepare(
+        `INSERT INTO fundamentals (symbol, as_of, source, promoter_holding_pct, promoter_holding_change_qoq)
+         VALUES ('QGPIT', '2026-06-19', 'screener', 50, -2)`,
+      ).run();
+      const out = applyStrategyPortfolioGuardrails(
+        strategyHold('QGPIT'),
+        {},
+        { entrySource: 'quality_garp', symbol: 'QGPIT', date: '2026-06-25', db, pnlPct: 5 },
+      );
+      expect(out.action).toBe('EXIT');
+      expect(out.triggerReason).toContain('GUARDRAIL_OVERRIDE');
+    });
+
     it('trims catalyst_entry when hold window expired', () => {
       insertPaperTradeIfAbsent(
         {
@@ -562,6 +611,26 @@ describe('portfolio analyser', () => {
       );
       expect(out.action).toBe('TRIM');
       expect(out.triggerReason).toContain('Catalyst');
+    });
+
+    it('trims inferred catalyst_entry after expected_earnings_date + 2', () => {
+      db.prepare(
+        `INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+         VALUES (
+           'CEX',
+           '2026-06-01',
+           'catalyst_entry',
+           7,
+           '{"expected_earnings_date":"2026-06-10","days_to_earnings":9}'
+         )`,
+      ).run();
+      const out = applyStrategyPortfolioGuardrails(
+        strategyHold('CEX'),
+        {},
+        { entrySource: 'catalyst_entry', symbol: 'CEX', date: '2026-06-15', db, pnlPct: 2 },
+      );
+      expect(out.action).toBe('TRIM');
+      expect(out.triggerReason).toContain('post-earnings window ended 2026-06-12');
     });
   });
 });

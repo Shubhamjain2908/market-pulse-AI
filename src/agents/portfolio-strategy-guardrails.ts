@@ -75,30 +75,41 @@ function qualityGarpRow(
   if (qgCacheDate !== date || !qgCache) {
     qgCacheDate = date;
     qgCache = new Map(
-      getQualityGarpFundamentals(date, db).map((row) => [row.symbol.toUpperCase(), row]),
+      getQualityGarpFundamentals(date, db, { pointInTime: true }).map((row) => [
+        row.symbol.toUpperCase(),
+        row,
+      ]),
     );
     profitGrowthCache.clear();
   }
   return qgCache.get(symbol.toUpperCase());
 }
 
-function profitGrowthYoy(symbol: string, db: DatabaseType): number | null {
+function profitGrowthYoy(symbol: string, asOfDate: string, db: DatabaseType): number | null {
   const sym = symbol.toUpperCase();
-  if (!profitGrowthCache.has(sym)) {
+  const cacheKey = `${sym}:${asOfDate}`;
+  if (!profitGrowthCache.has(cacheKey)) {
     const row = db
       .prepare(
         `
         SELECT profit_growth_yoy AS profitGrowthYoy
         FROM fundamentals
-        WHERE symbol = ?
+        WHERE symbol = ? AND as_of <= ?
         ORDER BY as_of DESC
         LIMIT 1
       `,
       )
-      .get(sym) as { profitGrowthYoy: number | null } | undefined;
-    profitGrowthCache.set(sym, row?.profitGrowthYoy ?? null);
+      .get(sym, asOfDate) as { profitGrowthYoy: number | null } | undefined;
+    profitGrowthCache.set(cacheKey, row?.profitGrowthYoy ?? null);
   }
-  return profitGrowthCache.get(sym) ?? null;
+  return profitGrowthCache.get(cacheKey) ?? null;
+}
+
+/** Clears lazy guardrail caches between tests (same module + date). */
+export function resetPortfolioGuardrailCachesForTests(): void {
+  qgCacheDate = null;
+  qgCache = null;
+  profitGrowthCache.clear();
 }
 
 export function resolvePaperEntrySource(
@@ -269,24 +280,45 @@ function applyQualityGarpPortfolioGuardrails(
 
   const flags = qualityGarpDeteriorationFlags(
     qualityGarpRow(ctx.symbol, ctx.date, ctx.db),
-    profitGrowthYoy(ctx.symbol, ctx.db),
+    profitGrowthYoy(ctx.symbol, ctx.date, ctx.db),
   );
   if (flags.length === 0) return action;
 
   const severe = flags.includes('promoter selling') && flags.includes('profit decline');
-  const next: 'TRIM' | 'EXIT' = severe || flags.length >= 4 ? 'EXIT' : 'TRIM';
+  if (severe || flags.length >= 4) {
+    const prefix = `GUARDRAIL_OVERRIDE[strategy=quality_garp,flags=${flags.length}]`;
+    const detail = `[Quality-GARP: severe deterioration (${flags.join(', ')}) — EXIT.]`;
+    return escalate(action, 'EXIT', prefix, detail, 0.65);
+  }
+  if (flags.length < 2) return action;
+
   const prefix = `GUARDRAIL_OVERRIDE[strategy=quality_garp,flags=${flags.length}]`;
-  const detail =
-    next === 'EXIT'
-      ? `[Quality-GARP: severe deterioration (${flags.join(', ')}) — EXIT.]`
-      : `[Quality-GARP: fundamental deterioration (${flags.join(', ')}) — TRIM.]`;
-  return escalate(action, next, prefix, detail, next === 'EXIT' ? 0.65 : 0.58);
+  const detail = `[Quality-GARP: fundamental deterioration (${flags.join(', ')}) — TRIM.]`;
+  return escalate(action, 'TRIM', prefix, detail, 0.58);
 }
 
 function calendarDaysBetween(from: string, to: string): number {
   const a = Date.parse(`${from}T00:00:00Z`);
   const b = Date.parse(`${to}T00:00:00Z`);
   return Math.round((b - a) / 86400000);
+}
+
+function addCalendarDays(isoDate: string, days: number): string {
+  const ms = Date.parse(`${isoDate}T00:00:00Z`) + days * 86400000;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function catalystHoldWindowEnd(
+  screenDate: string,
+  criteria: { days_to_earnings?: number; expected_earnings_date?: string },
+): string | null {
+  if (criteria.expected_earnings_date) {
+    return addCalendarDays(criteria.expected_earnings_date, 2);
+  }
+  if (criteria.days_to_earnings != null) {
+    return addCalendarDays(screenDate, Math.trunc(criteria.days_to_earnings) + 2);
+  }
+  return null;
 }
 
 function catalystHoldExpired(
@@ -323,24 +355,28 @@ function catalystHoldExpired(
   const screen = db
     .prepare(
       `
-      SELECT matched_criteria AS matchedCriteria
+      SELECT date, matched_criteria AS matchedCriteria
       FROM screens
       WHERE symbol = ? AND screen_name = 'catalyst_entry' AND date <= ?
       ORDER BY date DESC
       LIMIT 1
     `,
     )
-    .get(sym, asOfDate) as { matchedCriteria: string } | undefined;
+    .get(sym, asOfDate) as { date: string; matchedCriteria: string } | undefined;
 
   if (screen?.matchedCriteria) {
     try {
-      const parsed = JSON.parse(screen.matchedCriteria) as { days_to_earnings?: number };
-      const dte = parsed.days_to_earnings;
-      if (dte != null && dte < -2) {
+      const parsed = JSON.parse(screen.matchedCriteria) as {
+        days_to_earnings?: number;
+        expected_earnings_date?: string;
+      };
+      const windowEnd = catalystHoldWindowEnd(screen.date, parsed);
+      if (windowEnd != null && asOfDate > windowEnd) {
+        const past = calendarDaysBetween(windowEnd, asOfDate);
         return {
           expired: true,
-          daysPastMax: Math.abs(dte) - 2,
-          reason: `post-earnings window (days_to_earnings=${dte})`,
+          daysPastMax: past,
+          reason: `post-earnings window ended ${windowEnd}`,
         };
       }
     } catch {
