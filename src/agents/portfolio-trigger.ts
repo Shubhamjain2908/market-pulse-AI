@@ -5,6 +5,7 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import type { PortfolioHoldingRow } from '../db/index.js';
+import { lastOpenOnOrBefore } from '../market/trading-days.js';
 
 /**
  * Unrealised loss at or below this level always forces a full LLM portfolio review.
@@ -262,6 +263,20 @@ export function formatTechnicalLine(snap: SignalSnapshot): string {
 }
 
 /** One-line summary for the HTML card (may be null if no data). */
+export function getLatestSignalDate(symbol: string, date: string, db: DatabaseType): string | null {
+  const row = db
+    .prepare(
+      `
+      SELECT MAX(date) AS d
+      FROM signals
+      WHERE symbol = ? AND date <= ? AND date >= date(?, '-90 days')
+    `,
+    )
+    .get(symbol.toUpperCase(), date, date) as { d: string | null } | undefined;
+  return row?.d ?? null;
+}
+
+/** One-line summary for the HTML card (may be null if no data). */
 export function technicalSummaryLine(
   symbol: string,
   date: string,
@@ -270,5 +285,10 @@ export function technicalSummaryLine(
   const s = getLatestSignalsMap(symbol, date, db);
   if (Object.keys(s).length === 0) return null;
   const line = formatTechnicalLine(parseSignalSnapshot(s));
+  const signalDate = getLatestSignalDate(symbol, date, db);
+  const expectedSession = lastOpenOnOrBefore(date) ?? date;
+  if (signalDate && signalDate < expectedSession) {
+    return `${line} · Signals as of ${signalDate} (prior NSE session)`;
+  }
   return line;
 }
