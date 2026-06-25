@@ -472,6 +472,9 @@ describe('portfolio analyser', () => {
       db,
       captureLlm as unknown as LlmProvider,
     );
+    expect(capturedUser).toContain('Current position value:');
+    expect(capturedUser).toContain('Current portfolio weight:');
+    expect(capturedUser).toContain('Entry source: unknown');
     expect(capturedUser).not.toContain('rsi_14:');
     expect(capturedUser).not.toContain('volume_ratio_20d:');
     expect(capturedUser).not.toContain('rsi_overbought');
@@ -491,17 +494,44 @@ describe('applyMomentumPortfolioGuardrails', () => {
     suggestedTarget: null,
   });
 
-  it('forces EXIT when mom_rank exceeds configured exit threshold', () => {
-    const out = applyMomentumPortfolioGuardrails(baseHold(), { mom_rank: 21 });
-    expect(out.action).toBe('EXIT');
+  it('trims momentum_mf holdings on first mom_rank threshold breach', () => {
+    const out = applyMomentumPortfolioGuardrails(
+      baseHold(),
+      { mom_rank: 21 },
+      { entrySource: 'momentum_mf' },
+    );
+    expect(out.action).toBe('TRIM');
+    expect(out.triggerReason).toContain('GUARDRAIL_OVERRIDE');
     expect(out.triggerReason).toContain('rank decay');
     expect(out.triggerReason).toContain('mom_rank');
+  });
+
+  it('forces EXIT for momentum_mf holdings on severe mom_rank decay', () => {
+    const out = applyMomentumPortfolioGuardrails(
+      baseHold(),
+      { mom_rank: 26 },
+      { entrySource: 'momentum_mf' },
+    );
+    expect(out.action).toBe('EXIT');
+    expect(out.triggerReason).toContain('GUARDRAIL_OVERRIDE');
+    expect(out.triggerReason).toContain('severe rank decay');
+  });
+
+  it('does not apply mom_rank exit logic to non-momentum holdings', () => {
+    const out = applyMomentumPortfolioGuardrails(
+      baseHold(),
+      { mom_rank: 99 },
+      { entrySource: 'quality_garp' },
+    );
+    expect(out.action).toBe('HOLD');
+    expect(out.triggerReason).toBe('No change.');
   });
 
   it('does not mutate triggerReason when already EXIT', () => {
     const out = applyMomentumPortfolioGuardrails(
       { ...baseHold(), action: 'EXIT', triggerReason: 'Manual exit.' },
       { mom_rank: 99 },
+      { entrySource: 'momentum_mf' },
     );
     expect(out.action).toBe('EXIT');
     expect(out.triggerReason).toBe('Manual exit.');

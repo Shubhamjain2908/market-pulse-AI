@@ -14,6 +14,7 @@ import { loadEtfExclusions, loadMomentumConfig } from '../config/loaders.js';
 import {
   getDb,
   getLatestHoldings,
+  type PaperTradeSignalType,
   type PortfolioAnalysisRow,
   type PortfolioHoldingRow,
   upsertPortfolioAnalysis,
@@ -71,6 +72,8 @@ export const PortfolioActionSchema = z.object({
   suggestedTarget: z.number().nullable().optional(),
 });
 export type PortfolioAction = z.infer<typeof PortfolioActionSchema>;
+
+type PortfolioEntrySource = PaperTradeSignalType | 'quality_garp' | 'unknown';
 
 const PORTFOLIO_SYSTEM = `You are a senior Indian-equity portfolio review analyst. The user already
 OWNS the position you are analysing. Recommend ONE of four actions based ONLY on the data provided:
@@ -133,26 +136,45 @@ function truncateTriggerReason(s: string): string {
   return `${s.slice(0, 276)}…`;
 }
 
+function prependTriggerReason(prefix: string, s: string): string {
+  const out = `${prefix} — ${s}`;
+  if (out.length <= 280) return out;
+  return `${out.slice(0, 276)}…`;
+}
+
 /**
- * Momentum overlay (spec §6.4): rank decay → EXIT; false-flag → block ADD.
+ * Momentum overlay (spec §6.4): momentum-sleeve rank decay → TRIM/EXIT; false-flag → block ADD.
  * No-op when `mom_rank` / `mom_false_flag` are absent from `signals`.
  */
 export function applyMomentumPortfolioGuardrails(
   action: PortfolioAction,
   signals: Record<string, number>,
+  opts: { entrySource?: PortfolioEntrySource | null } = {},
 ): PortfolioAction {
   const cfg = loadMomentumConfig();
   const rank = signals.mom_rank;
   const exitTh = cfg.exit_rank_threshold;
 
-  if (rank != null && Number.isFinite(rank) && rank > exitTh) {
+  if (
+    opts.entrySource === 'momentum_mf' &&
+    rank != null &&
+    Number.isFinite(rank) &&
+    rank > exitTh
+  ) {
     if (action.action === 'EXIT') return action;
-    const suffix = `[Momentum: mom_rank ${rank} > ${exitTh} — rank decay EXIT.]`;
+    const severeTh = exitTh + 5;
+    const nextAction: PortfolioAction['action'] = rank > severeTh ? 'EXIT' : 'TRIM';
+    if (action.action === nextAction) return action;
+    const prefix = `GUARDRAIL_OVERRIDE[mom_rank=${rank}>threshold=${exitTh}]`;
+    const suffix =
+      nextAction === 'EXIT'
+        ? `[Momentum: severe rank decay ${rank} > ${severeTh} — EXIT.]`
+        : `[Momentum: rank decay ${rank} > ${exitTh} — TRIM review before EXIT.]`;
     return {
       ...action,
-      action: 'EXIT',
-      conviction: Math.max(action.conviction, 0.68),
-      triggerReason: truncateTriggerReason(`${action.triggerReason} ${suffix}`),
+      action: nextAction,
+      conviction: Math.max(action.conviction, nextAction === 'EXIT' ? 0.68 : 0.6),
+      triggerReason: prependTriggerReason(prefix, `${action.triggerReason} ${suffix}`),
     };
   }
 
@@ -272,23 +294,56 @@ function getOpenPaperTradeCountForSymbol(symbol: string, db: DatabaseType): numb
   return row.c;
 }
 
+interface LatestPaperTradeContext {
+  entryPrice: number;
+  sourceDate: string;
+  signalType: PaperTradeSignalType;
+  entrySource: PortfolioEntrySource;
+}
+
 function getMostRecentPaperTradeEntry(
   symbol: string,
   asOfDate: string,
   db: DatabaseType,
-): { entryPrice: number; sourceDate: string } | null {
+): LatestPaperTradeContext | null {
   const row = db
     .prepare(
       `
-      SELECT entry_price AS entryPrice, source_date AS sourceDate
+      SELECT entry_price AS entryPrice, source_date AS sourceDate, signal_type AS signalType
       FROM paper_trades
       WHERE symbol = ? AND source_date <= ?
       ORDER BY source_date DESC, id DESC
       LIMIT 1
     `,
     )
-    .get(symbol.toUpperCase(), asOfDate) as { entryPrice: number; sourceDate: string } | undefined;
-  return row ?? null;
+    .get(symbol.toUpperCase(), asOfDate) as
+    | { entryPrice: number; sourceDate: string; signalType: PaperTradeSignalType }
+    | undefined;
+  if (!row) return null;
+  return {
+    ...row,
+    entrySource: resolveEntrySource(symbol, row.sourceDate, row.signalType, db),
+  };
+}
+
+function resolveEntrySource(
+  symbol: string,
+  sourceDate: string,
+  signalType: PaperTradeSignalType,
+  db: DatabaseType,
+): PortfolioEntrySource {
+  if (signalType !== 'AI_PICK') return signalType;
+  const qualityGarp = db
+    .prepare(
+      `
+      SELECT 1
+      FROM screens
+      WHERE symbol = ? AND date = ? AND screen_name = 'quality_garp'
+      LIMIT 1
+    `,
+    )
+    .get(symbol.toUpperCase(), sourceDate);
+  return qualityGarp ? 'quality_garp' : 'AI_PICK';
 }
 
 function sanitizeStockContextForExcludedSignals(symbol: string, context: string): string {
@@ -478,6 +533,7 @@ function buildLitePortfolioRow(
       latestPaperEntry,
     ),
     signals,
+    { entrySource: latestPaperEntry?.entrySource ?? null },
   );
 
   return {
@@ -532,6 +588,7 @@ async function analyseOne(
       latestPaperEntry,
     ),
     signals,
+    { entrySource: latestPaperEntry?.entrySource ?? null },
   );
 
   return {
@@ -554,10 +611,16 @@ async function analyseOne(
 function buildPositionContext(h: PortfolioHoldingRow, date: string, db: DatabaseType): string {
   const symbol = h.symbol.toUpperCase();
   const isSignalExcluded = EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol);
+  const positionValue = h.qty * (h.lastPrice ?? h.avgPrice);
+  const portfolioValue = getLatestPortfolioMarketValue(db);
   const lines: string[] = [`# Position: ${h.symbol} (${h.exchange})`];
   lines.push(`Quantity: ${h.qty}`);
   lines.push(`Avg buy price: ₹${h.avgPrice.toFixed(2)}`);
   if (h.lastPrice != null) lines.push(`Last price: ₹${h.lastPrice.toFixed(2)}`);
+  lines.push(`Current position value: ₹${positionValue.toFixed(2)}`);
+  if (portfolioValue != null && portfolioValue > 0) {
+    lines.push(`Current portfolio weight: ${((positionValue / portfolioValue) * 100).toFixed(2)}%`);
+  }
   if (h.pnl != null) lines.push(`Unrealised P&L: ₹${h.pnl.toFixed(2)}`);
   if (h.pnlPct != null) lines.push(`Unrealised P&L %: ${h.pnlPct.toFixed(2)}%`);
   if (h.dayChangePct != null) lines.push(`Day change %: ${h.dayChangePct.toFixed(2)}%`);
@@ -572,10 +635,13 @@ function buildPositionContext(h: PortfolioHoldingRow, date: string, db: Database
   lines.push('\n## Paper Trade Ledger Context');
   lines.push(`Open paper trades: ${openPaperTradeCount}`);
   if (latestPaperEntry) {
+    lines.push(`Entry source: ${latestPaperEntry.entrySource}`);
+    lines.push(`Paper signal type: ${latestPaperEntry.signalType}`);
     lines.push(
       `Most recent paper trade entry: ₹${latestPaperEntry.entryPrice.toFixed(2)} (${latestPaperEntry.sourceDate})`,
     );
   } else {
+    lines.push('Entry source: unknown');
     lines.push('Most recent paper trade entry: none');
   }
 
@@ -612,6 +678,19 @@ function buildPositionContext(h: PortfolioHoldingRow, date: string, db: Database
   }
 
   return lines.join('\n');
+}
+
+function getLatestPortfolioMarketValue(db: DatabaseType): number | null {
+  const row = db
+    .prepare(
+      `
+      SELECT SUM(qty * COALESCE(last_price, avg_price)) AS value
+      FROM portfolio_holdings
+      WHERE as_of = (SELECT MAX(as_of) FROM portfolio_holdings)
+    `,
+    )
+    .get() as { value: number | null } | undefined;
+  return row?.value ?? null;
 }
 
 function empty(): Record<'HOLD' | 'ADD' | 'TRIM' | 'EXIT', number> {
