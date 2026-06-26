@@ -73,6 +73,7 @@ export interface PaperTradeRecordResult {
   insertedCatalystEntry: number;
   crossStrategyBlocked: number;
   blockedAiPick: number;
+  blockedPortfolioAdd: number;
 }
 
 function blockIfOpenPaperTradeExists(
@@ -102,6 +103,7 @@ export function recordPaperTrades(
   let insertedCatalystEntry = 0;
   let crossStrategyBlocked = 0;
   let blockedAiPick = 0;
+  let blockedPortfolioAdd = 0;
 
   for (const t of theses) {
     const entry = parseInrPriceMidpoint(t.entryZone);
@@ -245,7 +247,8 @@ export function recordPaperTrades(
   if (portfolio?.positions?.length) {
     for (const p of portfolio.positions) {
       if (p.action !== 'ADD') continue;
-      if ((process.env.PORTFOLIO_ADD_PAPER_TRADES ?? config.PORTFOLIO_ADD_PAPER_TRADES) !== '1') {
+      if (config.PORTFOLIO_ADD_PAPER_TRADES !== '1') {
+        blockedPortfolioAdd++;
         log.info(
           { symbol: p.symbol, event: 'portfolio_add_paper_disabled' },
           'PORTFOLIO_ADD paper trade disabled by config',
@@ -293,5 +296,6 @@ export function recordPaperTrades(
     insertedCatalystEntry,
     crossStrategyBlocked,
     blockedAiPick,
+    blockedPortfolioAdd,
   };
 }

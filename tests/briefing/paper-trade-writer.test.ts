@@ -7,6 +7,7 @@ const mockError = vi.hoisted(() => vi.fn());
 const mockWarn = vi.hoisted(() => vi.fn());
 const mockInfo = vi.hoisted(() => vi.fn());
 const noop = vi.hoisted(() => vi.fn());
+const portfolioAddPaperTrades = vi.hoisted(() => ({ value: '0' as '0' | '1' }));
 
 vi.mock('../../src/logger.js', () => {
   const stub = () => ({
@@ -18,6 +19,16 @@ vi.mock('../../src/logger.js', () => {
   });
   const logger = stub();
   return { child: stub, logger };
+});
+
+vi.mock('../../src/config/env.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../src/config/env.js')>();
+  return {
+    ...mod,
+    get config() {
+      return { ...mod.config, PORTFOLIO_ADD_PAPER_TRADES: portfolioAddPaperTrades.value };
+    },
+  };
 });
 
 import { recordPaperTrades } from '../../src/briefing/paper-trade-writer.js';
@@ -32,6 +43,7 @@ describe('recordPaperTrades', () => {
   beforeEach(() => {
     dbPath = join(tmpdir(), `mp-ptw-${Date.now()}.db`);
     process.env.DATABASE_PATH = dbPath;
+    portfolioAddPaperTrades.value = '0';
     db = getDb({ path: dbPath });
     migrate(db);
     mockError.mockClear();
@@ -40,7 +52,6 @@ describe('recordPaperTrades', () => {
   });
 
   afterEach(() => {
-    delete process.env.PORTFOLIO_ADD_PAPER_TRADES;
     db.close();
     closeDb();
     try {
@@ -84,7 +95,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('inserts PORTFOLIO_ADD when action is ADD and levels are numeric and flag enabled', () => {
-    process.env.PORTFOLIO_ADD_PAPER_TRADES = '1';
+    portfolioAddPaperTrades.value = '1';
     const portfolio: PortfolioSummary = {
       totalValue: 1,
       totalPnl: 0,
@@ -150,6 +161,7 @@ describe('recordPaperTrades', () => {
     };
     const r = recordPaperTrades('2026-05-01', [], portfolio, db);
     expect(r.insertedPortfolioAdd).toBe(0);
+    expect(r.blockedPortfolioAdd).toBe(1);
     expect(getOpenPaperTrades(db)).toHaveLength(0);
     expect(mockInfo).toHaveBeenCalledWith(
       expect.objectContaining({ symbol: 'INFY', event: 'portfolio_add_paper_disabled' }),
@@ -378,7 +390,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('blocks PORTFOLIO_ADD when another OPEN paper trade exists for the symbol', () => {
-    process.env.PORTFOLIO_ADD_PAPER_TRADES = '1';
+    portfolioAddPaperTrades.value = '1';
     db.prepare(
       `
       INSERT INTO paper_trades (
@@ -429,7 +441,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('accumulates crossStrategyBlocked across branches in one run', () => {
-    process.env.PORTFOLIO_ADD_PAPER_TRADES = '1';
+    portfolioAddPaperTrades.value = '1';
     db.prepare(
       `
       INSERT INTO paper_trades (
