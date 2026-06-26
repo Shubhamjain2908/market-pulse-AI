@@ -28,6 +28,7 @@ import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { type Thesis, ThesisSchema } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
+import { formatFundamentalsForLlm } from './portfolio-context.js';
 import { getLatestSignalsMap, getLatestSignalsMapsForSymbols } from './portfolio-trigger.js';
 
 const log = child({ component: 'thesis-generator' });
@@ -745,10 +746,8 @@ export function buildStockContext(
 
   if (fundamentals) {
     sections.push('\n## Fundamentals');
-    for (const [k, v] of Object.entries(fundamentals)) {
-      if (v != null && k !== 'symbol' && k !== 'ingested_at' && k !== 'source') {
-        sections.push(`${k}: ${v}`);
-      }
+    for (const line of formatFundamentalsForLlm(fundamentals)) {
+      sections.push(line);
     }
   }
 
