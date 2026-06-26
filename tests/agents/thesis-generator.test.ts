@@ -182,6 +182,36 @@ describe('thesis generator', () => {
     expect(llm.calls).toHaveLength(0);
   });
 
+  it('generates thesis for quality_garp screen hits outside the watchlist', async () => {
+    db.prepare(
+      `INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+       VALUES ('PAYTM', ?, 'quality_garp', 8, '{}')`,
+    ).run(today);
+    upsertQuotes(
+      [
+        {
+          symbol: 'PAYTM',
+          exchange: 'NSE',
+          date: today,
+          open: 900,
+          high: 920,
+          low: 890,
+          close: 910,
+          volume: 1_000_000,
+          source: 'test',
+        },
+      ],
+      db,
+    );
+
+    const result = await generateTheses({ date: today, watchlist: [], maxTheses: 3 }, db, llm);
+
+    expect(result.generated).toBe(1);
+    expect(result.watchlistSize).toBe(0);
+    expect(result.eligibleUniverseSize).toBe(1);
+    expect(result.theses[0]?.symbol).toBe('PAYTM');
+  });
+
   it('ranks candidates by interest score', async () => {
     const hot: Signal[] = [
       { symbol: 'HOTSTOCK', date: today, name: 'rsi_14', value: 25, source: 'technical' },
