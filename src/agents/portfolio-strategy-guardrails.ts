@@ -28,8 +28,6 @@ export interface StrategyGuardrailCtx {
   pnlPct?: number | null;
   /** Invested-book weight % (LIQUIDCASE excluded from denominator). */
   weightPct?: number | null;
-  /** Skip concentration guardrail (allocation instruments). */
-  skipConcentration?: boolean;
 }
 
 export function truncateTriggerReason(s: string): string {
@@ -250,7 +248,7 @@ export function applyMomentumPortfolioGuardrails(
   return action;
 }
 
-export function qualityGarpDeteriorationFlags(
+function qualityGarpDeteriorationFlags(
   fundamentals: QualityGarpFundamentalRow | undefined,
   profitGrowth: number | null,
 ): string[] {
@@ -317,7 +315,7 @@ function applyQualityGarpPortfolioGuardrails(
   return escalate(action, 'TRIM', prefix, detail, 0.58);
 }
 
-export function applyTechnicalTrimEscalation(
+function applyTechnicalTrimEscalation(
   action: PortfolioAction,
   signals: Record<string, number>,
   pnlPct: number | null | undefined,
@@ -333,7 +331,7 @@ export function applyTechnicalTrimEscalation(
   return escalate(action, 'TRIM', prefix, detail, 0.58);
 }
 
-export function applyConcentrationGuardrails(
+function applyConcentrationGuardrails(
   action: PortfolioAction,
   weightPct: number | null | undefined,
 ): PortfolioAction {
@@ -462,8 +460,6 @@ export function applyStrategyPortfolioGuardrails(
   out = applyQualityGarpPortfolioGuardrails(out, ctx);
   out = applyCatalystPortfolioGuardrails(out, ctx);
   out = applyTechnicalTrimEscalation(out, signals, ctx.pnlPct);
-  if (!ctx.skipConcentration) {
-    out = applyConcentrationGuardrails(out, ctx.weightPct);
-  }
+  out = applyConcentrationGuardrails(out, ctx.weightPct);
   return out;
 }
