@@ -473,6 +473,175 @@ describe('portfolio analyser', () => {
     expect(row?.thesis).toContain('Allocation sleeve');
   });
 
+  it('includes soft concentration flag in LLM position context at 14% weight', async () => {
+    db.prepare('DELETE FROM portfolio_holdings').run();
+    upsertHoldings(
+      [
+        {
+          symbol: 'PAYTM',
+          exchange: 'NSE',
+          asOf: date,
+          qty: 14,
+          avgPrice: 1000,
+          lastPrice: 1000,
+          pnl: 0,
+          pnlPct: 0,
+          dayChange: 0,
+          dayChangePct: 0,
+          product: 'CNC',
+          source: 'kite',
+        },
+        {
+          symbol: 'TCS',
+          exchange: 'NSE',
+          asOf: date,
+          qty: 86,
+          avgPrice: 1000,
+          lastPrice: 1000,
+          pnl: 0,
+          pnlPct: 0,
+          dayChange: 0,
+          dayChangePct: 0,
+          product: 'CNC',
+          source: 'kite',
+        },
+      ],
+      db,
+    );
+
+    let capturedUser = '';
+    const captureLlm = {
+      name: 'capture',
+      model: 'capture',
+      async generateText() {
+        return { text: 'unused', model: 'capture', usage: { durationMs: 1 } };
+      },
+      async generateJson(opts: { user: string }) {
+        capturedUser = opts.user;
+        return {
+          data: {
+            symbol: 'PAYTM',
+            action: 'HOLD',
+            conviction: 0.5,
+            thesis: 'Hold line with enough length for schema validation in this portfolio test.',
+            bullPoints: ['Stable'],
+            bearPoints: ['Macro'],
+            triggerReason: 'No change.',
+            suggestedStop: null,
+            suggestedTarget: null,
+          },
+          raw: '{}',
+          model: 'capture',
+          usage: { durationMs: 1 },
+        };
+      },
+    };
+
+    await analysePortfolio({ date, symbols: ['PAYTM'] }, db, captureLlm as unknown as LlmProvider);
+    expect(capturedUser).toContain('CONCENTRATION');
+    expect(capturedUser).toContain('Soft limit 10%');
+  });
+
+  it('hard TRIMs concentrated equity when LIQUIDCASE is excluded from denominator', async () => {
+    db.prepare('DELETE FROM portfolio_holdings').run();
+    upsertHoldings(
+      [
+        {
+          symbol: 'LIQUIDCASE',
+          exchange: 'NSE',
+          asOf: date,
+          qty: 500,
+          avgPrice: 100,
+          lastPrice: 100,
+          pnl: 0,
+          pnlPct: 0,
+          dayChange: 0,
+          dayChangePct: 0,
+          product: 'CNC',
+          source: 'kite',
+        },
+        {
+          symbol: 'PAYTM',
+          exchange: 'NSE',
+          asOf: date,
+          qty: 12,
+          avgPrice: 1000,
+          lastPrice: 1000,
+          pnl: 0,
+          pnlPct: 0,
+          dayChange: 0,
+          dayChangePct: 0,
+          product: 'CNC',
+          source: 'kite',
+        },
+        {
+          symbol: 'TCS',
+          exchange: 'NSE',
+          asOf: date,
+          qty: 38,
+          avgPrice: 1000,
+          lastPrice: 1000,
+          pnl: 0,
+          pnlPct: 0,
+          dayChange: 0,
+          dayChangePct: 0,
+          product: 'CNC',
+          source: 'kite',
+        },
+      ],
+      db,
+    );
+
+    const llm = new MockLlmProvider();
+    const result = await analysePortfolio({ date, symbols: ['PAYTM'] }, db, llm);
+    const paytm = result.rows.find((r) => r.symbol === 'PAYTM');
+    expect(paytm?.action).toBe('TRIM');
+    expect(paytm?.triggerReason).toContain('concentration');
+  });
+
+  it('appends regime context to portfolio LLM prompt when regime_daily exists', async () => {
+    db.prepare(
+      `INSERT INTO regime_daily (
+        date, regime, score_total, score_trend, score_vix, score_fii, score_breadth,
+        vix_value, nifty_vs_sma200, fii_20d_net, crisis_override, regime_age
+      ) VALUES (?, 'BEAR_TRENDING', -5, -2, -1, -1, -1, 22, -4, -5000, 0, 2)`,
+    ).run(date);
+
+    let capturedUser = '';
+    let capturedSystem = '';
+    const captureLlm = {
+      name: 'capture',
+      model: 'capture',
+      async generateText() {
+        return { text: 'unused', model: 'capture', usage: { durationMs: 1 } };
+      },
+      async generateJson(opts: { user: string; system: string }) {
+        capturedUser = opts.user;
+        capturedSystem = opts.system;
+        return {
+          data: {
+            symbol: 'INFY',
+            action: 'HOLD',
+            conviction: 0.5,
+            thesis: 'Hold line with enough length for schema validation in this portfolio test.',
+            bullPoints: ['Stable'],
+            bearPoints: ['Macro'],
+            triggerReason: 'No change.',
+            suggestedStop: null,
+            suggestedTarget: null,
+          },
+          raw: '{}',
+          model: 'capture',
+          usage: { durationMs: 1 },
+        };
+      },
+    };
+
+    await analysePortfolio({ date, symbols: ['INFY'] }, db, captureLlm as unknown as LlmProvider);
+    expect(capturedUser).toContain('REGIME: BEAR_TRENDING');
+    expect(capturedSystem).toContain('ACTIVE REGIME: BEAR_TRENDING');
+  });
+
   describe('resolveHoldingEntrySource', () => {
     it('infers quality_garp from recent screen when no paper trade exists', () => {
       db.prepare(
