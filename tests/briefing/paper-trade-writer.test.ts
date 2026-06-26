@@ -40,6 +40,7 @@ describe('recordPaperTrades', () => {
   });
 
   afterEach(() => {
+    delete process.env.PORTFOLIO_ADD_PAPER_TRADES;
     db.close();
     closeDb();
     try {
@@ -82,7 +83,8 @@ describe('recordPaperTrades', () => {
     expect(open[0]?.maxHoldDays).toBe(30);
   });
 
-  it('inserts PORTFOLIO_ADD when action is ADD and levels are numeric', () => {
+  it('inserts PORTFOLIO_ADD when action is ADD and levels are numeric and flag enabled', () => {
+    process.env.PORTFOLIO_ADD_PAPER_TRADES = '1';
     const portfolio: PortfolioSummary = {
       totalValue: 1,
       totalPnl: 0,
@@ -116,6 +118,43 @@ describe('recordPaperTrades', () => {
     expect(o).toHaveLength(1);
     expect(o[0]?.signalType).toBe('PORTFOLIO_ADD');
     expect(o[0]?.maxHoldDays).toBe(90);
+  });
+
+  it('skips PORTFOLIO_ADD inserts by default', () => {
+    const portfolio: PortfolioSummary = {
+      totalValue: 1,
+      totalPnl: 0,
+      totalPnlPct: 0,
+      dayChange: null,
+      dayChangePct: null,
+      source: 'manual',
+      positions: [
+        {
+          symbol: 'INFY',
+          qty: 1,
+          avgPrice: 100,
+          lastPrice: 150,
+          pnl: null,
+          pnlPct: null,
+          dayChangePct: null,
+          action: 'ADD',
+          conviction: 0.8,
+          thesis: null,
+          triggerReason: null,
+          bullPoints: [],
+          bearPoints: [],
+          suggestedStop: 140,
+          suggestedTarget: 180,
+        },
+      ],
+    };
+    const r = recordPaperTrades('2026-05-01', [], portfolio, db);
+    expect(r.insertedPortfolioAdd).toBe(0);
+    expect(getOpenPaperTrades(db)).toHaveLength(0);
+    expect(mockInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'INFY', event: 'portfolio_add_paper_disabled' }),
+      'PORTFOLIO_ADD paper trade disabled by config',
+    );
   });
 
   it('skips invalid long setup (target <= entry)', () => {
@@ -339,6 +378,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('blocks PORTFOLIO_ADD when another OPEN paper trade exists for the symbol', () => {
+    process.env.PORTFOLIO_ADD_PAPER_TRADES = '1';
     db.prepare(
       `
       INSERT INTO paper_trades (
@@ -389,6 +429,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('accumulates crossStrategyBlocked across branches in one run', () => {
+    process.env.PORTFOLIO_ADD_PAPER_TRADES = '1';
     db.prepare(
       `
       INSERT INTO paper_trades (

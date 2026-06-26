@@ -95,6 +95,11 @@ const EnvSchema = z.object({
    * trigger gate (deep loss, alerts, news, screens, technical extremes).
    */
   PORTFOLIO_ANALYSIS_DISABLE_LITE: z.enum(['0', '1']).default('0'),
+  /**
+   * `'1'` — insert PORTFOLIO_ADD rows from portfolio analyser ADD actions.
+   * `'0'` (default) — skip forward-test inserts (negative historical expectancy).
+   */
+  PORTFOLIO_ADD_PAPER_TRADES: z.enum(['0', '1']).default('0'),
 
   /** Briefing: news window ending at briefing IST midnight (hours lookback). */
   BRIEFING_NEWS_WINDOW_HOURS: z.coerce.number().int().min(1).max(168).default(48),

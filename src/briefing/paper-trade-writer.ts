@@ -3,6 +3,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+import { config } from '../config/env.js';
 import {
   hasOpenPaperTradeForSymbol,
   insertPaperTradeIfAbsent,
@@ -16,6 +17,10 @@ import { parseInrPriceMidpoint } from './paper-trade-parsers.js';
 import type { PortfolioSummary, ThesisCard } from './template.js';
 
 const log = child({ component: 'paper-trade-writer' });
+
+function isPortfolioAddPaperTradesEnabled(): boolean {
+  return (process.env.PORTFOLIO_ADD_PAPER_TRADES ?? config.PORTFOLIO_ADD_PAPER_TRADES) === '1';
+}
 
 function horizonToDays(horizon: string): { horizon: PaperTradeHorizon; maxHoldDays: number } {
   const h = horizon.toLowerCase().trim();
@@ -242,8 +247,16 @@ export function recordPaperTrades(
   }
 
   if (portfolio?.positions?.length) {
+    const portfolioAddEnabled = isPortfolioAddPaperTradesEnabled();
     for (const p of portfolio.positions) {
       if (p.action !== 'ADD') continue;
+      if (!portfolioAddEnabled) {
+        log.info(
+          { symbol: p.symbol, event: 'portfolio_add_paper_disabled' },
+          'PORTFOLIO_ADD paper trade disabled by config',
+        );
+        continue;
+      }
       const entry = p.lastPrice;
       const stop = p.suggestedStop;
       const target = p.suggestedTarget;
