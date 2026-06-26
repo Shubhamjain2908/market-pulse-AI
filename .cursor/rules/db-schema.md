@@ -288,7 +288,7 @@ CREATE TABLE portfolio_analysis (
   PRIMARY KEY (symbol, date)
 );
 CREATE INDEX idx_portfolio_analysis_action ON portfolio_analysis(date, action);
--- Excludes STALE_HOLDINGS placeholders (model='none') from LLM aggregation queries (migration 0022).
+-- Excludes non-LLM placeholders (model='none'): STALE_HOLDINGS + ALLOCATION_INSTRUMENT rows (migration 0022).
 CREATE VIEW portfolio_analysis_llm AS
   SELECT * FROM portfolio_analysis
   WHERE model != 'none';
