@@ -9,8 +9,9 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import juice from 'juice';
+import { CASH_PROXY_SYMBOL, computeInvestedPortfolioWeights } from '../agents/portfolio-context.js';
 import { technicalSummaryLine } from '../agents/portfolio-trigger.js';
-import { getThesisRankMeta } from '../agents/thesis-generator.js';
+import { getThesisRankMeta, resolveThesisEligibleUniverse } from '../agents/thesis-generator.js';
 import { getAlertsForDate } from '../analysers/alerts.js';
 import {
   formatQualityGarpFunnelSummary,
@@ -217,9 +218,8 @@ export async function composeBriefing(
   const newsHours = opts.newsWindowHours ?? config.BRIEFING_NEWS_WINDOW_HOURS;
   const newsLimit = opts.newsLimit ?? config.BRIEFING_NEWS_LIMIT;
   const news = gatherNews(newsHours, date, watchlist, db, newsLimit);
-  const holdingsSet = new Set(getLatestHoldings(db).map((h) => h.symbol.toUpperCase()));
-  const thesisUniverse = watchlist.filter((s) => !holdingsSet.has(s.toUpperCase()));
-  const thesisEligibleSet = new Set(thesisUniverse.map((s) => s.toUpperCase()));
+  const thesisUniverse = resolveThesisEligibleUniverse(date, watchlist, db);
+  const thesisEligibleSet = new Set(thesisUniverse);
   const rankMeta =
     !partialPipeline && !opts.skipAi && !opts.marketClosure
       ? getThesisRankMeta(date, thesisUniverse, db)
@@ -233,7 +233,8 @@ export async function composeBriefing(
     paperLog.insertedAiPick > 0 ||
     paperLog.insertedPortfolioAdd > 0 ||
     paperLog.insertedCatalystEntry > 0 ||
-    paperLog.crossStrategyBlocked > 0
+    paperLog.crossStrategyBlocked > 0 ||
+    paperLog.blockedPortfolioAdd > 0
   ) {
     log.info(paperLog, 'paper trades recorded');
   }
@@ -559,7 +560,7 @@ function gatherTheses(
   date: string,
   db: DatabaseType,
   rankMeta?: Map<string, { rank: number; reasonsLine: string }>,
-  /** When set, only show thesis cards for symbols eligible for AI Picks (watchlist ∩ ¬holdings). */
+  /** When set, only show thesis cards for symbols eligible for AI Picks (screens ∪ watchlist, ¬holdings). */
   eligibleSymbols?: Set<string>,
 ): ThesisCard[] {
   const rows = getThesesForDate(date, db);
@@ -713,15 +714,15 @@ function buildPortfolioRiskRollup(
     return { ...h, valueInr };
   });
 
-  const totalValue = enriched.reduce((s, p) => s + p.valueInr, 0);
-  if (totalValue <= 0) return undefined;
+  const { investedTotalInr, weightsPct } = computeInvestedPortfolioWeights(holdings);
+  if (investedTotalInr <= 0) return undefined;
 
   const topWeights = [...enriched]
     .sort((a, b) => b.valueInr - a.valueInr)
     .slice(0, 5)
     .map((p) => ({
       symbol: p.symbol,
-      weightPct: (p.valueInr / totalValue) * 100,
+      weightPct: weightsPct.get(p.symbol.toUpperCase()) ?? 0,
       valueInr: p.valueInr,
     }));
 
@@ -752,13 +753,14 @@ function buildPortfolioRiskRollup(
 
   const sectorAgg = new Map<string, number>();
   for (const p of enriched) {
+    if (p.symbol.toUpperCase() === CASH_PROXY_SYMBOL) continue;
     const sector = classifySector(p.symbol, sectorMap, sectorFromDb.get(p.symbol.toUpperCase()));
     sectorAgg.set(sector, (sectorAgg.get(sector) ?? 0) + p.valueInr);
   }
   const sectorWeights = [...sectorAgg.entries()]
     .map(([sector, v]) => ({
       sector,
-      weightPct: (v / totalValue) * 100,
+      weightPct: (v / investedTotalInr) * 100,
     }))
     .sort((a, b) => b.weightPct - a.weightPct);
 

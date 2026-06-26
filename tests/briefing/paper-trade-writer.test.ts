@@ -7,6 +7,7 @@ const mockError = vi.hoisted(() => vi.fn());
 const mockWarn = vi.hoisted(() => vi.fn());
 const mockInfo = vi.hoisted(() => vi.fn());
 const noop = vi.hoisted(() => vi.fn());
+const portfolioAddPaperTrades = vi.hoisted(() => ({ value: '0' as '0' | '1' }));
 
 vi.mock('../../src/logger.js', () => {
   const stub = () => ({
@@ -18,6 +19,16 @@ vi.mock('../../src/logger.js', () => {
   });
   const logger = stub();
   return { child: stub, logger };
+});
+
+vi.mock('../../src/config/env.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../src/config/env.js')>();
+  return {
+    ...mod,
+    get config() {
+      return { ...mod.config, PORTFOLIO_ADD_PAPER_TRADES: portfolioAddPaperTrades.value };
+    },
+  };
 });
 
 import { recordPaperTrades } from '../../src/briefing/paper-trade-writer.js';
@@ -32,6 +43,7 @@ describe('recordPaperTrades', () => {
   beforeEach(() => {
     dbPath = join(tmpdir(), `mp-ptw-${Date.now()}.db`);
     process.env.DATABASE_PATH = dbPath;
+    portfolioAddPaperTrades.value = '0';
     db = getDb({ path: dbPath });
     migrate(db);
     mockError.mockClear();
@@ -82,7 +94,8 @@ describe('recordPaperTrades', () => {
     expect(open[0]?.maxHoldDays).toBe(30);
   });
 
-  it('inserts PORTFOLIO_ADD when action is ADD and levels are numeric', () => {
+  it('inserts PORTFOLIO_ADD when action is ADD and levels are numeric and flag enabled', () => {
+    portfolioAddPaperTrades.value = '1';
     const portfolio: PortfolioSummary = {
       totalValue: 1,
       totalPnl: 0,
@@ -116,6 +129,44 @@ describe('recordPaperTrades', () => {
     expect(o).toHaveLength(1);
     expect(o[0]?.signalType).toBe('PORTFOLIO_ADD');
     expect(o[0]?.maxHoldDays).toBe(90);
+  });
+
+  it('skips PORTFOLIO_ADD inserts by default', () => {
+    const portfolio: PortfolioSummary = {
+      totalValue: 1,
+      totalPnl: 0,
+      totalPnlPct: 0,
+      dayChange: null,
+      dayChangePct: null,
+      source: 'manual',
+      positions: [
+        {
+          symbol: 'INFY',
+          qty: 1,
+          avgPrice: 100,
+          lastPrice: 150,
+          pnl: null,
+          pnlPct: null,
+          dayChangePct: null,
+          action: 'ADD',
+          conviction: 0.8,
+          thesis: null,
+          triggerReason: null,
+          bullPoints: [],
+          bearPoints: [],
+          suggestedStop: 140,
+          suggestedTarget: 180,
+        },
+      ],
+    };
+    const r = recordPaperTrades('2026-05-01', [], portfolio, db);
+    expect(r.insertedPortfolioAdd).toBe(0);
+    expect(r.blockedPortfolioAdd).toBe(1);
+    expect(getOpenPaperTrades(db)).toHaveLength(0);
+    expect(mockInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'INFY', event: 'portfolio_add_paper_disabled' }),
+      'PORTFOLIO_ADD paper trade disabled by config',
+    );
   });
 
   it('skips invalid long setup (target <= entry)', () => {
@@ -339,6 +390,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('blocks PORTFOLIO_ADD when another OPEN paper trade exists for the symbol', () => {
+    portfolioAddPaperTrades.value = '1';
     db.prepare(
       `
       INSERT INTO paper_trades (
@@ -389,6 +441,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('accumulates crossStrategyBlocked across branches in one run', () => {
+    portfolioAddPaperTrades.value = '1';
     db.prepare(
       `
       INSERT INTO paper_trades (
