@@ -19,13 +19,23 @@ import {
   type PortfolioHoldingRow,
   upsertPortfolioAnalysis,
 } from '../db/index.js';
+import { getRegimeForCalendarDate } from '../db/regime-queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { lastOpenOnOrBefore } from '../market/trading-days.js';
+import type { Regime } from '../types/regime.js';
+import {
+  buildRegimeContextAppend,
+  computeInvestedPortfolioWeights,
+  formatConcentrationContextLine,
+  isAllocationInstrument,
+  isDefensiveRegime,
+} from './portfolio-context.js';
 import {
   applyStrategyPortfolioGuardrails,
+  getQualityGarpDeteriorationFlagsForSymbol,
   type PortfolioEntrySource,
   resolveHoldingEntrySource,
   type StrategyGuardrailCtx,
@@ -41,27 +51,10 @@ import { buildStockContext } from './thesis-generator.js';
 
 const log = child({ component: 'portfolio-analyser' });
 
-const RSI_SIGNAL_EXCLUDED_SYMBOLS = new Set([
-  'LIQUIDCASE',
-  'LIQUIDBEES',
-  'GOLDBEES',
-  'GOLDCASE',
-  'GOLDIETF',
-  'SILVERBEES',
-  'SILVERCASE',
-  'NIFTYBEES',
-  'JUNIORBEES',
-  'BANKBEES',
-  'ICICIB22',
-  'MOM100',
-  'SGBJUN31I',
-  'SGBDE31III',
-]);
-
-const EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS = new Set([
-  ...RSI_SIGNAL_EXCLUDED_SYMBOLS,
-  ...loadEtfExclusions(),
-]);
+/** RSI/volume guardrails skipped for allocation sleeves (etf-exclusions.json). */
+const EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS = new Set(
+  loadEtfExclusions().map((s) => s.toUpperCase()),
+);
 
 export const PortfolioActionSchema = z.object({
   symbol: z.string(),
@@ -112,6 +105,8 @@ Rules:
    a single adverse move closes all positions simultaneously.
 10. For liquid funds, gold ETFs, silver ETFs, index ETFs, and Sovereign Gold Bonds, RSI and
     volume ratio are not meaningful signals - do not reference them in your analysis.
+11. When REGIME is BEAR_TRENDING or CRISIS in the user message, default to HOLD or TRIM;
+    recommend ADD only with exceptional idiosyncratic evidence from the holding-specific data.
 
 Output ONLY a single JSON object matching the schema. No markdown fences.
 
@@ -351,9 +346,19 @@ export async function analysePortfolio(
     };
   }
 
+  const weightResult = computeInvestedPortfolioWeights(allHoldings);
+  const allocationQueue = filtered.filter((h) => isAllocationInstrument(h.symbol));
+  const equityQueue = filtered.filter((h) => !isAllocationInstrument(h.symbol));
+  const regimeContextAppend = buildRegimeContextAppend(date, db);
+  const regimeRow = getRegimeForCalendarDate(date, db);
+
+  const allocationRows = allocationQueue.map((h) =>
+    buildAllocationCarryRow(h, date, weightResult.weightsPct),
+  );
+
   const fullQueue: PortfolioHoldingRow[] = [];
   const liteQueue: PortfolioHoldingRow[] = [];
-  for (const h of filtered) {
+  for (const h of equityQueue) {
     if (needsPortfolioLlmReview(h, date, db)) fullQueue.push(h);
     else liteQueue.push(h);
   }
@@ -362,6 +367,8 @@ export async function analysePortfolio(
     {
       date,
       holdings: filtered.length,
+      allocation: allocationQueue.length,
+      equity: equityQueue.length,
       fullLlm: fullQueue.length,
       lite: liteQueue.length,
       concurrency,
@@ -369,14 +376,25 @@ export async function analysePortfolio(
     'portfolio analyser starting',
   );
 
-  const liteRows = liteQueue.map((h) => buildLitePortfolioRow(h, date, db));
+  const liteRows = liteQueue.map((h) =>
+    buildLitePortfolioRow(h, date, db, weightResult.weightsPct),
+  );
 
   const limit = pLimit(concurrency);
   const outcomes = await Promise.all(
     fullQueue.map((h) =>
       limit(async () => {
         try {
-          const row = await analyseOne(h, date, db, llm);
+          const row = await analyseOne(
+            h,
+            date,
+            db,
+            llm,
+            allHoldings,
+            weightResult.weightsPct,
+            regimeContextAppend,
+            regimeRow?.regime ?? null,
+          );
           return { ok: true as const, row };
         } catch (err) {
           log.warn(
@@ -396,7 +414,7 @@ export async function analysePortfolio(
     else failed++;
   }
 
-  const results = [...liteRows, ...fullResults];
+  const results = [...allocationRows, ...liteRows, ...fullResults];
   upsertPortfolioAnalysis(results, db);
 
   const byAction = empty();
@@ -425,10 +443,35 @@ export async function analysePortfolio(
   };
 }
 
+function buildAllocationCarryRow(
+  h: PortfolioHoldingRow,
+  date: string,
+  weightsPct: Map<string, number>,
+): PortfolioAnalysisRow {
+  const weight = weightsPct.get(h.symbol.toUpperCase()) ?? 0;
+  const weightNote = weight > 0 ? ` Weight ${weight.toFixed(1)}% of invested book.` : '';
+  return {
+    symbol: h.symbol,
+    date,
+    action: 'HOLD',
+    conviction: 0,
+    thesis: `Allocation sleeve (ETF/SGB/liquid fund): carry or rebalance to target allocation only; equity ADD/TRIM/EXIT rules do not apply.${weightNote}`,
+    bullPoints: ['Allocation instrument — hold for sleeve target, not equity thesis'],
+    bearPoints: ['Rebalance if sleeve drifts from target allocation'],
+    triggerReason: 'ALLOCATION_INSTRUMENT — excluded from equity review',
+    suggestedStop: null,
+    suggestedTarget: null,
+    pnlPct: h.pnlPct ?? null,
+    model: 'none',
+    raw: null,
+  };
+}
+
 function buildLitePortfolioRow(
   h: PortfolioHoldingRow,
   date: string,
   db: DatabaseType,
+  weightsPct: Map<string, number>,
 ): PortfolioAnalysisRow {
   const copy = buildLiteSnapshotCopy(h, date, db);
   const signals = getLatestSignalsMap(h.symbol, date, db);
@@ -440,6 +483,8 @@ function buildLitePortfolioRow(
     entrySource,
     db,
     pnlPct: h.pnlPct ?? null,
+    weightPct: weightsPct.get(h.symbol.toUpperCase()) ?? null,
+    skipConcentration: false,
   };
   const baseAction: PortfolioAction = {
     symbol: h.symbol,
@@ -485,18 +530,27 @@ async function analyseOne(
   date: string,
   db: DatabaseType,
   llm: LlmProvider,
+  allHoldings: PortfolioHoldingRow[],
+  weightsPct: Map<string, number>,
+  regimeContextAppend: string | null,
+  regime: Regime | null,
 ): Promise<PortfolioAnalysisRow> {
   const entrySource = resolveHoldingEntrySource(h.symbol, date, db);
   const stockContext = sanitizeStockContextForExcludedSignals(
     h.symbol,
     buildStockContext(h.symbol, date, db, 'portfolio'),
   );
-  const positionContext = buildPositionContext(h, date, db, entrySource);
+  const positionContext = buildPositionContext(h, date, db, entrySource, allHoldings, weightsPct);
   const openPaperTradeCount = getOpenPaperTradeCountForSymbol(h.symbol, db);
   const deep = h.pnlPct != null && h.pnlPct <= getPortfolioDeepLossPct();
-  const system = deep ? `${PORTFOLIO_SYSTEM}${portfolioDeepLossAddon()}` : PORTFOLIO_SYSTEM;
+  let system = deep ? `${PORTFOLIO_SYSTEM}${portfolioDeepLossAddon()}` : PORTFOLIO_SYSTEM;
+  if (isDefensiveRegime(regime)) {
+    system = `${system}\n\nACTIVE REGIME: ${regime} — apply rule 11 strictly.`;
+  }
 
-  const prompt = `${positionContext}\n\n${stockContext}`;
+  const promptParts = [positionContext, stockContext];
+  if (regimeContextAppend) promptParts.push(regimeContextAppend);
+  const prompt = promptParts.join('\n\n');
   const result = await llm.generateJson({
     system,
     user: prompt,
@@ -511,6 +565,8 @@ async function analyseOne(
     entrySource,
     db,
     pnlPct: h.pnlPct ?? null,
+    weightPct: weightsPct.get(h.symbol.toUpperCase()) ?? null,
+    skipConcentration: false,
   };
   const a: PortfolioAction = applyStrategyPortfolioGuardrails(
     applyPortfolioAddGuardrails(
@@ -548,18 +604,23 @@ function buildPositionContext(
   date: string,
   db: DatabaseType,
   entrySource: PortfolioEntrySource,
+  allHoldings: PortfolioHoldingRow[],
+  weightsPct: Map<string, number>,
 ): string {
   const symbol = h.symbol.toUpperCase();
   const isSignalExcluded = EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol);
   const positionValue = h.qty * (h.lastPrice ?? h.avgPrice);
-  const portfolioValue = getLatestPortfolioMarketValue(db);
+  const weightPct = weightsPct.get(symbol) ?? null;
+  const { investedTotalInr } = computeInvestedPortfolioWeights(allHoldings);
   const lines: string[] = [`# Position: ${h.symbol} (${h.exchange})`];
   lines.push(`Quantity: ${h.qty}`);
   lines.push(`Avg buy price: ₹${h.avgPrice.toFixed(2)}`);
   if (h.lastPrice != null) lines.push(`Last price: ₹${h.lastPrice.toFixed(2)}`);
   lines.push(`Current position value: ₹${positionValue.toFixed(2)}`);
-  if (portfolioValue != null && portfolioValue > 0) {
-    lines.push(`Current portfolio weight: ${((positionValue / portfolioValue) * 100).toFixed(2)}%`);
+  if (weightPct != null && investedTotalInr > 0) {
+    lines.push(`Current portfolio weight (invested book): ${weightPct.toFixed(2)}%`);
+    const conc = formatConcentrationContextLine(weightPct);
+    if (conc) lines.push(conc);
   }
   if (h.pnl != null) lines.push(`Unrealised P&L: ₹${h.pnl.toFixed(2)}`);
   if (h.pnlPct != null) lines.push(`Unrealised P&L %: ${h.pnlPct.toFixed(2)}%`);
@@ -568,6 +629,13 @@ function buildPositionContext(
   lines.push(`Source: ${h.source}`);
   if (isSignalExcluded) {
     lines.push('Signal treatment: RSI and volume ratio are excluded for this ETF/SGB symbol.');
+  }
+
+  const qgFlags = getQualityGarpDeteriorationFlagsForSymbol(symbol, date, db);
+  if (qgFlags.length > 0) {
+    lines.push(
+      `\nQuality deterioration flags (${qgFlags.length}): ${qgFlags.join(', ')} — review TRIM; EXIT only when entry source is quality_garp and severe.`,
+    );
   }
 
   const openPaperTradeCount = getOpenPaperTradeCountForSymbol(symbol, db);
@@ -617,19 +685,6 @@ function buildPositionContext(
   }
 
   return lines.join('\n');
-}
-
-function getLatestPortfolioMarketValue(db: DatabaseType): number | null {
-  const row = db
-    .prepare(
-      `
-      SELECT SUM(qty * COALESCE(last_price, avg_price)) AS value
-      FROM portfolio_holdings
-      WHERE as_of = (SELECT MAX(as_of) FROM portfolio_holdings)
-    `,
-    )
-    .get() as { value: number | null } | undefined;
-  return row?.value ?? null;
 }
 
 function empty(): Record<'HOLD' | 'ADD' | 'TRIM' | 'EXIT', number> {

@@ -70,6 +70,21 @@ describe('portfolio analyser', () => {
       source: 'test',
     };
     upsertQuotes([quote], db);
+    const padSymbols = ['TCS', 'RELIANCE', 'ITC', 'SBIN', 'LT', 'WIPRO', 'AXISBANK'] as const;
+    const padHoldings = padSymbols.map((symbol) => ({
+      symbol,
+      exchange: 'NSE' as const,
+      asOf: date,
+      qty: 10,
+      avgPrice: 6100,
+      lastPrice: 6100,
+      pnl: 0,
+      pnlPct: 0,
+      dayChange: 0,
+      dayChangePct: 0,
+      product: 'CNC',
+      source: 'kite' as const,
+    }));
     upsertHoldings(
       [
         {
@@ -100,6 +115,7 @@ describe('portfolio analyser', () => {
           product: 'CNC',
           source: 'kite',
         },
+        ...padHoldings,
       ],
       db,
     );
@@ -109,17 +125,18 @@ describe('portfolio analyser', () => {
     const llm = new MockLlmProvider();
     const result = await analysePortfolio({ date }, db, llm);
 
-    expect(result.analysed).toBe(2);
+    expect(result.analysed).toBe(9);
     expect(result.failed).toBe(0);
-    expect(result.fullLlmCount).toBe(2);
+    expect(result.fullLlmCount).toBe(9);
     expect(result.liteCount).toBe(0);
-    expect(result.byAction.HOLD).toBe(2);
-    expect(llm.calls).toHaveLength(2);
+    expect(result.byAction.HOLD).toBe(9);
+    expect(llm.calls).toHaveLength(9);
 
     const persisted = getPortfolioAnalysisForDate(date, db);
-    expect(persisted).toHaveLength(2);
+    expect(persisted).toHaveLength(9);
     const symbols = persisted.map((p) => p.symbol).sort();
-    expect(symbols).toEqual(['HDFCBANK', 'INFY']);
+    expect(symbols).toContain('HDFCBANK');
+    expect(symbols).toContain('INFY');
 
     const infy = persisted.find((p) => p.symbol === 'INFY');
     expect(infy?.action).toBe('HOLD');
@@ -135,10 +152,10 @@ describe('portfolio analyser', () => {
     expect(result.analysed).toBe(1);
     expect(result.rows[0]?.symbol).toBe('INFY');
 
-    // INFY position = 50 * 1500 = 75,000; HDFCBANK = 30*1700 = 51,000.
-    // minPositionInr=60_000 should keep only INFY.
+    // INFY position = 50 * 1500 = 75,000; padding holdings = 61,000 each; HDFCBANK = 51,000.
+    // minPositionInr=72_000 should keep only INFY.
     const llm2 = new MockLlmProvider();
-    const filtered = await analysePortfolio({ date, minPositionInr: 60_000 }, db, llm2);
+    const filtered = await analysePortfolio({ date, minPositionInr: 72_000 }, db, llm2);
     expect(filtered.analysed).toBe(1);
     expect(filtered.rows[0]?.symbol).toBe('INFY');
   });
@@ -185,6 +202,7 @@ describe('portfolio analyser', () => {
   it('skips LLM and writes stale placeholder rows when Kite as_of is before the expected session', async () => {
     const runDate = '2026-05-04';
     const staleAsOf = '2026-04-30';
+    db.prepare('DELETE FROM portfolio_holdings').run();
     const quoteRun: RawQuote = {
       symbol: 'INFY',
       exchange: 'NSE',
@@ -393,7 +411,7 @@ describe('portfolio analyser', () => {
     expect(out.action).toBe('ADD');
   });
 
-  it('omits RSI and volume-ratio lines from LLM payload for excluded symbols', async () => {
+  it('skips equity LLM for allocation instruments in etf-exclusions', async () => {
     upsertQuotes(
       [
         {
@@ -430,59 +448,28 @@ describe('portfolio analyser', () => {
       ],
       db,
     );
-    upsertSignals(
-      [
-        { symbol: 'GOLDBEES', date, name: 'rsi_14', value: 76, source: 'technical' },
-        { symbol: 'GOLDBEES', date, name: 'volume_ratio_20d', value: 0.4, source: 'technical' },
-      ],
-      db,
-    );
-    db.prepare(
-      `
-      INSERT INTO alerts (symbol, date, signal, kind, value, message)
-      VALUES ('GOLDBEES', ?, 'RSI 14', 'rsi_overbought', 76, 'RSI crossed 70')
-    `,
-    ).run(date);
 
-    let capturedUser = '';
-    const captureLlm = {
-      name: 'capture',
-      model: 'capture',
+    const throwingLlm = {
+      name: 'throw',
+      model: 'throw',
       async generateText() {
-        return { text: 'unused', model: 'capture', usage: { durationMs: 1 } };
+        throw new Error('LLM should not run for allocation instruments');
       },
-      async generateJson(opts: { user: string }) {
-        capturedUser = opts.user;
-        return {
-          data: {
-            symbol: 'GOLDBEES',
-            action: 'HOLD',
-            conviction: 0.5,
-            thesis: 'Excluded ETF symbol, so hold without RSI or volume-ratio interpretation.',
-            bullPoints: ['Stable exposure'],
-            bearPoints: ['Macro risk'],
-            triggerReason: 'No add trigger.',
-            suggestedStop: null,
-            suggestedTarget: null,
-          },
-          raw: '{}',
-          model: 'capture',
-          usage: { durationMs: 1 },
-        };
+      async generateJson() {
+        throw new Error('LLM should not run for allocation instruments');
       },
     };
 
-    await analysePortfolio(
+    const result = await analysePortfolio(
       { date, symbols: ['GOLDBEES'] },
       db,
-      captureLlm as unknown as LlmProvider,
+      throwingLlm as unknown as LlmProvider,
     );
-    expect(capturedUser).toContain('Current position value:');
-    expect(capturedUser).toContain('Current portfolio weight:');
-    expect(capturedUser).toContain('Entry source: unknown');
-    expect(capturedUser).not.toContain('rsi_14:');
-    expect(capturedUser).not.toContain('volume_ratio_20d:');
-    expect(capturedUser).not.toContain('rsi_overbought');
+    const row = result.rows.find((r) => r.symbol === 'GOLDBEES');
+    expect(row?.model).toBe('none');
+    expect(row?.action).toBe('HOLD');
+    expect(row?.triggerReason).toContain('ALLOCATION_INSTRUMENT');
+    expect(row?.thesis).toContain('Allocation sleeve');
   });
 
   describe('resolveHoldingEntrySource', () => {
@@ -586,6 +573,63 @@ describe('portfolio analyser', () => {
       );
       expect(out.action).toBe('EXIT');
       expect(out.triggerReason).toContain('GUARDRAIL_OVERRIDE');
+    });
+
+    it('trims unknown origin on QG deterioration but never EXIT at 4 flags', () => {
+      for (const asOf of ['2024-03-31', '2023-03-31', '2022-03-31']) {
+        db.prepare(
+          `INSERT INTO fundamentals (symbol, as_of, source, roe, roce, peg, debt_to_equity)
+           VALUES ('UNK', ?, 'yahoo_annual', 0.1, 0.1, 2, 1)`,
+        ).run(asOf);
+      }
+      db.prepare(
+        `INSERT INTO fundamentals (symbol, as_of, source, pe, pb, peg, debt_to_equity, profit_growth_yoy)
+         VALUES ('UNK', '2026-06-25', 'yahoo_snapshot', 20, 3, 2, 1, -4)`,
+      ).run();
+      db.prepare(
+        `INSERT INTO fundamentals (symbol, as_of, source, promoter_holding_pct, promoter_holding_change_qoq)
+         VALUES ('UNK', '2026-06-24', 'screener', 50, -2)`,
+      ).run();
+      const out = applyStrategyPortfolioGuardrails(
+        strategyHold('UNK'),
+        {},
+        { entrySource: 'unknown', symbol: 'UNK', date: '2026-06-25', db, pnlPct: 5 },
+      );
+      expect(out.action).toBe('TRIM');
+      expect(out.triggerReason).toContain('universal_qg');
+    });
+
+    it('hard TRIMs when invested weight exceeds 15%', () => {
+      const out = applyStrategyPortfolioGuardrails(
+        strategyHold('BIG'),
+        {},
+        {
+          entrySource: 'unknown',
+          symbol: 'BIG',
+          date: '2026-06-25',
+          db,
+          pnlPct: 20,
+          weightPct: 16,
+        },
+      );
+      expect(out.action).toBe('TRIM');
+      expect(out.triggerReason).toContain('concentration');
+    });
+
+    it('technical trim escalation promotes HOLD to TRIM on extended winner', () => {
+      const out = applyStrategyPortfolioGuardrails(
+        strategyHold('WIN'),
+        { rsi_14: 78, pct_from_52w_high: -2 },
+        {
+          entrySource: 'unknown',
+          symbol: 'WIN',
+          date: '2026-06-25',
+          db,
+          pnlPct: 60,
+        },
+      );
+      expect(out.action).toBe('TRIM');
+      expect(out.triggerReason).toContain('LITE_ESCALATION');
     });
 
     it('trims catalyst_entry when hold window expired', () => {
