@@ -46,5 +46,5 @@
 | **Concentration soft/hard** | Invested-book weight (LIQUIDCASE excluded from denominator): ≥10% soft flag in LLM context; ≥15% deterministic TRIM. | `src/agents/portfolio-context.ts`, `src/agents/portfolio-strategy-guardrails.ts` |
 | **Lite technical TRIM** | HOLD → TRIM when RSI>75, within 5% of 52W high (`pct_from_52w_high > -5`), unrealised P&L>50%. | `src/agents/portfolio-strategy-guardrails.ts` |
 | **Universal QG deterioration** | `quality_garp` origin: TRIM (≥2 flags) / EXIT (≥4 or promoter+profit). `unknown` origin: TRIM only (≥2 flags), never EXIT from QG alone. | `src/agents/portfolio-strategy-guardrails.ts` |
-| **PORTFOLIO_ADD paper gate** | `PORTFOLIO_ADD_PAPER_TRADES` default `'0'` — skip `paper_trades` insert; briefing ADD recommendations unchanged. | `src/briefing/paper-trade-writer.ts`, `src/config/env.ts` |
+| **PORTFOLIO_ADD paper gate** | `PORTFOLIO_ADD_PAPER_TRADES` default `'0'` — skip `paper_trades` insert (`blockedPortfolioAdd` counter); briefing ADD recommendations unchanged. | `src/briefing/paper-trade-writer.ts`, `src/config/env.ts` |
 | **Portfolio regime context** | Full LLM path appends `regime_daily` block; BEAR/CRISIS adds defensive system rule. | `src/agents/portfolio-analyser.ts`, `src/agents/portfolio-context.ts` |
