@@ -9,6 +9,7 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import juice from 'juice';
+import { CASH_PROXY_SYMBOL, computeInvestedPortfolioWeights } from '../agents/portfolio-context.js';
 import { technicalSummaryLine } from '../agents/portfolio-trigger.js';
 import { getThesisRankMeta } from '../agents/thesis-generator.js';
 import { getAlertsForDate } from '../analysers/alerts.js';
@@ -713,15 +714,15 @@ function buildPortfolioRiskRollup(
     return { ...h, valueInr };
   });
 
-  const totalValue = enriched.reduce((s, p) => s + p.valueInr, 0);
-  if (totalValue <= 0) return undefined;
+  const { investedTotalInr, weightsPct } = computeInvestedPortfolioWeights(holdings);
+  if (investedTotalInr <= 0) return undefined;
 
   const topWeights = [...enriched]
     .sort((a, b) => b.valueInr - a.valueInr)
     .slice(0, 5)
     .map((p) => ({
       symbol: p.symbol,
-      weightPct: (p.valueInr / totalValue) * 100,
+      weightPct: weightsPct.get(p.symbol.toUpperCase()) ?? 0,
       valueInr: p.valueInr,
     }));
 
@@ -752,13 +753,14 @@ function buildPortfolioRiskRollup(
 
   const sectorAgg = new Map<string, number>();
   for (const p of enriched) {
+    if (p.symbol.toUpperCase() === CASH_PROXY_SYMBOL) continue;
     const sector = classifySector(p.symbol, sectorMap, sectorFromDb.get(p.symbol.toUpperCase()));
     sectorAgg.set(sector, (sectorAgg.get(sector) ?? 0) + p.valueInr);
   }
   const sectorWeights = [...sectorAgg.entries()]
     .map(([sector, v]) => ({
       sector,
-      weightPct: (v / totalValue) * 100,
+      weightPct: (v / investedTotalInr) * 100,
     }))
     .sort((a, b) => b.weightPct - a.weightPct);
 
