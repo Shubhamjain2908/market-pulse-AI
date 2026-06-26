@@ -21,11 +21,10 @@ const PERCENT_DISPLAY_COLUMNS = new Set([
   'profit_growth_yoy',
 ]);
 
-const allocationInstrumentSet = (): Set<string> =>
-  new Set(loadEtfExclusions().map((s) => s.toUpperCase()));
+const ALLOCATION_INSTRUMENTS = new Set(loadEtfExclusions().map((s) => s.toUpperCase()));
 
 export function isAllocationInstrument(symbol: string): boolean {
-  return allocationInstrumentSet().has(symbol.toUpperCase());
+  return ALLOCATION_INSTRUMENTS.has(symbol.toUpperCase());
 }
 
 export interface InvestedWeightResult {
@@ -57,10 +56,6 @@ export function computeInvestedPortfolioWeights(
   return { investedTotalInr, weightsPct };
 }
 
-export function getInvestedWeightPct(symbol: string, holdings: PortfolioHoldingRow[]): number {
-  return computeInvestedPortfolioWeights(holdings).weightsPct.get(symbol.toUpperCase()) ?? 0;
-}
-
 export function formatConcentrationContextLine(weightPct: number): string | null {
   if (weightPct < SOFT_CONCENTRATION_PCT) return null;
   const soft = `Soft limit ${SOFT_CONCENTRATION_PCT}%`;
@@ -71,24 +66,30 @@ export function formatConcentrationContextLine(weightPct: number): string | null
   return `CONCENTRATION: ${weightPct.toFixed(1)}% of invested book (${CASH_PROXY_SYMBOL} excluded from denominator). ${soft}${hard}.`;
 }
 
-export function buildRegimeContextAppend(date: string, db: DatabaseType): string | null {
-  const row = getRegimeForCalendarDate(date, db);
-  if (!row) return null;
+export function isDefensiveRegime(regime: Regime | null | undefined): boolean {
+  return regime === 'BEAR_TRENDING' || regime === 'CRISIS';
+}
 
-  const defensive = row.regime === 'BEAR_TRENDING' || row.regime === 'CRISIS';
-  const posture = defensive
+/** Single regime read for portfolio LLM posture block + defensive system rule. */
+export function loadPortfolioRegimeContext(
+  date: string,
+  db: DatabaseType,
+): { append: string | null; regime: Regime | null } {
+  const row = getRegimeForCalendarDate(date, db);
+  if (!row) return { append: null, regime: null };
+
+  const posture = isDefensiveRegime(row.regime)
     ? 'In BEAR_TRENDING/CRISIS: default HOLD/TRIM; ADD requires exceptional idiosyncratic evidence in the data below.'
     : 'Use regime as portfolio posture context; still anchor each holding on its own data.';
 
-  return [
-    '## Market regime (portfolio posture)',
-    `REGIME: ${row.regime} (score ${row.scoreTotal.toFixed(1)}, age ${row.regimeAge}d).`,
-    posture,
-  ].join('\n');
-}
-
-export function isDefensiveRegime(regime: Regime | null | undefined): boolean {
-  return regime === 'BEAR_TRENDING' || regime === 'CRISIS';
+  return {
+    regime: row.regime,
+    append: [
+      '## Market regime (portfolio posture)',
+      `REGIME: ${row.regime} (score ${row.scoreTotal.toFixed(1)}, age ${row.regimeAge}d).`,
+      posture,
+    ].join('\n'),
+  };
 }
 
 function formatFundamentalValue(column: string, value: unknown): string {
