@@ -37,11 +37,11 @@ const LATEST_REQUIRED_STAGE_STATUS_SQL = `
   WHERE rn = 1
 `;
 
-const SELECT_FAILED_REQUIRED_STAGE_SQL = `
-  SELECT 1 AS found FROM (${LATEST_REQUIRED_STAGE_STATUS_SQL})
-  WHERE status = 'failed'
-  LIMIT 1
-`;
+export interface PipelineHealth {
+  degraded: boolean;
+  failedRequiredStages: string[];
+  canShowRegimeCard: boolean;
+}
 
 export function recordPipelineStage(
   args: {
@@ -74,20 +74,21 @@ export function recordPipelineStage(
   }
 }
 
-export function hasFailedRequiredStage(runDate: string, db: DatabaseType = getDb()): boolean {
-  const row = db.prepare(SELECT_FAILED_REQUIRED_STAGE_SQL).get(runDate) as
-    | { found: number }
-    | undefined;
-  return row !== undefined;
-}
+export function getPipelineHealth(runDate: string, db: DatabaseType = getDb()): PipelineHealth {
+  const rows = db.prepare(LATEST_REQUIRED_STAGE_STATUS_SQL).all(runDate) as Array<{
+    stage: string;
+    status: PipelineStatus;
+  }>;
+  const latest = new Map(rows.map((row) => [row.stage, row.status]));
+  const failedRequiredStages = rows
+    .filter((row) => row.status === 'failed')
+    .map((row) => row.stage)
+    .sort();
+  const degraded = failedRequiredStages.length > 0;
 
-export function listFailedRequiredStages(runDate: string, db: DatabaseType = getDb()): string[] {
-  const rows = db
-    .prepare(
-      `SELECT stage FROM (${LATEST_REQUIRED_STAGE_STATUS_SQL})
-     WHERE status = 'failed'
-     ORDER BY stage`,
-    )
-    .all(runDate) as { stage: string }[];
-  return rows.map((r) => r.stage);
+  return {
+    degraded,
+    failedRequiredStages,
+    canShowRegimeCard: !degraded || latest.get('regime') === 'success',
+  };
 }

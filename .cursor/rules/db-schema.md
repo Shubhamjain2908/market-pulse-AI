@@ -147,7 +147,7 @@ CREATE TABLE briefings (
 );
 CREATE INDEX idx_briefings_date ON briefings(date);
 -- Per-stage audit trail for daily-workflow.ts (migration 0022). status: started | success | failed | skipped.
--- Append-only: retries insert new rows; hasFailedRequiredStage uses latest id per (run_date, stage).
+-- Append-only: retries insert new rows; getPipelineHealth uses latest id per (run_date, stage).
 CREATE TABLE pipeline_runs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   run_date    TEXT NOT NULL,

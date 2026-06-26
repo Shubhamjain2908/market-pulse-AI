@@ -3,11 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getDb, migrate } from '../../src/db/index.js';
-import {
-  hasFailedRequiredStage,
-  listFailedRequiredStages,
-  recordPipelineStage,
-} from '../../src/db/pipeline-queries.js';
+import { getPipelineHealth, recordPipelineStage } from '../../src/db/pipeline-queries.js';
 
 describe('db/pipeline-queries required-stage failure', () => {
   let dbPath: string;
@@ -28,17 +24,38 @@ describe('db/pipeline-queries required-stage failure', () => {
     }
   });
 
-  it('uses latest status per stage so a successful retry clears degraded briefing', () => {
+  it('summarises degraded briefing health from latest required-stage statuses', () => {
     const db = getDb({ path: dbPath });
     migrate(db);
     const runDate = '2026-06-22';
 
+    recordPipelineStage({ runDate, stage: 'thesis', status: 'failed', errorMsg: 'llm' }, db);
+    expect(getPipelineHealth(runDate, db)).toEqual({
+      degraded: false,
+      failedRequiredStages: [],
+      canShowRegimeCard: true,
+    });
+
+    recordPipelineStage({ runDate, stage: 'enrich', status: 'failed', errorMsg: 'stale' }, db);
     recordPipelineStage({ runDate, stage: 'regime', status: 'failed', errorMsg: 'stale' }, db);
-    expect(hasFailedRequiredStage(runDate, db)).toBe(true);
-    expect(listFailedRequiredStages(runDate, db)).toEqual(['regime']);
+    expect(getPipelineHealth(runDate, db)).toEqual({
+      degraded: true,
+      failedRequiredStages: ['enrich', 'regime'],
+      canShowRegimeCard: false,
+    });
 
     recordPipelineStage({ runDate, stage: 'regime', status: 'success' }, db);
-    expect(hasFailedRequiredStage(runDate, db)).toBe(false);
-    expect(listFailedRequiredStages(runDate, db)).toEqual([]);
+    expect(getPipelineHealth(runDate, db)).toEqual({
+      degraded: true,
+      failedRequiredStages: ['enrich'],
+      canShowRegimeCard: true,
+    });
+
+    recordPipelineStage({ runDate, stage: 'enrich', status: 'success' }, db);
+    expect(getPipelineHealth(runDate, db)).toEqual({
+      degraded: false,
+      failedRequiredStages: [],
+      canShowRegimeCard: true,
+    });
   });
 });
