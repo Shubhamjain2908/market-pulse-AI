@@ -29,11 +29,7 @@ import {
   listAllowedGatesForRegime,
   type PortfolioHoldingRow,
 } from '../db/index.js';
-import {
-  hasFailedRequiredStage,
-  listFailedRequiredStages,
-  recordPipelineStage,
-} from '../db/pipeline-queries.js';
+import { getPipelineHealth, recordPipelineStage } from '../db/pipeline-queries.js';
 import {
   type FlowAttributionSnapshot,
   getFlowAttribution,
@@ -182,17 +178,6 @@ export interface ComposedBriefing {
   data: BriefingData;
 }
 
-function pipelineStageSucceeded(runDate: string, stage: string, db: DatabaseType): boolean {
-  const row = db
-    .prepare(
-      `SELECT 1 AS ok FROM pipeline_runs
-       WHERE run_date = ? AND stage = ? AND status = 'success'
-       LIMIT 1`,
-    )
-    .get(runDate, stage) as { ok: number } | undefined;
-  return row !== undefined;
-}
-
 export async function composeBriefing(
   opts: ComposeBriefingOptions = {},
   db: DatabaseType = getDb(),
@@ -202,8 +187,9 @@ export async function composeBriefing(
 
   recordPipelineStage({ runDate: date, stage: 'briefing', status: 'started' }, db);
 
-  const partialPipeline = hasFailedRequiredStage(date, db);
-  const failedStages = partialPipeline ? listFailedRequiredStages(date, db) : [];
+  const pipelineHealth = getPipelineHealth(date, db);
+  const partialPipeline = pipelineHealth.degraded;
+  const failedStages = pipelineHealth.failedRequiredStages;
 
   const watchlist = (opts.watchlist ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
   const allowMoodLlm = !opts.skipAi && !opts.marketClosure;
@@ -295,8 +281,7 @@ export async function composeBriefing(
     renderEtfPricingBlock(date, db, portfolio?.staleHoldings ?? false) || undefined;
 
   let regimeBlock: string | undefined;
-  const showRegimeCard = !partialPipeline || pipelineStageSucceeded(date, 'regime', db);
-  const regimeRow = showRegimeCard ? getRegimeForCalendarDate(date, db) : null;
+  const regimeRow = pipelineHealth.canShowRegimeCard ? getRegimeForCalendarDate(date, db) : null;
   if (regimeRow) {
     const gateSummary = {
       active: listAllowedGatesForRegime(regimeRow.regime, db),
