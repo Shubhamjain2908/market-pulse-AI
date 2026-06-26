@@ -1,7 +1,5 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
-import { loadEtfExclusions, loadScreens, loadWatchlist } from '../config/loaders.js';
-import { getDb, getDistinctOpenPaperTradeSymbols, getLatestHoldings } from '../db/index.js';
-import { isoDateIst } from '../ingestors/base/dates.js';
+import { getDb } from '../db/index.js';
 import type { ScreenDefinition } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
 import { CATALYST_ENTRY_SCREEN, runCatalystEntryScreen } from './catalyst-entry-screen.js';
@@ -9,7 +7,8 @@ import type { ScreenEngineResult } from './engine.js';
 import { runScreenEngine } from './engine.js';
 import { QUALITY_GARP_SCREEN, type QualityGarpFunnelCounts } from './quality-garp.js';
 import { runQualityGarpScreen } from './quality-garp-screen.js';
-import { DbSignalProvider, type SignalProvider } from './signal-provider.js';
+import { resolveScreenContext } from './screen-context.js';
+import type { SignalProvider } from './signal-provider.js';
 
 export interface StockScreenerOptions {
   date?: string;
@@ -27,28 +26,11 @@ export function runStockScreenAnalyser(
   opts: StockScreenerOptions = {},
   db: DatabaseType = getDb(),
 ): ScreenEngineResult {
-  const date = opts.date ?? isoDateIst();
-  const symbols = (opts.symbols ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
-  let screens = opts.screens ?? loadScreens();
+  const context = resolveScreenContext(opts, db);
 
-  if (opts.onlyScreen) {
-    screens = screens.filter((s) => s.name === opts.onlyScreen);
-    if (screens.length === 0) {
-      throw new Error(`No screen named "${opts.onlyScreen}" found in config/screens.json`);
-    }
-  }
-
-  const provider = opts.provider ?? new DbSignalProvider(db);
-  const persist = opts.persist ?? true;
-  const etfExclusions = new Set(loadEtfExclusions().map((s) => s.toUpperCase()));
-  const alreadyOwned = new Set([
-    ...getLatestHoldings(db).map((h) => h.symbol.toUpperCase()),
-    ...getDistinctOpenPaperTradeSymbols(db).map((s) => s.toUpperCase()),
-  ]);
-
-  const qualityScreen = screens.find((s) => s.name === QUALITY_GARP_SCREEN);
-  const catalystScreen = screens.find((s) => s.name === CATALYST_ENTRY_SCREEN);
-  const dslScreens = screens.filter(
+  const qualityScreen = context.screens.find((s) => s.name === QUALITY_GARP_SCREEN);
+  const catalystScreen = context.screens.find((s) => s.name === CATALYST_ENTRY_SCREEN);
+  const dslScreens = context.screens.filter(
     (s) => s.name !== QUALITY_GARP_SCREEN && s.name !== CATALYST_ENTRY_SCREEN,
   );
 
@@ -61,12 +43,12 @@ export function runStockScreenAnalyser(
   if (dslScreens.length > 0) {
     const dslResult = runScreenEngine(
       {
-        date,
-        symbols,
+        date: context.date,
+        symbols: context.dslSymbols,
         screens: dslScreens,
-        provider,
-        persist,
-        regime: opts.regime,
+        provider: context.provider,
+        persist: context.persist,
+        regime: context.regime,
       },
       db,
     );
@@ -79,12 +61,12 @@ export function runStockScreenAnalyser(
   if (qualityScreen) {
     const qualityResult = runQualityGarpScreen(
       {
-        date,
-        symbols: opts.symbols,
-        provider,
-        persist,
-        regime: opts.regime,
-        etfExclusions,
+        date: context.date,
+        symbols: context.requestedSymbols,
+        provider: context.provider,
+        persist: context.persist,
+        regime: context.regime,
+        etfExclusions: context.etfExclusions,
         pointInTimeFundamentals: opts.pointInTimeFundamentals,
       },
       db,
@@ -99,11 +81,11 @@ export function runStockScreenAnalyser(
   if (catalystScreen) {
     const catalystResult = runCatalystEntryScreen(
       {
-        date,
-        persist,
-        regime: opts.regime,
-        etfExclusions,
-        alreadyOwned,
+        date: context.date,
+        persist: context.persist,
+        regime: context.regime,
+        etfExclusions: context.etfExclusions,
+        alreadyOwned: context.alreadyOwned,
       },
       db,
     );
@@ -114,7 +96,7 @@ export function runStockScreenAnalyser(
   }
 
   return {
-    date,
+    date: context.date,
     screensApplied,
     matchesByScreen,
     partialByScreen,
