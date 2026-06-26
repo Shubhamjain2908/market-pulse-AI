@@ -27,21 +27,15 @@ export function isAllocationInstrument(symbol: string): boolean {
   return ALLOCATION_INSTRUMENTS.has(symbol.toUpperCase());
 }
 
-export interface InvestedWeightResult {
-  /** Invested book total INR (LIQUIDCASE excluded from denominator). */
-  investedTotalInr: number;
-  /** Per-symbol weight % of invested book (0 when denominator is 0). */
-  weightsPct: Map<string, number>;
-}
-
 function holdingValueInr(h: PortfolioHoldingRow): number {
   return h.qty * (h.lastPrice ?? h.avgPrice);
 }
 
 /** Weight % uses invested book; LIQUIDCASE is excluded from the denominator only. */
-export function computeInvestedPortfolioWeights(
-  holdings: PortfolioHoldingRow[],
-): InvestedWeightResult {
+export function computeInvestedPortfolioWeights(holdings: PortfolioHoldingRow[]): {
+  investedTotalInr: number;
+  weightsPct: Map<string, number>;
+} {
   const investedTotalInr = holdings
     .filter((h) => h.symbol.toUpperCase() !== CASH_PROXY_SYMBOL)
     .reduce((sum, h) => sum + holdingValueInr(h), 0);

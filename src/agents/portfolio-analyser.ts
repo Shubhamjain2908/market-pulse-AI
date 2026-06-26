@@ -10,7 +10,6 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import pLimit from 'p-limit';
 import { z } from 'zod';
 import { config } from '../config/env.js';
-import { loadEtfExclusions } from '../config/loaders.js';
 import {
   getDb,
   getLatestHoldings,
@@ -49,11 +48,6 @@ import {
 import { buildStockContext } from './thesis-generator.js';
 
 const log = child({ component: 'portfolio-analyser' });
-
-/** RSI/volume guardrails skipped for allocation sleeves (etf-exclusions.json). */
-const EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS = new Set(
-  loadEtfExclusions().map((s) => s.toUpperCase()),
-);
 
 export const PortfolioActionSchema = z.object({
   symbol: z.string(),
@@ -140,7 +134,7 @@ export function applyPortfolioAddGuardrails(
   if (action.action !== 'ADD') return action;
 
   const symbol = action.symbol.toUpperCase();
-  const isSignalExcluded = EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol);
+  const isSignalExcluded = isAllocationInstrument(symbol);
   const rsi = signals.rsi_14;
   const pctHi = signals.pct_from_52w_high;
   const volRatio = signals.volume_ratio_20d;
@@ -260,7 +254,7 @@ function getMostRecentPaperTradeEntry(
 }
 
 function sanitizeStockContextForExcludedSignals(symbol: string, context: string): string {
-  if (!EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol.toUpperCase())) return context;
+  if (!isAllocationInstrument(symbol)) return context;
   return context
     .split('\n')
     .filter((line) => !/^\s*(rsi_14|volume_ratio_20d)\s*:/.test(line))
@@ -611,7 +605,7 @@ function buildPositionContext(
   investedTotalInr: number,
 ): string {
   const symbol = h.symbol.toUpperCase();
-  const isSignalExcluded = EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol);
+  const isSignalExcluded = isAllocationInstrument(symbol);
   const positionValue = h.qty * (h.lastPrice ?? h.avgPrice);
   const weightPct = weightsPct.get(symbol) ?? null;
   const lines: string[] = [`# Position: ${h.symbol} (${h.exchange})`];
