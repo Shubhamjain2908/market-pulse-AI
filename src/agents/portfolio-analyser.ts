@@ -19,7 +19,6 @@ import {
   type PortfolioHoldingRow,
   upsertPortfolioAnalysis,
 } from '../db/index.js';
-import { getRegimeForCalendarDate } from '../db/regime-queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
@@ -27,11 +26,11 @@ import { child } from '../logger.js';
 import { lastOpenOnOrBefore } from '../market/trading-days.js';
 import type { Regime } from '../types/regime.js';
 import {
-  buildRegimeContextAppend,
   computeInvestedPortfolioWeights,
   formatConcentrationContextLine,
   isAllocationInstrument,
   isDefensiveRegime,
+  loadPortfolioRegimeContext,
 } from './portfolio-context.js';
 import {
   applyStrategyPortfolioGuardrails,
@@ -349,8 +348,7 @@ export async function analysePortfolio(
   const weightResult = computeInvestedPortfolioWeights(allHoldings);
   const allocationQueue = filtered.filter((h) => isAllocationInstrument(h.symbol));
   const equityQueue = filtered.filter((h) => !isAllocationInstrument(h.symbol));
-  const regimeContextAppend = buildRegimeContextAppend(date, db);
-  const regimeRow = getRegimeForCalendarDate(date, db);
+  const regimeCtx = loadPortfolioRegimeContext(date, db);
 
   const allocationRows = allocationQueue.map((h) =>
     buildAllocationCarryRow(h, date, weightResult.weightsPct),
@@ -390,10 +388,10 @@ export async function analysePortfolio(
             date,
             db,
             llm,
-            allHoldings,
             weightResult.weightsPct,
-            regimeContextAppend,
-            regimeRow?.regime ?? null,
+            weightResult.investedTotalInr,
+            regimeCtx.append,
+            regimeCtx.regime,
           );
           return { ok: true as const, row };
         } catch (err) {
@@ -484,7 +482,6 @@ function buildLitePortfolioRow(
     db,
     pnlPct: h.pnlPct ?? null,
     weightPct: weightsPct.get(h.symbol.toUpperCase()) ?? null,
-    skipConcentration: false,
   };
   const baseAction: PortfolioAction = {
     symbol: h.symbol,
@@ -530,8 +527,8 @@ async function analyseOne(
   date: string,
   db: DatabaseType,
   llm: LlmProvider,
-  allHoldings: PortfolioHoldingRow[],
   weightsPct: Map<string, number>,
+  investedTotalInr: number,
   regimeContextAppend: string | null,
   regime: Regime | null,
 ): Promise<PortfolioAnalysisRow> {
@@ -540,7 +537,14 @@ async function analyseOne(
     h.symbol,
     buildStockContext(h.symbol, date, db, 'portfolio'),
   );
-  const positionContext = buildPositionContext(h, date, db, entrySource, allHoldings, weightsPct);
+  const positionContext = buildPositionContext(
+    h,
+    date,
+    db,
+    entrySource,
+    weightsPct,
+    investedTotalInr,
+  );
   const openPaperTradeCount = getOpenPaperTradeCountForSymbol(h.symbol, db);
   const deep = h.pnlPct != null && h.pnlPct <= getPortfolioDeepLossPct();
   let system = deep ? `${PORTFOLIO_SYSTEM}${portfolioDeepLossAddon()}` : PORTFOLIO_SYSTEM;
@@ -566,7 +570,6 @@ async function analyseOne(
     db,
     pnlPct: h.pnlPct ?? null,
     weightPct: weightsPct.get(h.symbol.toUpperCase()) ?? null,
-    skipConcentration: false,
   };
   const a: PortfolioAction = applyStrategyPortfolioGuardrails(
     applyPortfolioAddGuardrails(
@@ -604,14 +607,13 @@ function buildPositionContext(
   date: string,
   db: DatabaseType,
   entrySource: PortfolioEntrySource,
-  allHoldings: PortfolioHoldingRow[],
   weightsPct: Map<string, number>,
+  investedTotalInr: number,
 ): string {
   const symbol = h.symbol.toUpperCase();
   const isSignalExcluded = EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol);
   const positionValue = h.qty * (h.lastPrice ?? h.avgPrice);
   const weightPct = weightsPct.get(symbol) ?? null;
-  const { investedTotalInr } = computeInvestedPortfolioWeights(allHoldings);
   const lines: string[] = [`# Position: ${h.symbol} (${h.exchange})`];
   lines.push(`Quantity: ${h.qty}`);
   lines.push(`Avg buy price: ₹${h.avgPrice.toFixed(2)}`);

@@ -70,21 +70,22 @@ describe('portfolio analyser', () => {
       source: 'test',
     };
     upsertQuotes([quote], db);
-    const padSymbols = ['TCS', 'RELIANCE', 'ITC', 'SBIN', 'LT', 'WIPRO', 'AXISBANK'] as const;
-    const padHoldings = padSymbols.map((symbol) => ({
-      symbol,
-      exchange: 'NSE' as const,
-      asOf: date,
-      qty: 10,
-      avgPrice: 6100,
-      lastPrice: 6100,
-      pnl: 0,
-      pnlPct: 0,
-      dayChange: 0,
-      dayChangePct: 0,
-      product: 'CNC',
-      source: 'kite' as const,
-    }));
+    const padHoldings = ['TCS', 'RELIANCE', 'ITC', 'SBIN', 'LT', 'WIPRO', 'AXISBANK'].map(
+      (symbol) => ({
+        symbol,
+        exchange: 'NSE' as const,
+        asOf: date,
+        qty: 10,
+        avgPrice: 6100,
+        lastPrice: 6100,
+        pnl: 0,
+        pnlPct: 0,
+        dayChange: 0,
+        dayChangePct: 0,
+        product: 'CNC',
+        source: 'kite' as const,
+      }),
+    );
     upsertHoldings(
       [
         {
