@@ -16,6 +16,7 @@ import {
   type QualityGarpFundamentalRow,
 } from '../db/queries.js';
 import type { PortfolioAction } from './portfolio-analyser.js';
+import { HARD_CONCENTRATION_PCT } from './portfolio-context.js';
 
 export type PortfolioEntrySource = PaperTradeSignalType | 'quality_garp' | 'unknown';
 
@@ -25,6 +26,10 @@ export interface StrategyGuardrailCtx {
   date: string;
   db: DatabaseType;
   pnlPct?: number | null;
+  /** Invested-book weight % (LIQUIDCASE excluded from denominator). */
+  weightPct?: number | null;
+  /** Skip concentration guardrail (allocation instruments). */
+  skipConcentration?: boolean;
 }
 
 export function truncateTriggerReason(s: string): string {
@@ -245,7 +250,7 @@ export function applyMomentumPortfolioGuardrails(
   return action;
 }
 
-function qualityGarpDeteriorationFlags(
+export function qualityGarpDeteriorationFlags(
   fundamentals: QualityGarpFundamentalRow | undefined,
   profitGrowth: number | null,
 ): string[] {
@@ -272,29 +277,70 @@ function qualityGarpDeteriorationFlags(
   return flags;
 }
 
+/** QG inverse-gate flags for portfolio LLM context (any entry source). */
+export function getQualityGarpDeteriorationFlagsForSymbol(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+): string[] {
+  return qualityGarpDeteriorationFlags(
+    qualityGarpRow(symbol, date, db),
+    profitGrowthYoy(symbol, date, db),
+  );
+}
+
 function applyQualityGarpPortfolioGuardrails(
   action: PortfolioAction,
   ctx: StrategyGuardrailCtx,
 ): PortfolioAction {
-  if (ctx.entrySource !== 'quality_garp') return action;
+  const applies = ctx.entrySource === 'quality_garp' || ctx.entrySource === 'unknown';
+  if (!applies) return action;
 
-  const flags = qualityGarpDeteriorationFlags(
-    qualityGarpRow(ctx.symbol, ctx.date, ctx.db),
-    profitGrowthYoy(ctx.symbol, ctx.date, ctx.db),
-  );
+  const flags = getQualityGarpDeteriorationFlagsForSymbol(ctx.symbol, ctx.date, ctx.db);
   if (flags.length === 0) return action;
 
+  const strategyKey = ctx.entrySource === 'quality_garp' ? 'quality_garp' : 'universal_qg';
   const severe = flags.includes('promoter selling') && flags.includes('profit decline');
-  if (severe || flags.length >= 4) {
-    const prefix = `GUARDRAIL_OVERRIDE[strategy=quality_garp,flags=${flags.length}]`;
+
+  if (ctx.entrySource === 'quality_garp' && (severe || flags.length >= 4)) {
+    const prefix = `GUARDRAIL_OVERRIDE[strategy=${strategyKey},flags=${flags.length}]`;
     const detail = `[Quality-GARP: severe deterioration (${flags.join(', ')}) — EXIT.]`;
     return escalate(action, 'EXIT', prefix, detail, 0.65);
   }
   if (flags.length < 2) return action;
 
-  const prefix = `GUARDRAIL_OVERRIDE[strategy=quality_garp,flags=${flags.length}]`;
-  const detail = `[Quality-GARP: fundamental deterioration (${flags.join(', ')}) — TRIM.]`;
+  const prefix = `GUARDRAIL_OVERRIDE[strategy=${strategyKey},flags=${flags.length}]`;
+  const detail =
+    ctx.entrySource === 'quality_garp'
+      ? `[Quality-GARP: fundamental deterioration (${flags.join(', ')}) — TRIM.]`
+      : `[Universal QG deterioration (${flags.join(', ')}) — TRIM review; no EXIT from QG alone.]`;
   return escalate(action, 'TRIM', prefix, detail, 0.58);
+}
+
+export function applyTechnicalTrimEscalation(
+  action: PortfolioAction,
+  signals: Record<string, number>,
+  pnlPct: number | null | undefined,
+): PortfolioAction {
+  if (action.action !== 'HOLD') return action;
+  const rsi = signals.rsi_14;
+  const pctHi = signals.pct_from_52w_high;
+  if (rsi == null || pctHi == null || pnlPct == null) return action;
+  if (rsi <= 75 || pctHi <= -5 || pnlPct <= 50) return action;
+
+  const prefix = 'GUARDRAIL_OVERRIDE[LITE_ESCALATION]';
+  const detail = `[Technical: RSI ${rsi.toFixed(0)} > 75, within 5% of 52W high, unrealised +${pnlPct.toFixed(1)}% — TRIM.]`;
+  return escalate(action, 'TRIM', prefix, detail, 0.58);
+}
+
+export function applyConcentrationGuardrails(
+  action: PortfolioAction,
+  weightPct: number | null | undefined,
+): PortfolioAction {
+  if (weightPct == null || weightPct < HARD_CONCENTRATION_PCT) return action;
+  const prefix = `GUARDRAIL_OVERRIDE[concentration=${weightPct.toFixed(1)}%>=${HARD_CONCENTRATION_PCT}%]`;
+  const detail = `[Concentration: ${weightPct.toFixed(1)}% of invested book — TRIM review.]`;
+  return escalate(action, 'TRIM', prefix, detail, 0.6);
 }
 
 function calendarDaysBetween(from: string, to: string): number {
@@ -406,7 +452,7 @@ function applyCatalystPortfolioGuardrails(
   return escalate(action, next, prefix, detail, next === 'EXIT' ? 0.62 : 0.55);
 }
 
-/** Applies momentum → quality-GARP → catalyst guardrails in order. */
+/** Applies momentum → quality-GARP → catalyst → technical TRIM → concentration guardrails. */
 export function applyStrategyPortfolioGuardrails(
   action: PortfolioAction,
   signals: Record<string, number>,
@@ -415,5 +461,9 @@ export function applyStrategyPortfolioGuardrails(
   let out = applyMomentumPortfolioGuardrails(action, signals, { entrySource: ctx.entrySource });
   out = applyQualityGarpPortfolioGuardrails(out, ctx);
   out = applyCatalystPortfolioGuardrails(out, ctx);
+  out = applyTechnicalTrimEscalation(out, signals, ctx.pnlPct);
+  if (!ctx.skipConcentration) {
+    out = applyConcentrationGuardrails(out, ctx.weightPct);
+  }
   return out;
 }
