@@ -18,10 +18,6 @@ import type { PortfolioSummary, ThesisCard } from './template.js';
 
 const log = child({ component: 'paper-trade-writer' });
 
-function isPortfolioAddPaperTradesEnabled(): boolean {
-  return (process.env.PORTFOLIO_ADD_PAPER_TRADES ?? config.PORTFOLIO_ADD_PAPER_TRADES) === '1';
-}
-
 function horizonToDays(horizon: string): { horizon: PaperTradeHorizon; maxHoldDays: number } {
   const h = horizon.toLowerCase().trim();
   if (h === 'short') return { horizon: 'short', maxHoldDays: 30 };
@@ -247,10 +243,9 @@ export function recordPaperTrades(
   }
 
   if (portfolio?.positions?.length) {
-    const portfolioAddEnabled = isPortfolioAddPaperTradesEnabled();
     for (const p of portfolio.positions) {
       if (p.action !== 'ADD') continue;
-      if (!portfolioAddEnabled) {
+      if ((process.env.PORTFOLIO_ADD_PAPER_TRADES ?? config.PORTFOLIO_ADD_PAPER_TRADES) !== '1') {
         log.info(
           { symbol: p.symbol, event: 'portfolio_add_paper_disabled' },
           'PORTFOLIO_ADD paper trade disabled by config',
