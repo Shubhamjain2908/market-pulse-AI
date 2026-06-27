@@ -9,14 +9,15 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import juice from 'juice';
+import { CASH_PROXY_SYMBOL, computeInvestedPortfolioWeights } from '../agents/portfolio-context.js';
 import { technicalSummaryLine } from '../agents/portfolio-trigger.js';
-import { getThesisRankMeta } from '../agents/thesis-generator.js';
+import { getThesisRankMeta, resolveThesisEligibleUniverse } from '../agents/thesis-generator.js';
 import { getAlertsForDate } from '../analysers/alerts.js';
 import {
   formatQualityGarpFunnelSummary,
+  QUALITY_GARP_SCREEN,
   readQualityGarpFunnelForDate,
-} from '../analysers/quality-garp-funnel.js';
-import { QUALITY_GARP_SCREEN } from '../analysers/quality-garp-gates.js';
+} from '../analysers/quality-garp.js';
 import { config } from '../config/env.js';
 import { loadScreens, loadSectorMap, loadWatchlist } from '../config/loaders.js';
 import {
@@ -28,7 +29,7 @@ import {
   listAllowedGatesForRegime,
   type PortfolioHoldingRow,
 } from '../db/index.js';
-import { hasFailedRequiredStage, recordPipelineStage } from '../db/pipeline-queries.js';
+import { getPipelineHealth, recordPipelineStage } from '../db/pipeline-queries.js';
 import {
   type FlowAttributionSnapshot,
   getFlowAttribution,
@@ -177,29 +178,6 @@ export interface ComposedBriefing {
   data: BriefingData;
 }
 
-function pipelineStageSucceeded(runDate: string, stage: string, db: DatabaseType): boolean {
-  const row = db
-    .prepare(
-      `SELECT 1 AS ok FROM pipeline_runs
-       WHERE run_date = ? AND stage = ? AND status = 'success'
-       LIMIT 1`,
-    )
-    .get(runDate, stage) as { ok: number } | undefined;
-  return row !== undefined;
-}
-
-function listFailedRequiredStages(runDate: string, db: DatabaseType): string[] {
-  const rows = db
-    .prepare(
-      `SELECT DISTINCT stage FROM pipeline_runs
-       WHERE run_date = ? AND status = 'failed'
-         AND stage IN ('enrich', 'regime', 'screen')
-       ORDER BY stage`,
-    )
-    .all(runDate) as { stage: string }[];
-  return rows.map((r) => r.stage);
-}
-
 export async function composeBriefing(
   opts: ComposeBriefingOptions = {},
   db: DatabaseType = getDb(),
@@ -209,8 +187,9 @@ export async function composeBriefing(
 
   recordPipelineStage({ runDate: date, stage: 'briefing', status: 'started' }, db);
 
-  const partialPipeline = hasFailedRequiredStage(date, db);
-  const failedStages = partialPipeline ? listFailedRequiredStages(date, db) : [];
+  const pipelineHealth = getPipelineHealth(date, db);
+  const partialPipeline = pipelineHealth.degraded;
+  const failedStages = pipelineHealth.failedRequiredStages;
 
   const watchlist = (opts.watchlist ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
   const allowMoodLlm = !opts.skipAi && !opts.marketClosure;
@@ -225,9 +204,8 @@ export async function composeBriefing(
   const newsHours = opts.newsWindowHours ?? config.BRIEFING_NEWS_WINDOW_HOURS;
   const newsLimit = opts.newsLimit ?? config.BRIEFING_NEWS_LIMIT;
   const news = gatherNews(newsHours, date, watchlist, db, newsLimit);
-  const holdingsSet = new Set(getLatestHoldings(db).map((h) => h.symbol.toUpperCase()));
-  const thesisUniverse = watchlist.filter((s) => !holdingsSet.has(s.toUpperCase()));
-  const thesisEligibleSet = new Set(thesisUniverse.map((s) => s.toUpperCase()));
+  const thesisUniverse = resolveThesisEligibleUniverse(date, watchlist, db);
+  const thesisEligibleSet = new Set(thesisUniverse);
   const rankMeta =
     !partialPipeline && !opts.skipAi && !opts.marketClosure
       ? getThesisRankMeta(date, thesisUniverse, db)
@@ -241,7 +219,8 @@ export async function composeBriefing(
     paperLog.insertedAiPick > 0 ||
     paperLog.insertedPortfolioAdd > 0 ||
     paperLog.insertedCatalystEntry > 0 ||
-    paperLog.crossStrategyBlocked > 0
+    paperLog.crossStrategyBlocked > 0 ||
+    paperLog.blockedPortfolioAdd > 0
   ) {
     log.info(paperLog, 'paper trades recorded');
   }
@@ -302,8 +281,7 @@ export async function composeBriefing(
     renderEtfPricingBlock(date, db, portfolio?.staleHoldings ?? false) || undefined;
 
   let regimeBlock: string | undefined;
-  const showRegimeCard = !partialPipeline || pipelineStageSucceeded(date, 'regime', db);
-  const regimeRow = showRegimeCard ? getRegimeForCalendarDate(date, db) : null;
+  const regimeRow = pipelineHealth.canShowRegimeCard ? getRegimeForCalendarDate(date, db) : null;
   if (regimeRow) {
     const gateSummary = {
       active: listAllowedGatesForRegime(regimeRow.regime, db),
@@ -428,8 +406,8 @@ function resolveAiPicksStatus(
   thesisRun?: ComposeBriefingOptions['thesisRun'],
 ): AiPicksSectionStatus {
   if (marketClosure) return { kind: 'holiday', label: marketClosure.label };
-  if (skipAi) return { kind: 'skipped', reason: 'skip_ai_flag' };
   if (thesesLen > 0) return { kind: 'ok' };
+  if (skipAi) return { kind: 'skipped', reason: 'skip_ai_flag' };
   if (thesisRun && thesisRun.failed > 0 && thesisRun.generated === 0) {
     return { kind: 'all_failed', failed: thesisRun.failed };
   }
@@ -475,15 +453,6 @@ two-sentence read plus the Watch sentence.
 Never give investment advice. Present tense. Avoid generic filler ("mixed signals",
 "cautious optimism") unless you tie it to a specific fact from the data.`;
 
-/** Fallback when the full paragraph fails validation: tiny payload, one sentence, ~80 tokens max. */
-const MOOD_MINI_SYSTEM = `You write one sentence only about Indian equity session tone.
-
-You MUST output exactly one English sentence ending with . ! or ?
-Use the four numeric inputs as given (FII/DII in ₹ crore cash; India VIX level; Nifty cash index % change).
-Interpret how flows, volatility, and the index move relate — you may cite these figures in the sentence.
-
-No "Watch:" line. No bullet points. No investment advice. Present tense.`;
-
 /** Rejects truncated / safety-filter one-word outputs so the briefing can omit the block. */
 export function validateMoodNarrative(text: string): void {
   const t = text.trim();
@@ -493,18 +462,7 @@ export function validateMoodNarrative(text: string): void {
   if (!/[.!?]/.test(t)) throw new Error('mood narrative missing sentence terminator');
 }
 
-/** Validates the compact single-sentence fallback from {@link generateMoodNarrativeMini}. */
-export function validateMoodNarrativeMini(text: string): void {
-  const t = text.trim();
-  if (t.length < 35) throw new Error('mini mood narrative too short');
-  const words = t.split(/\s+/).filter(Boolean);
-  if (words.length < 12) throw new Error('mini mood narrative too few words');
-  if (!/[.!?]/.test(t)) throw new Error('mini mood narrative missing sentence terminator');
-  const sentences = t.split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
-  if (sentences.length !== 1) throw new Error('mini mood narrative must be one sentence');
-}
-
-/** Non-LLM fallback when Vertex returns empty candidates twice (mood + mini). */
+/** Non-LLM fallback when the LLM call fails. */
 function buildDeterministicMoodNarrative(mood: BriefingData['mood']): string {
   const flowBits: string[] = [];
   if (mood.fiiNet != null) {
@@ -526,27 +484,6 @@ function buildDeterministicMoodNarrative(mood: BriefingData['mood']): string {
       ? `Session tone reflects ${flowBits.join(', ')}, reading cross-currents between foreign portfolio flows and local liquidity.`
       : 'Session tone is data-light until fresh FII/DII and benchmark prints populate; treat positioning as cautious and event-driven.';
   return `${core} Watch: how the tape balances global cues against domestic flows in upcoming sessions.`;
-}
-
-async function generateMoodNarrativeMini(
-  mood: BriefingData['mood'],
-  llm: LlmProvider,
-): Promise<string> {
-  const payload = {
-    fiiNetCr: mood.fiiNet,
-    diiNetCr: mood.diiNet,
-    vix: mood.vix,
-    niftyChangePct: mood.niftyChangePct,
-  };
-  const result = await llm.generateText({
-    system: MOOD_MINI_SYSTEM,
-    user: `session_metrics_json:\n${JSON.stringify(payload)}\n\nWrite the single sentence.`,
-    temperature: 0.2,
-    maxOutputTokens: 80,
-  });
-  const text = result.text.trim();
-  validateMoodNarrativeMini(text);
-  return text;
 }
 
 async function generateMoodNarrative(
@@ -596,11 +533,7 @@ async function generateMoodNarrative(
       return text;
     }
   } catch {
-    try {
-      return await generateMoodNarrativeMini(mood, llm);
-    } catch {
-      return buildDeterministicMoodNarrative(mood);
-    }
+    return buildDeterministicMoodNarrative(mood);
   }
 }
 
@@ -612,7 +545,7 @@ function gatherTheses(
   date: string,
   db: DatabaseType,
   rankMeta?: Map<string, { rank: number; reasonsLine: string }>,
-  /** When set, only show thesis cards for symbols eligible for AI Picks (watchlist ∩ ¬holdings). */
+  /** When set, only show thesis cards for symbols eligible for AI Picks (screens ∪ watchlist, ¬holdings). */
   eligibleSymbols?: Set<string>,
 ): ThesisCard[] {
   const rows = getThesesForDate(date, db);
@@ -766,15 +699,15 @@ function buildPortfolioRiskRollup(
     return { ...h, valueInr };
   });
 
-  const totalValue = enriched.reduce((s, p) => s + p.valueInr, 0);
-  if (totalValue <= 0) return undefined;
+  const { investedTotalInr, weightsPct } = computeInvestedPortfolioWeights(holdings);
+  if (investedTotalInr <= 0) return undefined;
 
   const topWeights = [...enriched]
     .sort((a, b) => b.valueInr - a.valueInr)
     .slice(0, 5)
     .map((p) => ({
       symbol: p.symbol,
-      weightPct: (p.valueInr / totalValue) * 100,
+      weightPct: weightsPct.get(p.symbol.toUpperCase()) ?? 0,
       valueInr: p.valueInr,
     }));
 
@@ -805,13 +738,14 @@ function buildPortfolioRiskRollup(
 
   const sectorAgg = new Map<string, number>();
   for (const p of enriched) {
+    if (p.symbol.toUpperCase() === CASH_PROXY_SYMBOL) continue;
     const sector = classifySector(p.symbol, sectorMap, sectorFromDb.get(p.symbol.toUpperCase()));
     sectorAgg.set(sector, (sectorAgg.get(sector) ?? 0) + p.valueInr);
   }
   const sectorWeights = [...sectorAgg.entries()]
     .map(([sector, v]) => ({
       sector,
-      weightPct: (v / totalValue) * 100,
+      weightPct: (v / investedTotalInr) * 100,
     }))
     .sort((a, b) => b.weightPct - a.weightPct);
 

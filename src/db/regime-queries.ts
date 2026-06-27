@@ -2,7 +2,7 @@
  * SQLite helpers for `regime_daily` and `regime_strategy_gate`.
  */
 
-import type { Database as DatabaseType, Statement } from 'better-sqlite3';
+import type { Database as DatabaseType } from 'better-sqlite3';
 import { child } from '../logger.js';
 import { lastOpenOnOrBefore } from '../market/trading-days.js';
 import type { Regime, RegimeRow, StrategyGateRow } from '../types/regime.js';
@@ -10,20 +10,6 @@ import { RegimeSchema } from '../types/regime.js';
 import { getDb } from './connection.js';
 
 const log = child({ component: 'regime-queries' });
-
-const SELECT_STRATEGY_GATE_ALLOWED_SQL =
-  'SELECT allowed FROM regime_strategy_gate WHERE strategy_id = ? AND regime = ?';
-
-const strategyGateAllowedStmtByDb = new WeakMap<DatabaseType, Statement>();
-
-function strategyGateAllowedStmt(db: DatabaseType): Statement {
-  let stmt = strategyGateAllowedStmtByDb.get(db);
-  if (!stmt) {
-    stmt = db.prepare(SELECT_STRATEGY_GATE_ALLOWED_SQL);
-    strategyGateAllowedStmtByDb.set(db, stmt);
-  }
-  return stmt;
-}
 
 function parseRegimeRow(row: Record<string, unknown>): RegimeRow {
   const regimeParsed = RegimeSchema.safeParse(row.regime);
@@ -170,9 +156,9 @@ export function isStrategyAllowed(
   regime: string,
   db: DatabaseType = getDb(),
 ): boolean {
-  const row = strategyGateAllowedStmt(db).get(strategyId, regime) as
-    | { allowed: number }
-    | undefined;
+  const row = db
+    .prepare('SELECT allowed FROM regime_strategy_gate WHERE strategy_id = ? AND regime = ?')
+    .get(strategyId, regime) as { allowed: number } | undefined;
   if (row == null) {
     log.warn({ strategyId, regime }, 'no gate row found — failing closed (DISALLOWED)');
     return false;

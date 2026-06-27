@@ -152,7 +152,7 @@ function prepareInsert(db: DatabaseType) {
 function resolveSymbols(raw: string): string[] {
   const trimmed = raw.trim();
   if (trimmed.toLowerCase() === 'all') {
-    return getMomentumUniverseSymbols({ fresh: true });
+    return getMomentumUniverseSymbols();
   }
   const out = new Set<string>();
   for (const part of trimmed.split(',')) {

@@ -78,7 +78,7 @@ export async function runKiteLogin(
   };
 }
 
-function extractRequestToken(input: string): string | null {
+export function extractRequestToken(input: string): string | null {
   if (!input) return null;
   // Pasted full URL → parse the query string.
   if (input.includes('request_token=')) {
@@ -141,7 +141,7 @@ function lineAssignsKey(line: string, key: string): boolean {
  * Confirms the token was persisted. If this throws, the write path or
  * permissions are wrong — not an editor refresh issue.
  */
-function assertEnvFileHasKey(path: string, key: string, expectedValue: string): void {
+export function assertEnvFileHasKey(path: string, key: string, expectedValue: string): void {
   const raw = readFileSync(path, 'utf8');
   const values = parseAllAssignmentsForKey(raw, key);
   if (values.length === 0) {

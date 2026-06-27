@@ -2,11 +2,7 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  composeBriefing,
-  validateMoodNarrative,
-  validateMoodNarrativeMini,
-} from '../../src/briefing/composer.js';
+import { composeBriefing, validateMoodNarrative } from '../../src/briefing/composer.js';
 import {
   closeDb,
   getDb,
@@ -365,7 +361,7 @@ describe('briefing composer (Phase 3–4)', () => {
     expect(result.data.moodNarrative).toBeTruthy();
     expect(result.data.moodNarrative).toContain('Watch:');
     expect(result.html).toMatch(/<div class="mood-narrative"[^>]*>/);
-    expect(badCalls).toBeGreaterThanOrEqual(3);
+    expect(badCalls).toBeGreaterThanOrEqual(2);
   });
 
   it('retries once and uses mood narrative when the second attempt is valid', async () => {
@@ -391,20 +387,13 @@ describe('briefing composer (Phase 3–4)', () => {
     expect(result.html).toContain('mood-narrative');
   });
 
-  it('falls back to single-sentence mini mood when full narrative fails twice', async () => {
+  it('falls back to deterministic mood narrative when both LLM attempts fail', async () => {
     let genCalls = 0;
     const fallbackLlm: LlmProvider = {
       name: 'fallback',
       model: 'fallback',
-      async generateText(opts): Promise<LlmTextResult> {
+      async generateText(): Promise<LlmTextResult> {
         genCalls++;
-        if (opts.system.includes('one sentence only')) {
-          return {
-            text: 'Aggressive FII selling of roughly ₹8,048 Cr overwhelms DII support near ₹3,487 Cr, pushing Nifty down 0.74% with India VIX elevated at 18.46.',
-            model: 'fallback',
-            usage: { durationMs: 1 },
-          };
-        }
         return { text: 'Bad', model: 'fallback', usage: { durationMs: 1 } };
       },
       async generateJson<T>(): Promise<LlmJsonResult<T>> {
@@ -412,14 +401,15 @@ describe('briefing composer (Phase 3–4)', () => {
       },
     };
     const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, fallbackLlm);
-    expect(genCalls).toBe(3);
-    expect(result.data.moodNarrative).toContain('FII');
+    expect(genCalls).toBe(2);
+    expect(result.data.moodNarrative).toBeTruthy();
+    expect(result.data.moodNarrative).toContain('Watch:');
     expect(result.html).toMatch(/<div class="mood-narrative"[^>]*>/);
   });
 
-  it('skips AI when skipAi=true', async () => {
+  it('skips AI when skipAi=true and no persisted theses', async () => {
     const result = await composeBriefing(
-      { date: today, watchlist: ['RELIANCE'], skipAi: true },
+      { date: today, watchlist: ['INFY'], skipAi: true },
       db,
       llm,
     );
@@ -430,6 +420,19 @@ describe('briefing composer (Phase 3–4)', () => {
     });
     expect(result.data.moodNarrative).toBeUndefined();
     expect(llm.calls).toHaveLength(0);
+  });
+
+  it('shows persisted theses when skipAi=true', async () => {
+    const result = await composeBriefing(
+      { date: today, watchlist: ['RELIANCE'], skipAi: true },
+      db,
+      llm,
+    );
+
+    expect(result.data.aiPicksStatus.kind).toBe('ok');
+    expect(result.data.theses).toHaveLength(1);
+    expect(result.html).toContain('RELIANCE');
+    expect(result.html).not.toContain('--skip-ai');
   });
 
   it('shows holiday messaging when marketClosure is set', async () => {
@@ -616,15 +619,6 @@ describe('briefing composer (Phase 3–4)', () => {
     ).not.toThrow();
     expect(() => validateMoodNarrative('Aggressive')).toThrow();
     expect(() => validateMoodNarrative('Only three words here')).toThrow();
-  });
-
-  it('validateMoodNarrativeMini accepts one rich sentence', () => {
-    expect(() =>
-      validateMoodNarrativeMini(
-        'Aggressive FII selling of roughly ₹8,048 Cr overwhelms DII support near ₹3,487 Cr, pushing Nifty down 0.74% with India VIX elevated at 18.46.',
-      ),
-    ).not.toThrow();
-    expect(() => validateMoodNarrativeMini('Too short.')).toThrow();
   });
 
   it('includes signal performance (paper) section', async () => {

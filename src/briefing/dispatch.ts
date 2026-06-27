@@ -4,16 +4,13 @@
  */
 
 import { config } from '../config/env.js';
-import { child } from '../logger.js';
 import { deliverToEmail } from './delivery/email.js';
 import { deliverToFile } from './delivery/file.js';
-
-const log = child({ component: 'briefing-dispatch' });
 
 export async function deliverBriefing(
   html: string,
   date: string,
-  method: 'file' | 'email' | 'slack' | 'telegram' = config.BRIEFING_DELIVERY,
+  method: 'file' | 'email' = config.BRIEFING_DELIVERY,
 ): Promise<void> {
   if (method === 'file') {
     deliverToFile(html, date);
@@ -23,5 +20,5 @@ export async function deliverBriefing(
     await deliverToEmail(html, date);
     return;
   }
-  log.warn({ delivery: method }, 'delivery channel not implemented yet — briefing not delivered');
+  throw new Error(`Unsupported briefing delivery method: ${method}`);
 }

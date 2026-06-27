@@ -15,7 +15,6 @@ import { resolve } from 'node:path';
 import { PROJECT_ROOT } from '../src/config/project-paths.js';
 import { closeDb, getDb, upsertFundamentals } from '../src/db/index.js';
 import { isoDateIst } from '../src/ingestors/base/dates.js';
-import { bootstrapIngestors } from '../src/ingestors/index.js';
 import { ScreenerIngestor } from '../src/ingestors/screener/ingestor.js';
 import { ingestYahooSnapshots } from '../src/ingestors/yahoo-snapshot-ingestor.js';
 import { child } from '../src/logger.js';
@@ -50,8 +49,6 @@ async function main(): Promise<void> {
   const skipScreener = args.includes('--skip-screener');
   const date = isoDateIst();
   const dbPath = resolve(PROJECT_ROOT, process.env.DATABASE_PATH ?? 'data/market-pulse.db');
-
-  bootstrapIngestors();
 
   if (!skipAnnual) {
     log.info({ dbPath }, 'running yahoo_annual + promoter backfill');

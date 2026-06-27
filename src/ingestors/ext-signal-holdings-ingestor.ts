@@ -126,14 +126,31 @@ async function mcpInitialize(
   return extraHeaders;
 }
 
-function parseHoldingsFromToolResult(json: JsonRpcResponse): HoldingsPayload {
-  const text = json.result?.content?.[0]?.text;
-  if (!text) throw new Error('ext signal holdings: missing result.content[0].text');
-  const payload = JSON.parse(text) as HoldingsPayload;
-  if (!Array.isArray(payload.positions)) {
+/** ftInvstr MCP wraps holdings in `{ data: { positions } }`; legacy flat shape still supported. */
+export function unwrapHoldingsPayload(raw: unknown): HoldingsPayload {
+  if (raw == null || typeof raw !== 'object') {
+    throw new Error('ext signal holdings: response is not an object');
+  }
+  const root = raw as Record<string, unknown>;
+  const inner =
+    root.data != null && typeof root.data === 'object'
+      ? (root.data as Record<string, unknown>)
+      : root;
+  const positions = inner.positions;
+  if (!Array.isArray(positions)) {
     throw new Error('ext signal holdings: missing positions array');
   }
-  return payload;
+  return {
+    strategy: typeof inner.strategy === 'string' ? inner.strategy : undefined,
+    as_of: typeof inner.as_of === 'string' ? inner.as_of : undefined,
+    positions: positions as HoldingsPosition[],
+  };
+}
+
+export function parseHoldingsFromToolResult(json: JsonRpcResponse): HoldingsPayload {
+  const text = json.result?.content?.[0]?.text;
+  if (!text) throw new Error('ext signal holdings: missing result.content[0].text');
+  return unwrapHoldingsPayload(JSON.parse(text) as unknown);
 }
 
 async function fetchStrategyHoldings(
@@ -151,7 +168,7 @@ async function fetchStrategyHoldings(
       method: 'tools/call',
       params: {
         name: 'get_holdings',
-        arguments: { name: strategyName },
+        arguments: { strategy_name: strategyName, name: strategyName },
       },
     },
     apiKey,

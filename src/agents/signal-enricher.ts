@@ -6,8 +6,8 @@
 
 import { getMomentumUniverseSymbols } from '../config/loaders.js';
 import { getDb } from '../db/index.js';
-import { type EnricherStats, TechnicalEnricher } from '../enrichers/index.js';
 import { enrichMomentumSignals } from '../enrichers/momentum-signals.js';
+import { type EnricherStats, TechnicalEnricher } from '../enrichers/technical/enricher.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 import { defaultIngestSymbolUniverse } from '../market/ingest-symbols.js';
@@ -42,7 +42,7 @@ export async function runSignalEnricher(opts: EnrichRunOptions = {}): Promise<En
   let momentumFactorSignalsWritten = 0;
 
   try {
-    const momentumUniverse = getMomentumUniverseSymbols({ fresh: true });
+    const momentumUniverse = getMomentumUniverseSymbols();
     const momSyms = opts.symbols?.length
       ? momentumUniverse.filter((s) => symbols.includes(s))
       : momentumUniverse;

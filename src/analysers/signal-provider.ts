@@ -24,175 +24,41 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { getDb } from '../db/index.js';
+import { FlowSignalReader, isFlowSignal } from './flow-signals.js';
+import {
+  FundamentalSignalReader,
+  isFundamentalSignal,
+  normalizeFundamentalForScreen,
+} from './fundamental-signals.js';
+import { TechnicalSignalReader } from './technical-signals.js';
+
+export { normalizeFundamentalForScreen };
 
 export interface SignalProvider {
   /** Returns the value, or null if the signal isn't available. */
   get(symbol: string, date: string, signal: string): number | null;
 }
 
-const FUNDAMENTAL_COLUMNS = new Set([
-  'market_cap',
-  'pe',
-  'pb',
-  'peg',
-  'roe',
-  'roce',
-  'revenue_growth_yoy',
-  'profit_growth_yoy',
-  'debt_to_equity',
-  'promoter_holding_pct',
-  'promoter_holding_change_qoq',
-  'dividend_yield',
-]);
-
-const FLOW_SIGNALS = new Set([
-  'fii_net',
-  'dii_net',
-  'fii_net_5d_sum',
-  'dii_net_5d_sum',
-  'fii_net_streak_days',
-  'dii_net_streak_days',
-]);
-
 export class DbSignalProvider implements SignalProvider {
-  private readonly technical = new Map<string, Map<string, number>>();
-  private readonly fundamentals = new Map<string, Map<string, number>>();
-  private readonly flow = new Map<string, Map<string, number>>();
+  private readonly technical: TechnicalSignalReader;
+  private readonly fundamentals: FundamentalSignalReader;
+  private readonly flow: FlowSignalReader;
 
-  constructor(private readonly db: DatabaseType = getDb()) {}
+  constructor(db: DatabaseType = getDb()) {
+    this.technical = new TechnicalSignalReader(db);
+    this.fundamentals = new FundamentalSignalReader(db);
+    this.flow = new FlowSignalReader(db);
+  }
 
   get(symbol: string, date: string, signal: string): number | null {
-    if (FUNDAMENTAL_COLUMNS.has(signal)) {
-      return this.lookupFundamental(symbol, signal);
+    if (isFundamentalSignal(signal)) {
+      return this.fundamentals.get(symbol, signal);
     }
-    if (FLOW_SIGNALS.has(signal)) {
-      return this.lookupFlow(date, signal);
+    if (isFlowSignal(signal)) {
+      return this.flow.get(date, signal);
     }
-    return this.lookupTechnical(symbol, date, signal);
+    return this.technical.get(symbol, date, signal);
   }
-
-  // -------------------------------------------------------------------------
-  // Technical signals (signals table)
-  // -------------------------------------------------------------------------
-
-  private lookupTechnical(symbol: string, date: string, signal: string): number | null {
-    const row = this.loadTechnical(symbol, date);
-    const v = row.get(signal);
-    return v == null ? null : v;
-  }
-
-  private loadTechnical(symbol: string, date: string): Map<string, number> {
-    const key = `${symbol}|${date}`;
-    const cached = this.technical.get(key);
-    if (cached) return cached;
-
-    const rows = this.db
-      .prepare(`
-        SELECT name, value FROM signals
-        WHERE symbol = ? AND date <= ?
-          AND date >= date(?, '-90 days')
-          AND date = (SELECT MAX(s2.date) FROM signals s2
-                      WHERE s2.symbol = signals.symbol AND s2.date <= ?
-                        AND s2.date >= date(?, '-90 days'))
-      `)
-      .all(symbol, date, date, date, date) as Array<{ name: string; value: number }>;
-
-    const map = new Map<string, number>();
-    for (const r of rows) map.set(r.name, r.value);
-    this.technical.set(key, map);
-    return map;
-  }
-
-  // -------------------------------------------------------------------------
-  // Fundamentals
-  // -------------------------------------------------------------------------
-
-  private lookupFundamental(symbol: string, column: string): number | null {
-    const row = this.loadFundamentals(symbol);
-    const v = row.get(column);
-    return v == null ? null : v;
-  }
-
-  private loadFundamentals(symbol: string): Map<string, number> {
-    const cached = this.fundamentals.get(symbol);
-    if (cached) return cached;
-
-    const row = this.db
-      .prepare(`
-        SELECT * FROM fundamentals WHERE symbol = ?
-        ORDER BY as_of DESC LIMIT 1
-      `)
-      .get(symbol) as Record<string, unknown> | undefined;
-
-    const map = new Map<string, number>();
-    if (row) {
-      for (const col of FUNDAMENTAL_COLUMNS) {
-        const v = row[col];
-        if (typeof v === 'number' && Number.isFinite(v)) map.set(col, v);
-      }
-    }
-    this.fundamentals.set(symbol, map);
-    return map;
-  }
-
-  // -------------------------------------------------------------------------
-  // Flow signals (derived from fii_dii table)
-  // -------------------------------------------------------------------------
-
-  private lookupFlow(date: string, signal: string): number | null {
-    const row = this.loadFlow(date);
-    const v = row.get(signal);
-    return v == null ? null : v;
-  }
-
-  private loadFlow(date: string): Map<string, number> {
-    const cached = this.flow.get(date);
-    if (cached) return cached;
-
-    const rows = this.db
-      .prepare(`
-        SELECT date, fii_net AS fiiNet, dii_net AS diiNet
-        FROM fii_dii
-        WHERE date <= ? AND segment = 'cash'
-        ORDER BY date DESC LIMIT 30
-      `)
-      .all(date) as Array<{ date: string; fiiNet: number; diiNet: number }>;
-
-    const map = new Map<string, number>();
-    if (rows.length > 0) {
-      const today = rows[0];
-      if (today) {
-        map.set('fii_net', today.fiiNet);
-        map.set('dii_net', today.diiNet);
-      }
-      const last5 = rows.slice(0, 5);
-      map.set(
-        'fii_net_5d_sum',
-        last5.reduce((s, r) => s + r.fiiNet, 0),
-      );
-      map.set(
-        'dii_net_5d_sum',
-        last5.reduce((s, r) => s + r.diiNet, 0),
-      );
-      map.set('fii_net_streak_days', streak(rows.map((r) => r.fiiNet)));
-      map.set('dii_net_streak_days', streak(rows.map((r) => r.diiNet)));
-    }
-    this.flow.set(date, map);
-    return map;
-  }
-}
-
-/**
- * Count of consecutive positive values from the start of the array.
- * Used to compute "FII has been net buyer for N consecutive sessions".
- */
-function streak(values: number[]): number {
-  let n = 0;
-  for (const v of values) {
-    if (v > 0) n++;
-    else break;
-  }
-  return n;
 }
 
 /**

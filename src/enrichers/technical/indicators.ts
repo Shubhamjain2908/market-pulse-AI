@@ -17,6 +17,14 @@ export interface Bar extends Ohlc {
   volume: number;
 }
 
+/** Arithmetic mean of a numeric array. Returns NaN for empty arrays. */
+export function mean(values: number[]): number {
+  if (values.length === 0) return Number.NaN;
+  let s = 0;
+  for (const v of values) s += v;
+  return s / values.length;
+}
+
 /** Simple moving average. */
 export function sma(values: number[], period: number): (number | null)[] {
   if (period <= 0) throw new Error('period must be > 0');

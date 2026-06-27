@@ -14,18 +14,12 @@ import {
 import { defaultIngestSymbolUniverse } from '../market/ingest-symbols.js';
 import { listTradingDaysBackward } from '../market/trading-days.js';
 import type { Fii5dTrend, RegimeSignals } from '../types/regime.js';
+import { mean } from './technical/indicators.js';
 
 const EXCLUDED_FROM_BREADTH = new Set<string>([
   ...BENCHMARK_QUOTE_SYMBOLS,
   ...GLOBAL_MACRO_QUOTE_SYMBOLS,
 ]);
-
-function mean(values: number[]): number {
-  if (values.length === 0) return Number.NaN;
-  let s = 0;
-  for (const v of values) s += v;
-  return s / values.length;
-}
 
 function scoreNiftyVsSma200(pct: number): number {
   if (pct > 3) return 2;

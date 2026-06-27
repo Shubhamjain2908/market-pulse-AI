@@ -202,10 +202,8 @@ function sliceWindowEndingAt(all: OHLCVBar[], date: string, len: number): OHLCVB
 
 export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTrade[] {
   const cfg = loadMomentumConfig();
-  const sectorMap = loadSectorMap({ fresh: true });
-  const universeRaw = (opts.universe ?? getMomentumUniverseSymbols({ fresh: true })).map((s) =>
-    s.toUpperCase(),
-  );
+  const sectorMap = loadSectorMap();
+  const universeRaw = (opts.universe ?? getMomentumUniverseSymbols()).map((s) => s.toUpperCase());
   const universe = filterOptionAUniverse(
     universeRaw,
     opts.from,

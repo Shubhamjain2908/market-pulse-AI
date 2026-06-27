@@ -15,28 +15,24 @@
  *   mp sentiment         Score news headlines via LLM
  *   mp thesis            Generate AI theses for top-signal stocks
  *   mp evaluate           Mark outcomes for open paper trades vs EOD quotes
- *   mp run-all           Full pipeline (ingest → enrich → regime → screen → thesis → brief)
+ *   mp run-all           Alias for full daily workflow (portfolio sync + all stages + brief)
  *   mp daily             One-shot: full pipeline + portfolio analysis (recommended)
  *   mp sync-sectors      Cache Yahoo sector/industry in `symbols` (for portfolio sector rollup)
  *   mp kite-login        Refresh Zerodha Kite Connect access_token (run daily)
- *   mp kite-verify       GET portfolio/holdings — verify API key + access_token (same as sync)
  *   mp portfolio-sync    Pull holdings from Kite (or manual) into the DB
  *   mp portfolio-analyse Run LLM-driven HOLD/ADD/TRIM/EXIT analysis per holding
  *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
  *   mp schedule          Start croner jobs (08:45 / 16:30 weekdays, Sat 08:00, Sun 06:00 earnings)
- *   mp llm-smoke         Quick live LLM text+JSON sanity check for current provider
  *   mp ext-signal-smoke  Live ext-signal ingest + portfolio overlap report
+ *   mp fundamental-screen-audit  quality/dividend screen bottleneck audit
+ *   mp ext-signal-cross-ref  ext signals vs watchlist/momentum/portfolio overlap
  *   mp doctor            Print runtime/config diagnostics
  *   mp regime            Full regime agent (classify + LLM narrative → regime_daily)
- *   mp regime:classify   Deterministic regime only (narrative null)
  *   mp regime:gate-summary  Print allowed strategies for today's regime
- *   mp regime-signals    Print regime inputs + scores for a date (validation)
  * Run `mp --help` or `mp <cmd> --help` for full options.
  */
 
 import { Command } from 'commander';
-import { z } from 'zod';
-import { runBacktester } from './agents/backtester.js';
 import { runBriefingComposer } from './agents/briefing-composer.js';
 import { runDailyIngestor } from './agents/daily-ingestor.js';
 import { runDailyWorkflow } from './agents/daily-workflow.js';
@@ -47,8 +43,8 @@ import { runRegimeAgent } from './agents/regime-agent.js';
 import { runSignalEnricher } from './agents/signal-enricher.js';
 import { runStockScreener } from './agents/stock-screener.js';
 import { generateTheses } from './agents/thesis-generator.js';
-import { runRegimeClassifier } from './analysers/regime-classifier.js';
-import { deliverBriefing } from './briefing/index.js';
+import { runBacktest } from './backtest/harness.js';
+import { deliverBriefing } from './briefing/dispatch.js';
 import { config } from './config/env.js';
 import { APP_NAME, APP_VERSION } from './constants.js';
 import {
@@ -59,12 +55,9 @@ import {
   listAllowedGatesForRegime,
   migrate,
 } from './db/index.js';
-import { computeRegimeSignals } from './enrichers/regime-signals.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
-import { KiteApiError, KiteClient } from './ingestors/kite/client.js';
-import { getLlmProvider } from './llm/index.js';
 import { logger } from './logger.js';
 import {
   defaultIngestSymbolUniverse,
@@ -75,7 +68,9 @@ import { syncSymbolSectorsFromYahoo } from './market/yahoo-sectors.js';
 import { runMomentumRanker } from './rankers/momentum-ranker.js';
 import { startScheduler } from './scheduler/market-scheduler.js';
 import { runEvaluatePaperTrades } from './scripts/evaluate-trades.js';
+import { runExtSignalCrossRef } from './scripts/ext-signal-cross-ref.js';
 import { runExtSignalSmoke } from './scripts/ext-signal-smoke.js';
+import { runFundamentalScreenAudit } from './scripts/fundamental-screen-audit.js';
 import {
   runMomentumRebalance,
   toMomentumRebalanceBriefingSummary,
@@ -96,17 +91,6 @@ program
   .action(async () => {
     const result = migrate();
     logger.info({ ...result }, 'migrations done');
-    closeDb();
-  });
-
-program
-  .command('regime-signals')
-  .description('print regime signal inputs + weighted scores for validation (Phase 1)')
-  .action(async () => {
-    ensureDb();
-    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
-    const signals = computeRegimeSignals(getDb(), date);
-    console.log(JSON.stringify(signals, null, 2));
     closeDb();
   });
 
@@ -139,21 +123,6 @@ program
         2,
       ),
     );
-    closeDb();
-  });
-
-program
-  .command('regime:classify')
-  .description('deterministic regime only → regime_daily (narrative null; for backfill)')
-  .action(async () => {
-    ensureDb();
-    const date = optionalCliIsoDate(program.opts().date);
-    const result = runRegimeClassifier({ date });
-    logger.info(
-      { regime: result.regime, rawRegime: result.rawRegime, crisis: result.crisisOverride },
-      'regime classified (deterministic)',
-    );
-    console.log(JSON.stringify(result, null, 2));
     closeDb();
   });
 
@@ -254,6 +223,7 @@ program
   .action(async (opts: { symbols?: string }) => {
     ensureDb();
     const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+    const db = getDb();
     const universe = opts.symbols
       ?.split(',')
       .map((s) => s.trim())
@@ -261,6 +231,7 @@ program
       .map((s) => s.toUpperCase());
     const result = runMomentumRanker({
       asOf: date,
+      db,
       universe: universe?.length ? universe : undefined,
     });
     logger.info(result, 'momentum-rank complete');
@@ -347,7 +318,7 @@ program
   .option('-n, --screen <name>', 'restrict to a single screen by name')
   .action(async (opts: { start: string; end: string; holdDays: string; screen?: string }) => {
     ensureDb();
-    const summary = await runBacktester({
+    const summary = runBacktest({
       startDate: opts.start,
       endDate: opts.end,
       holdDays: Number(opts.holdDays) || 10,
@@ -462,24 +433,19 @@ program
 program
   .command('brief')
   .description('stage 4: compose + deliver the daily briefing')
-  .option(
-    '--delivery <method>',
-    "override delivery method ('file' | 'email' | 'slack' | 'telegram')",
-  )
+  .option('--delivery <method>', "override delivery method ('file' | 'email')")
   .option('--skip-ai', 'skip LLM narrative generation in the briefing')
-  .action(
-    async (opts: { delivery?: 'file' | 'email' | 'slack' | 'telegram'; skipAi?: boolean }) => {
-      ensureDb();
-      const date = optionalCliIsoDate(program.opts().date);
-      const result = await runBriefingComposer({
-        date,
-        delivery: opts.delivery,
-        skipAi: opts.skipAi,
-      });
-      await deliverBriefing(result.html, result.date, opts.delivery ?? config.BRIEFING_DELIVERY);
-      closeDb();
-    },
-  );
+  .action(async (opts: { delivery?: 'file' | 'email'; skipAi?: boolean }) => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date);
+    const result = await runBriefingComposer({
+      date,
+      delivery: opts.delivery,
+      skipAi: opts.skipAi,
+    });
+    await deliverBriefing(result.html, result.date, opts.delivery ?? config.BRIEFING_DELIVERY);
+    closeDb();
+  });
 
 program
   .command('evaluate')
@@ -495,71 +461,29 @@ program
 
 program
   .command('run-all')
-  .description(
-    'run full pipeline: ingest -> enrich -> regime -> gated screen -> sentiment -> thesis -> brief',
-  )
+  .description('alias for daily: full workflow + portfolio sync + all pipeline stages + briefing')
   .option('--skip-ai', 'skip all LLM stages (sentiment, thesis, narrative)')
   .action(async (opts: { skipAi?: boolean }) => {
     ensureDb();
     const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
-    const closure = getMarketClosure(date);
-    if (closure) {
-      const result = await runBriefingComposer({
-        date,
-        skipAi: true,
-        marketClosure: closure,
-        delivery: config.BRIEFING_DELIVERY,
-      });
-      await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
-      logger.info(
-        { date: result.date, delivery: result.delivery, holiday: closure.label },
-        'pipeline complete (market closed)',
-      );
-      closeDb();
-      return;
-    }
-
-    await runDailyIngestor({ date });
-    await runSignalEnricher({ date });
-    const regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
-    await runStockScreener({ date, regime: regimeAgent.regime });
-
-    let thesisRun:
-      | {
-          generated: number;
-          failed: number;
-          candidateCount: number;
-          eligibleUniverseSize: number;
-          watchlistSize: number;
-        }
-      | undefined;
-
-    if (!opts.skipAi) {
-      const sentimentResult = await enrichSentiment();
-      logger.info(sentimentResult, 'sentiment scoring done');
-
-      const thesisResult = await generateTheses({ date, regime: regimeAgent.regime });
-      thesisRun = {
-        generated: thesisResult.generated,
-        failed: thesisResult.failed,
-        candidateCount: thesisResult.candidateCount,
-        eligibleUniverseSize: thesisResult.eligibleUniverseSize,
-        watchlistSize: thesisResult.watchlistSize,
-      };
-      logger.info(
-        { generated: thesisResult.generated, failed: thesisResult.failed },
-        'thesis generation done',
-      );
-    }
-
-    const result = await runBriefingComposer({
+    const result = await runDailyWorkflow({
       date,
       skipAi: opts.skipAi,
-      thesisRun: opts.skipAi ? undefined : thesisRun,
-      delivery: config.BRIEFING_DELIVERY,
     });
     await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
-    logger.info({ date: result.date, delivery: result.delivery }, 'pipeline complete');
+    logger.info(
+      {
+        date: result.date,
+        delivery: config.BRIEFING_DELIVERY,
+        portfolioCount: result.portfolioCount,
+        thesesCount: result.thesesCount,
+        screenMatchesCount: result.screenMatchesCount,
+        alertCount: result.alertCount,
+        holidayMode: result.holidayMode ?? false,
+        marketClosureLabel: result.marketClosureLabel,
+      },
+      'run-all complete',
+    );
     closeDb();
   });
 
@@ -602,48 +526,6 @@ program
       { user: result.userId, name: result.userName, envPath: result.envPath },
       'kite access_token saved to .env',
     );
-  });
-
-program
-  .command('kite-verify')
-  .description(
-    'call GET portfolio/holdings using .env (same auth as portfolio-sync); prints errors from Kite',
-  )
-  .action(async () => {
-    const client = new KiteClient();
-    if (!client.hasSession()) {
-      logger.error(
-        'KITE_API_KEY and KITE_ACCESS_TOKEN must be set. Run `pnpm cli kite-login` first.',
-      );
-      process.exitCode = 1;
-      return;
-    }
-    try {
-      const holdings = await client.getHoldings();
-      logger.info(
-        {
-          apiBase: config.KITE_API_BASE,
-          holdingsCount: holdings.length,
-          sampleSymbols: holdings.slice(0, 5).map((h) => h.tradingsymbol),
-        },
-        'Kite verify OK — portfolio/holdings succeeded',
-      );
-    } catch (err) {
-      if (err instanceof KiteApiError) {
-        logger.error(
-          {
-            message: err.message,
-            errorType: err.errorType,
-            httpStatus: err.statusCode,
-            treatedAsExpiredToken: err.isTokenExpired(),
-          },
-          'Kite verify failed (same request portfolio-sync uses)',
-        );
-      } else {
-        logger.error({ err }, 'Kite verify failed');
-      }
-      process.exitCode = 1;
-    }
   });
 
 program
@@ -762,35 +644,36 @@ program
   });
 
 program
-  .command('llm-smoke')
-  .description('quick live LLM text + JSON smoke check for active provider')
-  .action(async () => {
-    const provider = getLlmProvider();
-    console.log(`provider: ${provider.name} (model=${provider.model})`);
+  .command('fundamental-screen-audit')
+  .description('audit quality_at_value / dividend_compounder pass rates and bottlenecks')
+  .action(() => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+    try {
+      const result = runFundamentalScreenAudit({ date });
+      console.log(JSON.stringify(result, null, 2));
+    } finally {
+      closeDb();
+    }
+  });
 
-    const text = await provider.generateText({
-      system: 'You are a concise assistant.',
-      user: 'Reply with exactly: PONG',
-      temperature: 0,
-      maxOutputTokens: 64,
-    });
-    console.log(`text: ${text.text}`);
-
-    const SmokeSchema = z.object({
-      ok: z.boolean(),
-      provider: z.string().min(1),
-    });
-
-    const json = await provider.generateJson({
-      system: 'Return strict JSON only. No markdown.',
-      user: 'Return JSON object: {"ok": true, "provider": "llm-smoke"}',
-      schema: SmokeSchema,
-      maxRetries: 0,
-      temperature: 0,
-      maxOutputTokens: 256,
-    });
-    console.log(`json: ${JSON.stringify(json.data)}`);
-    console.log('LLM smoke test passed.');
+program
+  .command('ext-signal-cross-ref')
+  .description('overlap ext_signal_holdings vs watchlist, momentum ranks, portfolio, paper trades')
+  .action(() => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+    try {
+      const result = runExtSignalCrossRef({ date });
+      console.log(JSON.stringify(result, null, 2));
+      if (result.summary.extSignalSymbols === 0) {
+        logger.warn(
+          'no ext_signal_holdings rows — run ext-signal-smoke after setting EXT_SIGNAL_* env vars',
+        );
+      }
+    } finally {
+      closeDb();
+    }
   });
 
 program
@@ -824,8 +707,7 @@ program
         },
         googleApplicationCredentials: redact(config.GOOGLE_APPLICATION_CREDENTIALS),
         smtp: redact(config.SMTP_USER),
-        slack: redact(config.SLACK_WEBHOOK_URL),
-        telegram: redact(config.TELEGRAM_BOT_TOKEN),
+
         extSignalEndpoint: redact(process.env.EXT_SIGNAL_ENDPOINT),
         extSignalApiKey: redact(process.env.EXT_SIGNAL_API_KEY),
         vertexProject: config.GOOGLE_VERTEX_PROJECT ? 'set' : 'missing',

@@ -1,9 +1,10 @@
 /**
- * Thesis generator agent. For each stock in the watchlist that has "interesting"
- * signals, assembles a data context (quotes, fundamentals, signals, recent news)
- * and asks the LLM to produce a structured Thesis.
+ * Thesis generator agent. For each screened or watchlisted name with interesting
+ * signals, assembles data context (quotes, fundamentals, signals, news) and asks
+ * the LLM for a structured Thesis.
  *
- * The output is persisted to the `theses` table and surfaced in the briefing.
+ * Candidate pool: today's `screens` hits ∪ watchlist, minus holdings and OPEN paper trades.
+ * The output is persisted to `theses` and surfaced in the briefing AI Picks section.
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
@@ -28,6 +29,7 @@ import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { type Thesis, ThesisSchema } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
+import { formatFundamentalsForLlm } from './portfolio-context.js';
 import { getLatestSignalsMap, getLatestSignalsMapsForSymbols } from './portfolio-trigger.js';
 
 const log = child({ component: 'thesis-generator' });
@@ -349,12 +351,45 @@ export interface ThesisGeneratorResult {
   failed: number;
   /** Candidates with score > 0 after ranking (before max-thesis cap). */
   candidateCount: number;
-  /** Watchlist symbols excluding current holdings and symbols with any OPEN paper trade. */
+  /** Candidate pool minus holdings and OPEN paper trades. */
   eligibleUniverseSize: number;
-  /** Raw watchlist symbol count for messaging when AI Picks is empty. */
+  /** Watchlist symbol count (screen hits may extend the candidate pool beyond this). */
   watchlistSize: number;
   /** AI-generated thesis rows from this run (may be empty when gated or no candidates). */
   theses: StoredThesis[];
+}
+
+/** Screen hits for the session plus watchlist — pool before already-owned filters. */
+export function resolveThesisCandidatePool(
+  date: string,
+  watchlist: string[],
+  db: DatabaseType,
+): string[] {
+  const set = new Set<string>();
+  for (const s of watchlist) set.add(s.toUpperCase());
+  const rows = db.prepare('SELECT DISTINCT symbol FROM screens WHERE date = ?').all(date) as Array<{
+    symbol: string;
+  }>;
+  for (const r of rows) set.add(r.symbol.toUpperCase());
+  return [...set];
+}
+
+/** Symbols eligible for AI Picks: candidate pool minus holdings and OPEN paper trades. */
+export function resolveThesisEligibleUniverse(
+  date: string,
+  watchlist: string[],
+  db: DatabaseType,
+): string[] {
+  const holdingSet = new Set(getLatestHoldings(db).map((h) => h.symbol.toUpperCase()));
+  const openPaperSet = new Set(getDistinctOpenPaperTradeSymbols(db));
+  return resolveThesisCandidatePool(date, watchlist, db).filter((s) => {
+    if (holdingSet.has(s)) return false;
+    if (openPaperSet.has(s)) {
+      log.debug({ symbol: s }, 'Skipping AI Thesis: Symbol already has an OPEN paper trade.');
+      return false;
+    }
+    return true;
+  });
 }
 
 export async function generateTheses(
@@ -364,19 +399,7 @@ export async function generateTheses(
 ): Promise<ThesisGeneratorResult> {
   const date = opts.date ?? isoDateIst();
   const watchlist = (opts.watchlist ?? loadWatchlist().symbols).map((s) => s.toUpperCase());
-  const holdingsUpper = getLatestHoldings(db).map((h) => h.symbol.toUpperCase());
-  const openPaperSymbolsUpper = getDistinctOpenPaperTradeSymbols(db);
-  const holdingSet = new Set(holdingsUpper);
-  const openPaperSet = new Set(openPaperSymbolsUpper);
-  /** AI Picks: watchlist names not in live portfolio and not already tracked as an OPEN paper trade. */
-  const universe = watchlist.filter((s) => {
-    if (holdingSet.has(s)) return false;
-    if (openPaperSet.has(s)) {
-      log.debug({ symbol: s }, 'Skipping AI Thesis: Symbol already has an OPEN paper trade.');
-      return false;
-    }
-    return true;
-  });
+  const universe = resolveThesisEligibleUniverse(date, watchlist, db);
   const maxTheses = opts.maxTheses ?? config.THESIS_MAX_PER_RUN;
 
   if (opts.regime != null && !isStrategyAllowed('ai_picks_generation', opts.regime, db)) {
@@ -531,7 +554,7 @@ interface Candidate {
 }
 
 /**
- * Ordered thesis-interest ranking for the thesis universe (typically watchlist ∩ ¬holdings).
+ * Ordered thesis-interest ranking for the eligible AI Picks universe.
  * Used by `generateTheses` and the briefing “why ranked #N” line.
  */
 export function getThesisRankMeta(
@@ -642,7 +665,7 @@ function loadExtSignalConfig(): ExtSignalProviderFile {
   return extSignalConfigCache;
 }
 
-/** Tests only — separate from `loaders.clearConfigCache()`. */
+/** Tests only — separate from the loaders config cache. */
 export function resetExtSignalConfigCacheForTests(): void {
   extSignalConfigCache = null;
 }
@@ -745,10 +768,8 @@ export function buildStockContext(
 
   if (fundamentals) {
     sections.push('\n## Fundamentals');
-    for (const [k, v] of Object.entries(fundamentals)) {
-      if (v != null && k !== 'symbol' && k !== 'ingested_at' && k !== 'source') {
-        sections.push(`${k}: ${v}`);
-      }
+    for (const line of formatFundamentalsForLlm(fundamentals)) {
+      sections.push(line);
     }
   }
 

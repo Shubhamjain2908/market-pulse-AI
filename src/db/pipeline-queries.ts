@@ -2,7 +2,7 @@
  * Pipeline stage audit trail (`pipeline_runs`). Wired from daily-workflow in a later PR.
  */
 
-import type { Database as DatabaseType, Statement } from 'better-sqlite3';
+import type { Database as DatabaseType } from 'better-sqlite3';
 
 import { child } from '../logger.js';
 import { getDb } from './connection.js';
@@ -26,30 +26,21 @@ const INSERT_PIPELINE_STAGE_SQL = `
   )
 `;
 
-const SELECT_FAILED_REQUIRED_STAGE_SQL = `
-  SELECT 1 AS found FROM pipeline_runs
-  WHERE run_date = ? AND status = 'failed'
-    AND stage IN ('enrich', 'regime', 'screen')
-  LIMIT 1
+/** Latest row per required stage — retries must not leave stale failures. */
+const LATEST_REQUIRED_STAGE_STATUS_SQL = `
+  SELECT stage, status FROM (
+    SELECT stage, status,
+      ROW_NUMBER() OVER (PARTITION BY stage ORDER BY id DESC) AS rn
+    FROM pipeline_runs
+    WHERE run_date = ? AND stage IN ('enrich', 'regime', 'screen')
+  )
+  WHERE rn = 1
 `;
 
-type PipelineStmts = {
-  insertPipelineStage: Statement;
-  selectFailedRequiredStage: Statement;
-};
-
-const pipelineStmtsByDb = new WeakMap<DatabaseType, PipelineStmts>();
-
-function pipelineStmts(db: DatabaseType): PipelineStmts {
-  let stmts = pipelineStmtsByDb.get(db);
-  if (!stmts) {
-    stmts = {
-      insertPipelineStage: db.prepare(INSERT_PIPELINE_STAGE_SQL),
-      selectFailedRequiredStage: db.prepare(SELECT_FAILED_REQUIRED_STAGE_SQL),
-    };
-    pipelineStmtsByDb.set(db, stmts);
-  }
-  return stmts;
+export interface PipelineHealth {
+  degraded: boolean;
+  failedRequiredStages: string[];
+  canShowRegimeCard: boolean;
 }
 
 export function recordPipelineStage(
@@ -62,7 +53,7 @@ export function recordPipelineStage(
   },
   db: DatabaseType = getDb(),
 ): void {
-  pipelineStmts(db).insertPipelineStage.run({
+  db.prepare(INSERT_PIPELINE_STAGE_SQL).run({
     runDate: args.runDate,
     stage: args.stage,
     status: args.status,
@@ -83,9 +74,21 @@ export function recordPipelineStage(
   }
 }
 
-export function hasFailedRequiredStage(runDate: string, db: DatabaseType = getDb()): boolean {
-  const row = pipelineStmts(db).selectFailedRequiredStage.get(runDate) as
-    | { found: number }
-    | undefined;
-  return row !== undefined;
+export function getPipelineHealth(runDate: string, db: DatabaseType = getDb()): PipelineHealth {
+  const rows = db.prepare(LATEST_REQUIRED_STAGE_STATUS_SQL).all(runDate) as Array<{
+    stage: string;
+    status: PipelineStatus;
+  }>;
+  const latest = new Map(rows.map((row) => [row.stage, row.status]));
+  const failedRequiredStages = rows
+    .filter((row) => row.status === 'failed')
+    .map((row) => row.stage)
+    .sort();
+  const degraded = failedRequiredStages.length > 0;
+
+  return {
+    degraded,
+    failedRequiredStages,
+    canShowRegimeCard: !degraded || latest.get('regime') === 'success',
+  };
 }

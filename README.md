@@ -14,9 +14,9 @@ short, actionable briefing before market open.
 > `regime_daily` + `regime_strategy_gate` tables, per-screen and per-agent
 > gating with size multipliers, regime card + change banner + rule-based FII/DII
 > flow attribution (5-session cash, no extra LLM) in the HTML briefing,
-> and wiring in `pnpm daily` / `pnpm run-all` before screening and thesis
+> and wiring in `pnpm daily` / `pnpm cli run-all` before screening and thesis
 > generation. **Momentum screener (multi-factor)** shipped: `mom_*` signals +
-> weekly ranker / rebalance into `paper_trades` (`momentum_mf`), regime-gated
+> daily rank refresh / weekly rebalance into `paper_trades` (`momentum_mf`), regime-gated
 > entries with sector cap + earnings blackout, HTML **Momentum screener** card
 > (rank decay + open-book monitor), thesis/portfolio context that **merges latest
 > values per signal name** (so weekday technical enrich does not drop stale
@@ -109,7 +109,7 @@ flowchart LR
     Regime --> Analyse["Stage 3 - Analyser<br/>gated screens + Thesis LLM"]
     Analyse --> ScreensDB[("screens table")]
     ScreensDB --> Brief["Stage 4 - Briefing Composer<br/>(LLM HTML + regime card)"]
-    Brief --> Deliver{{"file / email / slack / telegram"}}
+    Brief --> Deliver{{"file / email"}}
     LlmAbstraction["LlmProvider<br/>(Cursor / Anthropic / Vertex / OpenAI)"] -.-> Regime
     LlmAbstraction -.-> Analyse
     LlmAbstraction -.-> Brief
@@ -119,7 +119,7 @@ Two abstractions keep the system portable:
 
 | Interface       | Purpose                                                   | Default                                           |
 | --------------- | --------------------------------------------------------- | ------------------------------------------------- |
-| `Ingestor`      | Pluggable data sources (`NSE`, `Yahoo`, `Screener`, `Kite`) | Yahoo + NSE + Screener + RSS (free tier)          |
+| `Ingestor`      | Fixed data source adapters for daily ingest (`NSE`, `Yahoo`, `Screener`, `RSS`) | Yahoo + NSE + Screener + RSS (free tier)          |
 | `LlmProvider`   | Pluggable LLM backend (`cursor-agent`, `anthropic`, `vertex`, `openai`) | `cursor-agent` (uses your existing subscription)  |
 
 ---
@@ -164,8 +164,9 @@ pnpm regime:seed-gates
 
 # 7. The single-command morning run
 pnpm daily
-# -> portfolio sync + stop-loss (optional) → ingest → enrich → regime agent →
-#    gated screen → sentiment → gated AI thesis → portfolio analysis → HTML briefing
+# -> portfolio sync + stop-loss (optional) → ingest → corporate actions → enrich →
+#    yahoo-snapshot → momentum-rank → ext-signal → inav → regime agent →
+#    gated screen → sentiment → gated AI thesis → portfolio analysis → evaluate → HTML briefing
 # -> writes briefings/briefing-YYYY-MM-DD.html with regime card + "My Portfolio"
 #    section for every holding (HOLD / ADD / TRIM / EXIT + reason).
 
@@ -208,7 +209,7 @@ pnpm cli momentum-rebalance --skip-thesis  # skip LLM entry thesis (paper sizing
 pnpm cli momentum-rebalance --brief         # after rebalance: compose skip-AI briefing + rebalance summary + deliver (same idea as Sunday scheduler)
 
 # One-shot pipelines
-pnpm cli run-all           # ingest → enrich → regime → gated screen → sentiment → thesis → brief
+pnpm cli run-all           # alias for daily: full workflow + Kite portfolio sync + per-holding LLM analysis
 pnpm cli daily             # full workflow + Kite portfolio sync + per-holding LLM analysis
 
 # Phase 5 — Zerodha Kite + portfolio
@@ -228,13 +229,14 @@ pnpm cli schedule          # start built-in croner schedule (Asia/Kolkata):
 pnpm cli schedule --run-now
 
 pnpm cli doctor            # config diagnostics (no secrets)
+pnpm cli ext-signal-smoke  # live ftInvstr holdings ingest + overlap smoke
+pnpm cli fundamental-screen-audit  # quality_at_value / dividend_compounder gate bottlenecks
+pnpm cli ext-signal-cross-ref      # ext_signal_holdings vs watchlist, mom_rank, portfolio
 
 # Phase 6 — Market regime filter
-pnpm regime-signals        # print signal inputs + score buckets (validation)
-pnpm regime                # classify + LLM narrative (or templated fallback) → regime_daily
-pnpm regime --no-narrative # skip LLM; templated fallback narrative only (still upserts regime_daily)
-pnpm regime:classify       # deterministic classification → regime_daily (narrative null)
-pnpm regime:gate-summary   # allowed strategies + multipliers for regime on -d date
+pnpm cli regime                # classify + LLM narrative (or templated fallback) → regime_daily
+pnpm cli regime --no-narrative # skip LLM; templated fallback narrative only (still upserts regime_daily)
+pnpm cli regime:gate-summary   # allowed strategies + multipliers for regime on -d date
 pnpm regime:seed-gates      # upsert config/strategy-gates.json → regime_strategy_gate
 pnpm regime:backfill        # historical regime_daily backfill script
 ```
@@ -308,7 +310,7 @@ sources transparently:
 | Source                    | Signals                                                                      |
 | ------------------------- | ---------------------------------------------------------------------------- |
 | `signals` table (technical + optional momentum) | Technical (`pnpm cli enrich`): `close`, `sma_20`, `sma_50`, `sma_200`, `ema_9`, `ema_21`, `rsi_14`, `atr_14`, `volume_ratio_20d`, `pct_from_52w_high`, `pct_from_52w_low`. **Momentum factors + blackout** (same enrich path, momentum-universe symbols): `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`, `mom_earnings_blackout`. **Momentum rank** (`pnpm cli momentum-rank`): `mom_rank`, `mom_composite_score`, `mom_false_flag`, `mom_rank_excluded`. |
-| `fundamentals` table      | `pe`, `pb`, `peg`, `roe`, `roce`, `debt_to_equity`, `revenue_growth_yoy`, `profit_growth_yoy`, `promoter_holding_pct`, `promoter_holding_change_qoq`, `dividend_yield`, `market_cap` |
+| `fundamentals` table      | `pe`, `pb`, `peg`, `roe`, `roce`, `debt_to_equity`, `revenue_growth_yoy`, `profit_growth_yoy`, `promoter_holding_pct`, `promoter_holding_change_qoq`, `dividend_yield`, `market_cap`. **Unit mix:** Yahoo snapshot stores `roe` / `roce` / `dividend_yield` as decimals (e.g. `0.18`); Screener uses percent (`18`). [`normalizeFundamentalForScreen`](src/analysers/signal-provider.ts) scales `|v| < 1` × 100 at read time so DSL thresholds match. |
 | `fii_dii` table (computed) | `fii_net`, `dii_net`, `fii_net_5d_sum`, `dii_net_5d_sum`, `fii_net_streak_days`, `dii_net_streak_days` |
 
 Operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `between` (tuple value),
@@ -340,14 +342,13 @@ configured screen against historical EOD data:
 
 **Live `regime_daily` vs backtest proxy** — Full classifier (`runRegimeClassifier` / `computeRegimeSignals`) uses VIX, FII, and `signals` breadth; persisted labels use **3-session** agreement (`applyPersistence`). The Option A **proxy** intentionally diverges for runnable backtests without historical enrich. Audit persisted rows: `pnpm exec tsx scripts/audit-regime-history.mts --from … --to …`.
 
-### Switching the market data provider
+### Kite / live portfolio settings
 
-Set `MARKET_DATA_PROVIDER`:
+`daily`/`ingest` always use the fixed free ingestors (`YahooIngestor`, `NseIngestor`, `ScreenerIngestor`, `RssNewsIngestor`).
+Set `MARKET_DATA_PROVIDER` only for live Kite-backed paths:
 
-- `free` (default) — NSE public JSON endpoints + Yahoo Finance + Screener.in
-- `kite` — adds Zerodha Kite Connect for live portfolio + LTP. EOD
-  historical data still comes from Yahoo (Kite's historical API is a
-  paid add-on we don't depend on).
+- `free` (default) — no Kite live portfolio/LTP; daily ingest still stays on Yahoo/NSE/Screener/RSS.
+- `kite` — enables Zerodha Kite Connect for live portfolio + LTP. EOD historical data still comes from Yahoo (Kite's historical API is a paid add-on we don't depend on).
 
 ### Connecting Zerodha Kite (Phase 5)
 
@@ -365,7 +366,7 @@ To enable it:
    configured.
 2. Fill these into `.env`:
    ```
-   MARKET_DATA_PROVIDER=kite
+   MARKET_DATA_PROVIDER=kite   # live portfolio/LTP only; daily ingest stays on Yahoo/NSE/Screener/RSS
    PORTFOLIO_SOURCE=kite
    KITE_API_KEY=...
    KITE_API_SECRET=...
@@ -392,13 +393,22 @@ To enable it:
    Starts recurring jobs at 08:45 / 16:30 on weekdays and 08:00 on
    Saturdays (IST), using your configured delivery channel.
 
+   **Kite token auto-login (Oracle VM only):** when your Kite redirect URL
+   points at the same host as `kite-auth` (e.g. duckdns), run
+   `pnpm kite-auto-login:schedule` or the PM2 `kite-auto-login` app at
+   08:30 IST Mon–Fri — 15 minutes before the pipeline. Requires
+   `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`, and
+   `KITE_REDIRECT_URL` in `.env`. Failures are logged only; the main
+   scheduler keeps running. Fall back to `pnpm kite-login` manually if
+   auto-login fails before 08:45.
+
 If you'd rather skip Kite entirely, leave `PORTFOLIO_SOURCE=manual` (the
 default) and edit `config/portfolio.json`. Same downstream output —
 just no live LTPs or day-change tracking.
 
 ### Intraday scanning (`mp scan`)
 
-`pnpm scan` does a one-shot Kite quote fetch for the union of your
+`pnpm cli scan` does a one-shot Kite quote fetch for the union of your
 watchlist and current holdings, persists each tick to `intraday_quotes`,
 and flags any symbol whose intraday move exceeds `--threshold` (default
 `3` percent) as a live alert. Cron-friendly — the command exits on
@@ -452,7 +462,7 @@ A **meta-layer** on top of the existing pipeline: each open session gets a singl
 - **Screen engine** ([`src/analysers/engine.ts`](src/analysers/engine.ts)): skips screens disallowed for the current regime; applies size multiplier into persisted match metadata (`__regime_meta`).
 - **Stock screener** passes through the active regime; **thesis generator** skips `ai_picks_generation` when the gate says so ([`src/agents/thesis-generator.ts`](src/agents/thesis-generator.ts)).
 - **Risk tooling** (`portfolio_exit_signals`, `trailing_stop_update`) stays on across regimes per config.
-- **Briefing**: [`src/briefing/regime-card.ts`](src/briefing/regime-card.ts) renders a card + optional change banner; [`src/briefing/composer.ts`](src/briefing/composer.ts) loads `regime_daily` for the briefing session date (including weekend/holiday handling via last open session). **Pipeline audit:** each `daily-workflow` stage writes to `pipeline_runs`; if `enrich`, `regime`, or `screen` failed today, the brief degrades (banner only — screens, AI picks, portfolio, and momentum omitted; regime card shown only when regime succeeded). Email delivery sets `briefings.delivered_at` only after SMTP accepts ≥1 recipient.
+- **Briefing**: [`src/briefing/regime-card.ts`](src/briefing/regime-card.ts) renders a card + optional change banner; [`src/briefing/composer.ts`](src/briefing/composer.ts) loads `regime_daily` for the briefing session date (including weekend/holiday handling via last open session). **Pipeline audit:** each `daily-workflow` stage appends to `pipeline_runs`; `getPipelineHealth` uses the **latest** row per required stage (`enrich`, `regime`, `screen`) so a successful retry clears degraded mode. When any of those stages' latest status is `failed`, the brief degrades (banner — screens, AI picks, portfolio, and momentum omitted; regime card shown only when regime's latest status succeeded). `brief --skip-ai` still renders persisted theses from `theses` when present. Email delivery sets `briefings.delivered_at` only after SMTP accepts ≥1 recipient.
 - **FII/DII flow attribution** (rule-based, no LLM): [`getFlowAttribution`](src/db/queries.ts) sums the last up to **five cash-segment trading sessions** on or before the briefing date; [`classifyFlowAttribution`](src/briefing/composer.ts) maps rolling FII/DII nets (₹ crore) to **INSTITUTIONAL_ROTATION**, **BROAD_EXIT**, or **FII_ACCUMULATION** (thresholds in composer). **BALANCED** and windows with **&lt; 3 sessions** are suppressed. The block sits in the regime card **between the score tiles and the regime narrative**, with table + inline styles for email (juice-inlined from [`renderBriefing`](src/briefing/template.ts)).
 - **ETF iNAV pricing** (rule-based, fail-open): [`fetchInavSnapshots`](src/ingestors/inav-fetcher.ts) runs after Yahoo snapshot ingest (before regime classify), reads NSE [`/api/etf`](https://www.nseindia.com/api/etf) for symbols in [`config/etf-exclusions.json`](config/etf-exclusions.json), persists [`inav_snapshots`](src/db/migrations/0018_inav_snapshots.sql). Briefing **ETF Pricing** section ([`etf-pricing-card.ts`](src/briefing/etf-pricing-card.ts)) shows **WARN** when held ETF premium **&gt; 0.5%**, **NOTE** when discount **&gt; 0.25%**; mid-band and missing NSE data produce no section.
 - **COMEX gold COT** (weekly, fail-open): [`pnpm cot:gold`](scripts/cot-gold-fetch.ts) pulls CFTC disaggregated [`f_disagg.txt`](https://www.cftc.gov/dea/newcot/f_disagg.txt) (COMEX / `CMX` gold; managed-money as non-commercial proxy; columns resolved by CFTC header names). Stores [`cot_gold`](src/db/migrations/0019_cot_gold.sql). Regime card shows one line when **CROWDED_LONG** (managed-money net/OI **&gt; 35%**) or **CROWDED_SHORT** (managed-money **net short**, `mm_net &lt; 0`); **NEUTRAL** suppressed. Scheduled **Sunday 07:45 IST** before momentum rebalance (briefing-only; momentum rebalance does not read `cot_gold`).
@@ -462,7 +472,7 @@ A **meta-layer** on top of the existing pipeline: each open session gets a singl
 
 **Orchestration**
 
-- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) and `pnpm cli run-all` run **ingest → enrich → regime → gated screen → gated thesis → paper-trade evaluate → briefing** (stage outcomes in `pipeline_runs`).
+- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) is the canonical one-shot workflow used by both `pnpm cli daily` and `pnpm cli run-all`: optional portfolio sync + stop-loss → ingest → corporate actions → enrich → yahoo-snapshot → momentum-rank → ext-signal → iNAV → regime → gated screen → gated thesis → paper-trade evaluate → briefing; portfolio analysis runs when AI and portfolio sync are enabled. Stage outcomes are persisted in `pipeline_runs`.
 
 ---
 
@@ -481,7 +491,7 @@ A **regime-gated** momentum sleeve that ranks a configurable universe, writes **
 - **Ranker** — `pnpm cli momentum-rank` → [`src/rankers/momentum-ranker.ts`](src/rankers/momentum-ranker.ts) reads those factor rows for `asOf` and writes **`mom_rank`**, `mom_composite_score`, **`mom_false_flag`**, `mom_rank_excluded`.
 - **Rebalance** — `pnpm cli momentum-rebalance` → [`src/strategies/momentum-rebalance.ts`](src/strategies/momentum-rebalance.ts): optional embedded ranker pass, liquidations when regime ∉ gate, rank-decay exits, new entries with sector cap + blackout checks + **`mom_false_flag` hard-block** (`falseFlagBlocked` counter) + **`atr_14` required** (`atrMissingSkipped` when missing/≤0; no 2% proxy) + **cross-strategy dedup** (`crossStrategyBlocked` when another OPEN `paper_trades` row exists); optional LLM entry thesis (false-flag thesis confidence is clamped in-strategy when thesis runs).
 
-Shortcuts: `pnpm momentum:rank` / `pnpm momentum:rebalance` (wrappers around the same CLI commands).
+Use `pnpm cli momentum-rank` / `pnpm cli momentum-rebalance` for manual runs (Sunday scheduler uses the same commands).
 
 - **Daily workflow** — [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) runs Yahoo momentum earnings refresh on **Sunday** IST ([`syncMomentumEarningsCalendarFromYahoo`](src/ingestors/yahoo/earnings-ingestor.ts) → [`replaceMomentumEarningsCalendarForSymbol`](src/db/momentum-queries.ts); **empty Yahoo response retains** existing `earnings_calendar` rows); [**`applyMomentumRegimeGateExits`**](src/strategies/momentum-rebalance.ts) after regime classification on trading days.
 
@@ -489,7 +499,7 @@ Shortcuts: `pnpm momentum:rank` / `pnpm momentum:rebalance` (wrappers around the
 
 **Signal snapshots (important)**
 
-Technical enrich runs **daily**; momentum ranks are typically **weekly** (rebalance session). Lookups use **`getLatestSignalsMap`** ([`src/agents/portfolio-trigger.ts`](src/agents/portfolio-trigger.ts)): **latest row per `signals.name`** on or before the as-of date (window function), then merged into one map. That way **`mom_rank` / `mom_false_flag` do not disappear** after a newer RSI-only session row is written.
+Technical enrich and momentum rank refresh run **daily** in the main workflow; `momentum_mf` entries still rebalance weekly. Lookups use **`getLatestSignalsMap`** ([`src/agents/portfolio-trigger.ts`](src/agents/portfolio-trigger.ts)): **latest row per `signals.name`** on or before the as-of date (window function), then merged into one map. That way mixed-frequency signals stay coherent when a stage is skipped or retried.
 
 **Thesis generator**
 
@@ -498,7 +508,7 @@ Technical enrich runs **daily**; momentum ranks are typically **weekly** (rebala
 
 **Portfolio analyser**
 
-- [`applyMomentumPortfolioGuardrails`](src/agents/portfolio-analyser.ts): **`mom_rank` > exit threshold** → **EXIT** (unless already EXIT); **`mom_false_flag === 1`** downgrades **ADD** → **HOLD** with an explicit guardrail suffix. Uses the same merged signal map as lite/full paths.
+- [`applyStrategyPortfolioGuardrails`](src/agents/portfolio-strategy-guardrails.ts): **`momentum_mf`** — `mom_rank > exit_rank_threshold` → **TRIM**; severe (`threshold + 5`) → **EXIT**; **`mom_false_flag === 1`** downgrades **ADD** → **HOLD**. **`quality_garp`** — fundamental deterioration (inverse gate flags) → **TRIM**/**EXIT**. **`catalyst_entry`** — hold window / post-earnings expiry → **TRIM**/**EXIT**. Entry origin from [`resolveHoldingEntrySource`](src/agents/portfolio-strategy-guardrails.ts). Overrides prefix `GUARDRAIL_OVERRIDE[...]` on `trigger_reason` (thesis text unchanged).
 
 **Briefing**
 
@@ -556,7 +566,7 @@ A **regime-gated**, long-horizon sleeve that combines Yahoo annual/snapshot fund
 
 Hard-null on `pe`, `pb`, `third_roe`, `latest_roce`, `debt_to_equity`, `peg`, `sma_50`, `close` blocks the symbol (guardrail). ETF list enforced; **no** `alreadyOwned` filter on the screener itself (thesis generator still skips held / open-paper symbols).
 
-**Refresh fundamentals:** `pnpm fundamentals:refresh` (Python annual backfill + screener + Yahoo snapshot). Coverage audit: `pnpm fundamentals:audit`.
+**Refresh fundamentals:** `pnpm fundamentals:refresh` (Python annual backfill + screener + Yahoo snapshot). Coverage audit: `pnpm fundamentals:audit`. Screen gate audit (watchlist vs full fundamentals universe, per-criterion pass counts): `pnpm cli fundamental-screen-audit -d YYYY-MM-DD`.
 
 **Universe:** live `cli screen` and backtest both evaluate all symbols with `yahoo_annual` rows (~241), not the watchlist. Funnel log (`data/quality_garp_funnel.jsonl`) records `universe_scope` per run.
 
@@ -639,7 +649,7 @@ End-to-end feature for **paper** positions with **`stop_type='trailing'`** (defa
 
 **`catalyst_entry`** rows use **`stop_type='fixed'`** instead — static levels only; see [Catalyst-driven entry](#catalyst-driven-entry-pre-earnings).
 
-**`AI_PICK` entry stops** ([`src/briefing/paper-trade-writer.ts`](src/briefing/paper-trade-writer.ts)): reject when LLM `stopLoss ≥ entryPrice` (`log.error`, no row); otherwise `effectiveStop = MAX(stopLoss, entry × 0.92)` with `log.warn` when the 8% hard floor binds (same discipline as `momentum_mf`).
+**`AI_PICK` entry stops** ([`src/briefing/ai-pick-stop.ts`](src/briefing/ai-pick-stop.ts), [`paper-trade-writer.ts`](src/briefing/paper-trade-writer.ts)): reject when LLM `stopLoss ≥ entryPrice` (`log.error`, no row); then require minimum distance `max(entry × 2%, ATR14 × 1)` and block when that minimum exceeds the 8% risk cap. Stops tighter than the minimum are widened (`ai_pick_stop_normalized`), and overly wide LLM stops are raised to the `entry × 0.92` hard floor with explicit `ai_pick_stop_floor_applied` audit logging.
 
 **Production parameters** (authoritative: [`config/momentum-config.json`](config/momentum-config.json), loaded via [`src/config/trailing-stop-sizing.ts`](src/config/trailing-stop-sizing.ts)):
 
@@ -660,8 +670,8 @@ Legacy open trades with `trailing_multiplier = 2.0` in DB are normalized to the 
 
 **Evaluation**
 
-- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) + [`src/scripts/trailing-stop-engine.ts`](src/scripts/trailing-stop-engine.ts) — branches on **`stop_type`**: **trailing** path uses config-driven mults (no inline 2.0/1.5/15%), bar walk from `source_date` to `asOf`, **incremental resume** from the last `trailing_stop_log` bar (non-`STOPPED_OUT`), idempotent log inserts; **fixed** path skips trailing math/logs and evaluates persisted `stop_loss` / `target` / `max_hold_days` under the same **circuit-breaker envelope** (gap-down skips SL/TP; gap-up suppresses fake `highest_close` only); Day-1 ATR latch uses [`nextOpenOnOrAfter`](src/market/trading-days.ts) when `source_date` is a non-session day; prior-close / corp-action lookups via [`getPrevClose`](src/db/queries.ts) / [`hasCorporateActionInRange`](src/db/queries.ts); **`pnpm cli evaluate`** / **`pnpm evaluate`** with **`--skip-ai`**
-- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` after the briefing is composed (same ordering as before)
+- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) + [`src/scripts/trailing-stop-engine.ts`](src/scripts/trailing-stop-engine.ts) — branches on **`stop_type`**: **trailing** path uses config-driven mults (no inline 2.0/1.5/15%), bar walk from `source_date` to `asOf`, **incremental resume** from the last `trailing_stop_log` bar (non-`STOPPED_OUT`), idempotent log inserts; **fixed** path skips trailing math/logs and evaluates persisted `stop_loss` / `target` / `max_hold_days` under the same **circuit-breaker envelope** (gap-down skips SL/TP; gap-up suppresses fake `highest_close` only); Day-1 ATR latch uses [`nextOpenOnOrAfter`](src/market/trading-days.ts) when `source_date` is a non-session day; prior-close / corp-action lookups via [`getPrevClose`](src/db/queries.ts) / [`hasCorporateActionInRange`](src/db/queries.ts); **`pnpm cli evaluate`** with **`--skip-ai`**
+- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` before briefing composition so same-run closures appear in the brief
 
 **Briefing**
 
@@ -744,7 +754,7 @@ phases 0–6 in the table below).
 
 | Step | Theme                         | Status     | Highlights                                                                 |
 | ---- | ----------------------------- | ---------- | -------------------------------------------------------------------------- |
-| 1    | Trust-breaking output         | ✅ shipped | `getMarketClosure()` + early exit in `runDailyWorkflow` / `run-all`; persistent-data brief with banner; `gatherMood` reads `NIFTY_50` / `INDIA_VIX` from `quotes`; `AiPicksSectionStatus` + `thesisRun` metadata; thesis ranking uses screens, alerts, portfolio loss threshold |
+| 1    | Trust-breaking output         | ✅ shipped | `getMarketClosure()` + early exit in `runDailyWorkflow`; `run-all` delegates to the same workflow; persistent-data brief with banner; `gatherMood` reads `NIFTY_50` / `INDIA_VIX` from `quotes`; `AiPicksSectionStatus` + `thesisRun` metadata; thesis ranking uses screens, alerts, portfolio loss threshold |
 | 2    | Portfolio analysis quality    | ✅ shipped | Trigger gate (`needsPortfolioLlmReview`), deep-loss prompt addon, portfolio-specific stock context, ingest/enrich universe includes holdings + benchmarks, portfolio sync before ingest in `runDailyWorkflow`, briefing cards show `technicalSummaryLine` |
 | 3    | Noise vs actionability        | ✅ shipped | Mood narrative avoids repeating the mood grid; `gatherNews` uses briefing-date window, dedupes headlines, prioritises watchlist-tagged items; section ledes; thesis cards promote **Why now**; clearer framing for alerts, screens, movers, portfolio |
 | 4    | Global cues & calibration     | ✅ shipped | Macro Yahoo symbols ingested into `quotes`; **Global Cues** section (Nifty spot + macro row labels); `BRIEFING_*` / `THESIS_MAX_PER_RUN` / `INGEST_QUOTES_MAX_RETRIES` / `BRIEFING_RUN_SUMMARY_JSON`; thesis **#N by signal score**; weighted ranking + rank blurbs; quote-ingest retries; scheduler duration logs; tests for news window, deep-loss prompt, ranking |

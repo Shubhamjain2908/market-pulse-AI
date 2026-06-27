@@ -3,6 +3,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+import { config } from '../config/env.js';
 import {
   hasOpenPaperTradeForSymbol,
   insertPaperTradeIfAbsent,
@@ -10,13 +11,12 @@ import {
   type PaperTradeSignalType,
 } from '../db/queries.js';
 import { child } from '../logger.js';
+import { evaluateAiPickEligibility } from './ai-pick-gate.js';
+import { getAtr14AtEntry, resolveAiPickStop } from './ai-pick-stop.js';
 import { parseInrPriceMidpoint } from './paper-trade-parsers.js';
 import type { PortfolioSummary, ThesisCard } from './template.js';
 
 const log = child({ component: 'paper-trade-writer' });
-
-/** Matches momentum_mf hard stop floor (entry × 0.92). */
-const AI_PICK_HARD_STOP_FLOOR_MULT = 0.92;
 
 function horizonToDays(horizon: string): { horizon: PaperTradeHorizon; maxHoldDays: number } {
   const h = horizon.toLowerCase().trim();
@@ -72,6 +72,8 @@ export interface PaperTradeRecordResult {
   insertedPortfolioAdd: number;
   insertedCatalystEntry: number;
   crossStrategyBlocked: number;
+  blockedAiPick: number;
+  blockedPortfolioAdd: number;
 }
 
 function blockIfOpenPaperTradeExists(
@@ -100,6 +102,8 @@ export function recordPaperTrades(
   let insertedPortfolioAdd = 0;
   let insertedCatalystEntry = 0;
   let crossStrategyBlocked = 0;
+  let blockedAiPick = 0;
+  let blockedPortfolioAdd = 0;
 
   for (const t of theses) {
     const entry = parseInrPriceMidpoint(t.entryZone);
@@ -165,11 +169,55 @@ export function recordPaperTrades(
       continue;
     }
 
-    const hardFloor = entry * AI_PICK_HARD_STOP_FLOOR_MULT;
-    const effectiveStop = Math.max(stop, hardFloor);
-    if (effectiveStop !== stop) {
+    const gate = evaluateAiPickEligibility(t.symbol, sourceDate, t, db);
+    if (!gate.eligible) {
+      blockedAiPick++;
+      log.info(
+        { event: 'ai_pick_blocked', symbol: t.symbol, reasons: gate.reasons, facts: gate.facts },
+        'AI_PICK blocked by eligibility gate',
+      );
+      continue;
+    }
+
+    const atr14 = getAtr14AtEntry(t.symbol, sourceDate, db);
+    const stopResult = resolveAiPickStop(entry, stop, atr14);
+    if (!stopResult.ok) {
+      blockedAiPick++;
+      log.info(
+        {
+          event: 'ai_pick_blocked',
+          symbol: t.symbol,
+          reason: stopResult.reason,
+          entry,
+          parsedStop: stop,
+          atr14,
+        },
+        'AI_PICK blocked by stop distance guard',
+      );
+      continue;
+    }
+    if (stopResult.normalized) {
       log.warn(
-        { symbol: t.symbol, originalStop: stop, effectiveStop },
+        {
+          event: 'ai_pick_stop_normalized',
+          symbol: t.symbol,
+          parsedStop: stopResult.parsedStop,
+          normalizedStop: stopResult.normalizedStop,
+          effectiveStop: stopResult.effectiveStop,
+        },
+        'AI_PICK stop widened to minimum distance',
+      );
+    }
+    if (stopResult.floorApplied) {
+      log.warn(
+        {
+          event: 'ai_pick_stop_floor_applied',
+          symbol: t.symbol,
+          parsedStop: stopResult.parsedStop,
+          normalizedStop: stopResult.normalizedStop,
+          hardFloor: stopResult.hardFloor,
+          effectiveStop: stopResult.effectiveStop,
+        },
         'AI_PICK stop raised to 8% hard floor',
       );
     }
@@ -185,10 +233,11 @@ export function recordPaperTrades(
         signalType: 'AI_PICK',
         sourceDate,
         entryPrice: entry,
-        stopLoss: effectiveStop,
+        stopLoss: stopResult.effectiveStop,
         target,
         timeHorizon: horizon,
         maxHoldDays,
+        atr14AtEntry: stopResult.atr14AtEntry,
       },
       db,
     );
@@ -198,6 +247,14 @@ export function recordPaperTrades(
   if (portfolio?.positions?.length) {
     for (const p of portfolio.positions) {
       if (p.action !== 'ADD') continue;
+      if (config.PORTFOLIO_ADD_PAPER_TRADES !== '1') {
+        blockedPortfolioAdd++;
+        log.info(
+          { symbol: p.symbol, event: 'portfolio_add_paper_disabled' },
+          'PORTFOLIO_ADD paper trade disabled by config',
+        );
+        continue;
+      }
       const entry = p.lastPrice;
       const stop = p.suggestedStop;
       const target = p.suggestedTarget;
@@ -233,5 +290,12 @@ export function recordPaperTrades(
     }
   }
 
-  return { insertedAiPick, insertedPortfolioAdd, insertedCatalystEntry, crossStrategyBlocked };
+  return {
+    insertedAiPick,
+    insertedPortfolioAdd,
+    insertedCatalystEntry,
+    crossStrategyBlocked,
+    blockedAiPick,
+    blockedPortfolioAdd,
+  };
 }

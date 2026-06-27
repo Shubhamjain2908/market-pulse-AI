@@ -2,9 +2,9 @@
 ---
 
 ## 1. Core Stack & Philosophy
-**Runtime:** Node.js 22 + TypeScript (ESM), `better-sqlite3`, `node-cron`, PM2 for process management
+**Runtime:** Node.js 22 + TypeScript (ESM), `better-sqlite3`, `croner`, PM2 for process management
 
-**Broker:** Zerodha Kite Connect API — portfolio sync, GTT orders (manual trigger only). Daily OAuth token expires 6 AM IST — refreshed manually via `/auth/kite` endpoint before 8:45 AM pipeline run.
+**Broker:** Zerodha Kite Connect API — portfolio sync, GTT orders (manual trigger only). Daily OAuth token expires ~6 AM IST. **Auto-refresh:** Playwright + TOTP at **08:30 IST Mon–Fri** on the Oracle VM (`src/auth/kite-auto-login/`, PM2 `kite-auto-login`) when redirect URL is colocated with `kite-auth`. **Manual fallback:** `pnpm kite-login` or `https://[duckdns]/auth/kite` before the **08:45** pipeline if auto-login fails.
 
 **LLM:** Currently DeepSeek-V3 via OpenAI-compatible SDK (`baseURL: https://api.deepseek.com`). Provider abstraction in `src/llm/provider.ts` — switchable via `LLM_PROVIDER` env var (`anthropic` | `deepseek` | `gemini` | `openai`). All LLM calls go through `generateJson()` with Zod schema validation + 1 retry on parse failure.
 
@@ -13,7 +13,8 @@
 **Deployment:** Oracle Cloud Always Free VM (`VM.Standard.E2.1.Micro`, 1 OCPU, ap-hyderabad-1). SQLite file on persistent disk. Nginx reverse proxy for Kite auth endpoint. DuckDNS free subdomain for HTTPS.
 
 **Pipeline schedule:**
-- `8:45 AM IST Mon–Fri` — full daily pipeline (PM2 managed)
+- `8:30 AM IST Mon–Fri` — Kite OAuth auto-login (PM2 `kite-auto-login`; fail-open — logs only, pipeline still runs at 08:45)
+- `8:45 AM IST Mon–Fri` — full daily pipeline (PM2 `market-pulse` / `cli schedule`)
 - `8:00 AM IST Sunday` — momentum rebalance job
 - `10:15 AM IST Mon–Fri` — healthcheck cron (email alert on failure)
 
@@ -30,29 +31,30 @@
 ## 2. Pipeline Flow (Sequential, EOD, Daily 8:45 AM IST)
 
 ```
-Ingest → Corporate actions → Enrich → Yahoo snapshot → NSE ETF iNAV → Regime Classify → Screen → AI Thesis → Portfolio Evaluate → Briefing
+Ingest → Corporate actions → Enrich → Yahoo snapshot → Momentum rank → External signals → NSE ETF iNAV → Regime Classify → Screen → AI Thesis → Portfolio Evaluate → Briefing
 ```
 
 Orchestration: `src/agents/daily-workflow.ts` (weekday path). Paper trade evaluation runs **before** the briefing composer so closed trades appear in the brief.
 
-**Pipeline audit (`pipeline_runs`, migration `0022`):** Each stage in `daily-workflow.ts` records `started` / `success` / `failed` / `skipped` via `recordPipelineStage` in `src/db/pipeline-queries.ts`. Fail-open stages (portfolio sync, corporate actions, Yahoo snapshot, ext-signal, iNAV, Sunday earnings) log `failed` but do not abort; fatal stages rethrow. Stage names match the table (`ingest`, `enrich`, `regime`, `screen`, `evaluate`, `briefing`, etc.). `hasFailedRequiredStage(run_date)` is true when **`enrich`**, **`regime`**, or **`screen`** failed — the briefing composer then renders a **degraded** brief (banner + mood/regime if regime succeeded; omits screens, thesis, portfolio, momentum).
+**Pipeline audit (`pipeline_runs`, migration `0022`):** Most stages in `daily-workflow.ts` append `started` / `success` / `failed` / `skipped` through `runStage` in `src/agents/stage-runner.ts`, which delegates persistence to `recordPipelineStage` in `src/db/pipeline-queries.ts`. Fail-open stages (portfolio sync, corporate actions, Yahoo snapshot, **momentum-rank**, ext-signal, iNAV, Sunday earnings) log `failed` but do not abort; fatal stages rethrow. Stage names match the table (`ingest`, `enrich`, `regime`, `screen`, `evaluate`, `briefing`, etc.). `getPipelineHealth(run_date)` uses the **latest row per stage** (`ROW_NUMBER` over `id DESC`) for **`enrich`**, **`regime`**, **`screen`** — a successful retry on the same `run_date` clears degraded mode and controls whether the degraded briefing may still show the regime card.
 
 | Stage | File | What it does |
 |---|---|---|
-| **Ingest** | `src/agents/daily-ingestor.ts` | Quote batch (often Yahoo), NSE FII/DII, RSS news, optional Yahoo sector metadata on symbols; failures per capability are logged and do not abort the run. |
+| **Ingest** | `src/agents/daily-ingestor.ts` | Directly wires Yahoo/NSE/RSS/Screener ingestors for the fixed free tier; failures per capability are logged and do not abort the run. |
 | **Corporate actions** | `src/ingestors/corporate-actions.ts` | After ingest, before enrich: for symbols with OPEN `paper_trades`, pull Yahoo split events (`chart`, `events: 'split'` — same ratios as bonus-as-split). Last 5 IST calendar days → `corporate_actions` row + divide OPEN notionals (`entry_price`, `stop_loss`, `target`, `highest_close_since_entry`, `atr14_at_entry`); append one-time SPLIT audit to `trailing_stop_log.notes` per trade. Idempotent via `INSERT OR IGNORE` + `run().changes`. |
 | **Enrich** | `src/enrichers/technical.ts` + `momentum-signals.ts` | SMA20/50/200, EMA9/21, RSI14, ATR14, Volume Ratio, 52W High/Low%. Plus daily momentum factors: `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`. |
 | **Yahoo snapshot** | `src/ingestors/yahoo-snapshot-ingestor.ts` | After enrich: batched `quoteSummary` valuation fields → `fundamentals` (`source = yahoo_snapshot` on insert; `ON CONFLICT` updates valuation columns only, preserving screener-owned fields and existing `source`). Fail-open. |
-| **External signal holdings** | `src/ingestors/ext-signal-holdings-ingestor.ts` | After Yahoo snapshot, before regime: JSON-RPC `get_holdings` per strategy in `config/ext-signal-provider.json` → `ext_signal_holdings`. Skipped when `enabled: false`, `EXT_SIGNAL_ENDPOINT` unset, or `EXT_SIGNAL_API_KEY` unset. Read only by thesis generator (optional user-message context). Fail-open. |
-| **ETF iNAV** | `src/ingestors/inav-fetcher.ts` | After Yahoo snapshot, before regime: NSE `/api/etf` → `inav_snapshots` for symbols in `config/etf-exclusions.json`. Fail-open (warn + skip on NSE failure). |
+| **Momentum rank** | `src/rankers/momentum-ranker.ts` | After Yahoo snapshot, before thesis context: refreshes `mom_rank`, `mom_composite_score`, and `mom_false_flag` for `config/momentum-universe.json`. Fail-open; weekly `momentum_mf` rebalance remains separately scheduled/gated. |
+| **External signal holdings** | `src/ingestors/ext-signal-holdings-ingestor.ts` | After momentum rank, before regime: JSON-RPC `get_holdings` with `{ strategy_name }` per strategy in `config/ext-signal-provider.json` → `ext_signal_holdings`. ftInvstr MCP returns `{ data: { positions } }` (flat `{ positions }` still supported via `unwrapHoldingsPayload`). Skipped when `enabled: false`, `EXT_SIGNAL_ENDPOINT` unset, or `EXT_SIGNAL_API_KEY` unset. Diagnostics: `pnpm cli ext-signal-smoke`, `pnpm cli ext-signal-cross-ref`. Read by thesis generator (optional context) and cross-ref script. Fail-open. |
+| **ETF iNAV** | `src/ingestors/inav-fetcher.ts` | After external signals, before regime: NSE `/api/etf` → `inav_snapshots` for symbols in `config/etf-exclusions.json`. Fail-open (warn + skip on NSE failure). |
 | **COMEX gold COT** | `src/cot/fetch-gold-cot.ts`, `scripts/cot-gold-fetch.ts` | Weekly CFTC `f_disagg.txt` → `cot_gold`; Sunday 07:45 IST cron + `pnpm cot:gold`. Regime briefing line when crowded long/short only. |
 | **Regime Classify** | `src/agents/regime-agent.ts` | 8 signals scored −2 to +2. 3-day persistence. CRISIS fires immediately. **Quorum:** refuses `regime_daily` write when any of five required inputs is null (Nifty vs SMA200, SMA200 slope, VIX, FII 20d, % above SMA200). Runs before all strategies. |
 | **Weekly cleanup** | `src/agents/weekly-cleanup.ts` | Sunday 07:30 IST: prune `briefings` &gt; 90d, `signals` &gt; 730d. Fail-open (logged; does not block rebalance). |
 | **Screen** | `src/analysers/stock-screener.ts` | Loads `config/screens.json`. DSL screens via `engine.ts`; **`quality_garp`** and **`catalyst_entry`** use dedicated dispatchers (`getQualityGarpFundamentals` + 10 v2 gates; `runCatalystScreener`). Checks `regime_strategy_gate`. Writes passing symbols to `screens`. |
-| **AI Thesis** | `src/agents/thesis-generator.ts` | Per screen pass: sends technicals + fundamentals + news + regime context to LLM. Returns structured JSON. Parallel symbol processing via `p-limit` (`THESIS_CONCURRENCY`, default 3). Skips symbols in live portfolio (`alreadyOwned`) and any symbol with an OPEN `paper_trades` row (any `signal_type`). |
-| **Portfolio review** | `src/agents/portfolio-sync.ts` + `portfolio-analyser.ts` | When AI is enabled and portfolio is not skipped: after thesis, optional Kite sync (earlier in the same run) feeds `portfolio_holdings`; analyser writes `portfolio_analysis` (full LLM, lite snapshot, or **stale-holdings placeholders** — see §4). |
+| **AI Thesis** | `src/agents/thesis-generator.ts` | Candidate pool: today's `screens` hits ∪ watchlist, minus holdings and OPEN `paper_trades`. Ranks by enriched signals + screen/alert matches; sends technicals + fundamentals + news + regime context to LLM. Parallel via `p-limit` (`THESIS_CONCURRENCY`, default 3). |
+| **Portfolio review** | `src/agents/portfolio-sync.ts` + `portfolio-analyser.ts` | When AI is enabled and portfolio is not skipped: after thesis, optional Kite sync feeds `portfolio_holdings`. Analyser partitions **allocation instruments** (`etf-exclusions.json` → `model='none'` carry rows) vs **equity** (lite snapshot or full LLM with regime context + invested-book concentration). Post-LLM guardrails: strategy rules, technical TRIM escalation, concentration TRIM (15% hard), universal QG deterioration (unknown → TRIM-only). Stale Kite snapshots → `STALE_HOLDINGS` placeholders. |
 | **Portfolio Evaluate** | `src/scripts/evaluate-trades.ts` | Runs SL/TP/time-stop on OPEN `paper_trades` (multi-bar walk vs `quotes`). `stop_type='trailing'` follows adaptive ATR trailing; `stop_type='fixed'` bypasses trailing math/logs and evaluates stops/targets at static levels. New bars only after the latest non-`STOPPED_OUT` `trailing_stop_log` row (exclusive `source_date` bound via `getSymbolBars`), so a raised persisted stop is not replayed against already-evaluated history. **Gap-down CB:** if `bar.open < 0.7 ×` prior NSE `close` (`getPrevClose`), skip stop-out and target for **that bar only**; structured `CIRCUIT BREAKER` log includes recent `corporate_actions` flag (`hasCorporateActionInRange`). **Gap-up CB:** if `bar.open > 1.3 ×` prior close, suppress `highest_close_since_entry` update for that bar (stop/target still run); mitigates fake highs after post-resolution gaps. Day-1 ATR latch snaps `sourceDate` via `nextOpenOnOrAfter` when it falls on a non-session day. |
-| **Briefing** | `src/briefing/composer.ts` | Records `briefing` / `started` first, then `hasFailedRequiredStage` gate. Normal path: `renderBriefing()` → `juice()` for Gmail-safe inline CSS (600px table layout). Regime card + change banner; **FII/DII flow attribution**; **ETF iNAV pricing** block for held ETFs (`etf-pricing-card.ts`, WARN/NOTE thresholds). **Degraded path:** partial-pipeline banner listing failed required stages; screens / AI picks / portfolio / momentum omitted. Delivered via Nodemailer → Gmail SMTP (`delivered_at` persisted only after ≥1 SMTP recipient accepted). |
+| **Briefing** | `src/briefing/composer.ts` | Records `briefing` / `started` first, then reads `getPipelineHealth` (latest status per required stage). Normal path: `renderBriefing()` → `juice()` for Gmail-safe inline CSS (600px table layout). Regime card + change banner; **FII/DII flow attribution**; **ETF iNAV pricing** block for held ETFs (`etf-pricing-card.ts`, WARN/NOTE thresholds). **Degraded path:** partial-pipeline banner listing failed required stages; screens / AI picks / portfolio / momentum omitted. **`brief --skip-ai`:** skips mood LLM; still shows persisted `theses` when present (`resolveAiPicksStatus` checks thesis count before skip flag). Delivered via Nodemailer → Gmail SMTP (`delivered_at` persisted only after ≥1 SMTP recipient accepted). |
 
 NOTE: Fundamentals refresh is operational via `pnpm fundamentals:refresh` (Python annual + screener + Yahoo snapshot; see §3.5).
 
@@ -132,7 +134,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 ### 3.3 Paper Trades Ledger
 
 **Signal types currently active:**
-- `AI_PICK` — from thesis generator on screened candidates. Entry stop: reject when `stopLoss ≥ entryPrice` (`log.error`); else `effectiveStop = MAX(stopLoss, entry × 0.92)` with `log.warn` when raised ([`paper-trade-writer.ts`](src/briefing/paper-trade-writer.ts)).
+- `AI_PICK` — from thesis generator on screened candidates. **Admission gate** ([`ai-pick-gate.ts`](src/briefing/ai-pick-gate.ts)): deterministic eligibility before `paper_trades` insert (`confidence ≥ 6`, fresh false-momentum flag is not set, confirmation path). Stale false-flag values are logged as facts and do not overblock Path A/B; rank-dependent `golden_cross` tiers still fail closed on stale/missing rank or false-flag data. **Stop distance** ([`ai-pick-stop.ts`](src/briefing/ai-pick-stop.ts)): normalize-then-kill — widen stops tighter than `max(2%, 1×ATR)`; block when that minimum exceeds 8% risk; emit `ai_pick_stop_floor_applied` when the final 8% floor changes an overly wide thesis stop. Thesis cards still appear in briefing when blocked. Reject when `stopLoss ≥ entryPrice` (`log.error`).
 - `PORTFOLIO_ADD` — from portfolio analyser ADD recommendations
 - `momentum_mf` — from Sunday momentum rebalance (**requires `atr_14` at entry**; no 2% proxy)
 - `catalyst_entry` — from catalyst-driven screen hits (fixed stop)
@@ -177,6 +179,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 **Lifecycle:**
 - Enter: top 10 by composite rank, Sunday EOD
 - Exit triggers (priority order): trailing stop → hard −8% stop → rank drops > 20 (daily check) → target hit → regime changes from BULL_TRENDING
+- Portfolio analyser mirror: strategy-aware guardrails in `portfolio-strategy-guardrails.ts`. `momentum_mf` origins: rank-decay routing (`TRIM` then `EXIT` at `threshold + 5`). `quality_garp` origins: fundamental deterioration flags → `TRIM`/`EXIT`. `catalyst_entry` origins: hold-window / post-earnings → `TRIM`/`EXIT`. Entry origin resolved in the same module (paper ledger, screens, thesis text). Non-matching origins do not exit on rank alone.
 - Rebalance: Sunday 8:00 AM IST — entries Sunday only, rank exits evaluated daily
 - Sector cap: max 3 stocks per NSE sector
 - Earnings blackout: block entries within ±3 calendar days of earnings (from `earnings_calendar` table, sourced via Yahoo Finance). **Sunday sync:** [`replaceMomentumEarningsCalendarForSymbol`](src/db/momentum-queries.ts) replaces rows per symbol when Yahoo returns data; **empty Yahoo response retains** existing calendar rows (fail-closed against outage clearing blackouts).
@@ -206,10 +209,11 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 | **Regime strategy gate fail-closed** | Missing `regime_strategy_gate` row → strategy disallowed (`isStrategyAllowed` returns false). | `src/db/regime-queries.ts` |
 | **mom_false_flag entry block** | `momentum_mf` rebalance skips insert when `mom_false_flag = 1`. | `src/strategies/momentum-rebalance.ts` |
 | **Earnings calendar retain on empty** | Empty Yahoo earnings rows → retain existing `earnings_calendar` per symbol. | `src/db/momentum-queries.ts` |
-| **AI_PICK stop floor** | Reject `stopLoss ≥ entryPrice`; floor `entry × 0.92`; raise wider stops with warn. | `src/briefing/paper-trade-writer.ts` |
+| **AI_PICK stop distance** | Reject `stopLoss ≥ entryPrice`; normalize-then-kill via `ai-pick-stop.ts` (min `max(2%, 1×ATR)`; block when min > 8%; widen tight stops with `ai_pick_stop_normalized` warn). | `src/briefing/ai-pick-stop.ts`, `paper-trade-writer.ts` |
 | **alreadyOwned filter** | Skip symbol in AI Picks if currently held in Kite portfolio **or** symbol has any OPEN `paper_trades` row (any `signal_type`) | Thesis generator input preprocessing (**extended May 14**) |
 | **Stale Kite holdings** | If any analysed row is `source=kite` and `portfolio_holdings.as_of` is **before** the last open NSE session on or before the run date (`lastOpenOnOrBefore`), skip **all** portfolio LLM + lite paths; upsert per-symbol `HOLD` rows (`model=none`, `trigger_reason` prefix `STALE_HOLDINGS — …`); structured `log.warn` with `briefingPortfolio: true`; briefing **My Portfolio** shows a yellow banner (`staleHoldingsWarning`). Manual-only portfolios skip this gate. | `portfolio-analyser.ts`, `briefing/composer.ts` + `template.ts` |
 | **Signals read window (90d)** | Technical lookups from `signals` only consider rows with `date >= date(as_of, '-90 days')` (anchored on the evaluation / screen date). If nothing falls in the window, callers see **empty** maps / nulls — **no** silent fallback to older history. Same window on the `MAX(date)` subquery in `DbSignalProvider` so “latest session” cannot be outside the window. | `analysers/signal-provider.ts`, `agents/portfolio-trigger.ts` (`getLatestSignalsMap`, `getLatestSignalsMapsForSymbols`) |
+| **Fundamentals percent normalization** | Yahoo snapshot stores `roe` / `roce` / `dividend_yield` as decimals; Screener as percent. `normalizeFundamentalForScreen` in `DbSignalProvider` scales `|v| < 1` × 100 at read time so screen DSL thresholds (e.g. `roe >= 15`) evaluate correctly across mixed `fundamentals.source` rows. | `analysers/signal-provider.ts`, `scripts/fundamental-screen-audit.ts` |
 
 ---
 
@@ -229,6 +233,7 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
   peg, roe, roce, revenue_growth_yoy, profit_growth_yoy, debt_to_equity, 
   promoter_holding_pct, promoter_holding_change_qoq, dividend_yield`.
   ⚠️ No sector column — sector is in `symbols` table.
+  ⚠️ **Unit mix:** Yahoo snapshot may store `roe`/`roce`/`dividend_yield` as decimals; Screener as percent — normalized at screen read in `DbSignalProvider`.
 - **`fii_dii`** — `(date, segment)` PK. Segments: `cash | fno | fno_index_fut | 
   fno_stock_fut`. Columns: `fii_buy, fii_sell, fii_net, dii_buy, dii_sell, dii_net`.
 - **`news`** — `(id)` PK, `UNIQUE(url)`. Columns: `symbol, headline, summary, 
@@ -286,10 +291,10 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 
 ### Infrastructure
 - **`briefings`** — `(id)` PK, index on `date`. Columns: `date, html_content, 
-  delivery_method, delivered_at`. Delivery methods: `file | email | slack | telegram`.
+  delivery_method, delivered_at`. Delivery methods: `file | email`.
   Email: `delivered_at` is set only when SMTP accepts ≥1 recipient (`src/briefing/delivery/email.ts`).
-- **`pipeline_runs`** — append-only stage audit (migration `0022`). Columns: `run_date, stage, status, started_at, finished_at, error_msg, metadata` (JSON). Index `(run_date, stage)`. Written by `daily-workflow.ts` and `composeBriefing`.
-- **`portfolio_analysis_llm`** — view over `portfolio_analysis` excluding `model = 'none'` stale-holdings placeholders (migration `0022`).
+- **`pipeline_runs`** — append-only stage audit (migration `0022`). Columns: `run_date, stage, status, started_at, finished_at, error_msg, metadata` (JSON). Index `(run_date, stage)`. Multiple rows per `(run_date, stage)` on retries; `getPipelineHealth` uses latest `id` per required stage. Written by `daily-workflow.ts` and `composeBriefing`.
+- **`portfolio_analysis_llm`** — view over `portfolio_analysis` excluding `model = 'none'` (stale-holdings + allocation-instrument placeholders).
 - **`config`** — `(key)` PK. Key-value store. Currently holds: `kite_access_token`.
 - **`kite_instruments`** — `(exchange, tradingsymbol)` PK. Kite instrument master.
 - **`backtest_runs`** + **`backtest_trades`** — Screen harness (`src/backtest/harness.ts`) persists screen-replay runs. **Option A** (`src/backtest/runner.ts`, `mp backtest-option-a`) adds walk-forward `momentum_mf` / `ai_pick` simulations using **quotes-only** on-the-fly signals; extended columns on `backtest_runs` (migration `0014_backtest_runs_option_a.sql`) store `strategy_id`, expectancy, profit factor, etc.; **`equity_curve_max_dd_pct`** (migration `0022`) is portfolio-level equity-curve DD on the run row (distinct from per-trade `max_drawdown_pct` on both `backtest_runs` summary and `backtest_trades` legs — runner write pending). Option A rows on **`backtest_trades`** set **`exit_reason`** (migration `0015_backtest_exit_reason.sql`) from the position sim and strategy-specific exits (`RANK_DECAY`, `REGIME_EXIT`, `WINDOW_END`, …). Default **regime `proxy`** (`src/backtest/regime-proxy.ts`) avoids `regime_daily` and uses a 3-signal NIFTY+breadth coarse label with a **≥252** prior-bar gate on `NIFTY_50`; **`--regime-source daily`** restores the ≥80% `regime_daily` coverage gate. For persisted vs score-only `regime_daily` labels use `scripts/audit-regime-history.mts`.
@@ -302,25 +307,41 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 
 **VM:** Oracle Cloud Always Free, `VM.Standard.E2.1.Micro`, Ubuntu 22.04, `ap-hyderabad-1`. 1 OCPU, 1GB RAM, 50GB disk.
 
-**Process manager:** PM2. Two processes: `market-pulse` (main app, `dist/cli.js schedule`) and `kite-auth` (Express auth server, port 3001).
+**Process manager:** PM2 — **three** app processes (see `deploy/ecosystem.config.cjs`):
 
-**Kite token flow:** Daily manual refresh. User opens `https://[duckdns-subdomain].duckdns.org/auth/kite` on phone before 8:45 AM, completes OAuth, token written to SQLite `config` table. If token missing at pipeline start: Kite sync skipped gracefully, rest of pipeline runs.
+| PM2 name | Entry | Role |
+|---|---|---|
+| `market-pulse` | `dist/cli.js schedule` | Main croner: 08:45 / 16:30 weekdays, Sat 08:00, Sun jobs |
+| `kite-auth` | `dist/auth/kite-auth-server.js` | Express OAuth callback (`/auth/kite`, `/auth/callback`, port 3001) |
+| `kite-auto-login` | `dist/auth/kite-auto-login/index.js` | Thin croner daemon: fires `runKiteAutoLogin()` at **08:30 IST Mon–Fri** only |
+
+`kite-auto-login` stays idle (~tens of MB) between triggers; Playwright/Chromium spin up only during the login job (~30s), then close. Low-memory Chromium flags in `login.ts` for 1GB VM.
+
+**Kite token flow:**
+1. **08:30 (automated):** `runKiteAutoLogin()` → Kite Connect login URL → userid/password/TOTP → redirect to `KITE_REDIRECT_URL` (duckdns `/auth/callback`) → `kite-auth` exchanges `request_token` → writes `KITE_ACCESS_TOKEN` to `.env` + SQLite `config.kite_access_token`. Auto-login polls for a **changed** token in local sqlite (same host as `kite-auth` only — do not run auto-login on a laptop when redirect points at Oracle).
+2. **Manual fallback:** `pnpm kite-login` (interactive) or open `/auth/kite` in browser. Required if auto-login fails before 08:45.
+3. **08:45 pipeline:** `portfolio-sync` / live scan read token from sqlite config or `.env`. If token missing/expired: Kite paths skip gracefully; ingest/enrich/screen/brief still run.
+
+**Env (auto-login):** `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`, `KITE_REDIRECT_URL` (must match Kite Connect app), `KITE_AUTO_LOGIN_HEADLESS=true`. Playwright browsers: `pnpm playwright:install` once per deploy (`PLAYWRIGHT_BROWSERS_PATH=0` → `node_modules`).
+
+**CLI vs package.json:** Pipeline stages are **`pnpm cli <cmd>`** (ingest, enrich, screen, brief, …). `package.json` keeps only deploy/ops shortcuts (`daily`, `schedule`, `migrate`, `deploy`), Kite trio, and scripts **not** wired into `cli.ts` (`fundamentals:refresh`, `cot:gold`, `regime:seed-gates`, `backtest:option-a`, …).
 
 **Nginx:** Reverse proxy on port 443 (Let's Encrypt via Certbot + DuckDNS). Only `/auth/` routes exposed publicly. Everything else returns 403.
 
-**Cron:**
+**Cron (reference — most jobs use PM2 croner, not raw cron):**
 ```
-45 8 * * 1-5   full daily pipeline (via PM2 schedule, not raw cron)
-0  8 * * 0     momentum rebalance
+30 8 * * 1-5   kite auto-login (PM2 kite-auto-login)
+45 8 * * 1-5   full daily pipeline (PM2 market-pulse schedule)
+0  8 * * 0     momentum rebalance (PM2 market-pulse schedule)
 15 10 * * 1-5  healthcheck → email alert on failure
-30 16 * * 1-5  EOD summary job
+30 16 * * 1-5  EOD summary job (PM2 market-pulse schedule)
 ```
 
 **Deploy scripts:** `deploy/sync-env-to-vm.sh`, `deploy/sync-db-to-vm.sh` (rsync with WAL checkpoint), `deploy/setup.sh` (Node 22 + pnpm + PM2 bootstrap), `deploy/ecosystem.config.cjs`.
 
 **Healthcheck (`deploy/healthcheck.ts`):** When `BRIEFING_DELIVERY=email`, verifies today's `briefings` row with `delivery_method=email` and non-null `delivered_at` (row absent if SMTP accepted zero recipients). Also checks `regime_daily` row present, no pino errors in PM2 logs, optional run-summary JSON thesis failure count. Logs **GTT post-fix tranche** metrics (`paper_trades` closed since `2026-05-14`, grouped by `signal_type`) on every run — empty tranche is logged, not a failure. Appends TSV to `deploy/logs/health.log`. Sends alert email on failure (includes tranche block).
 
-**config table** note — Kite token stored here
+**config table** — `kite_access_token` (+ `updated_at`); written by `kite-auth` callback and/or `kite-auto-login` persistence.
 
 ---
 

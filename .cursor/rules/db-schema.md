@@ -141,12 +141,13 @@ CREATE TABLE briefings (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   date            TEXT NOT NULL,
   html_content    TEXT NOT NULL,
-  delivery_method TEXT NOT NULL, -- 'file' | 'email' | 'slack' | 'telegram'
+  delivery_method TEXT NOT NULL, -- 'file' | 'email'
   delivered_at    TEXT,
   created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX idx_briefings_date ON briefings(date);
 -- Per-stage audit trail for daily-workflow.ts (migration 0022). status: started | success | failed | skipped.
+-- Append-only: retries insert new rows; getPipelineHealth uses latest id per (run_date, stage).
 CREATE TABLE pipeline_runs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   run_date    TEXT NOT NULL,
@@ -287,7 +288,7 @@ CREATE TABLE portfolio_analysis (
   PRIMARY KEY (symbol, date)
 );
 CREATE INDEX idx_portfolio_analysis_action ON portfolio_analysis(date, action);
--- Excludes STALE_HOLDINGS placeholders (model='none') from LLM aggregation queries (migration 0022).
+-- Excludes non-LLM placeholders (model='none'): STALE_HOLDINGS + ALLOCATION_INSTRUMENT rows (migration 0022).
 CREATE VIEW portfolio_analysis_llm AS
   SELECT * FROM portfolio_analysis
   WHERE model != 'none';

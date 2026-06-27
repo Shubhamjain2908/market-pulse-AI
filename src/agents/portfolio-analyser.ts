@@ -10,10 +10,10 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import pLimit from 'p-limit';
 import { z } from 'zod';
 import { config } from '../config/env.js';
-import { loadEtfExclusions, loadMomentumConfig } from '../config/loaders.js';
 import {
   getDb,
   getLatestHoldings,
+  type PaperTradeSignalType,
   type PortfolioAnalysisRow,
   type PortfolioHoldingRow,
   upsertPortfolioAnalysis,
@@ -23,6 +23,22 @@ import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { lastOpenOnOrBefore } from '../market/trading-days.js';
+import type { Regime } from '../types/regime.js';
+import {
+  computeInvestedPortfolioWeights,
+  formatConcentrationContextLine,
+  isAllocationInstrument,
+  isDefensiveRegime,
+  loadPortfolioRegimeContext,
+} from './portfolio-context.js';
+import {
+  applyStrategyPortfolioGuardrails,
+  getQualityGarpDeteriorationFlagsForSymbol,
+  type PortfolioEntrySource,
+  resolveHoldingEntrySource,
+  type StrategyGuardrailCtx,
+  truncateTriggerReason,
+} from './portfolio-strategy-guardrails.js';
 import {
   buildLiteSnapshotCopy,
   getLatestSignalsMap,
@@ -32,28 +48,6 @@ import {
 import { buildStockContext } from './thesis-generator.js';
 
 const log = child({ component: 'portfolio-analyser' });
-
-const RSI_SIGNAL_EXCLUDED_SYMBOLS = new Set([
-  'LIQUIDCASE',
-  'LIQUIDBEES',
-  'GOLDBEES',
-  'GOLDCASE',
-  'GOLDIETF',
-  'SILVERBEES',
-  'SILVERCASE',
-  'NIFTYBEES',
-  'JUNIORBEES',
-  'BANKBEES',
-  'ICICIB22',
-  'MOM100',
-  'SGBJUN31I',
-  'SGBDE31III',
-]);
-
-const EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS = new Set([
-  ...RSI_SIGNAL_EXCLUDED_SYMBOLS,
-  ...loadEtfExclusions(),
-]);
 
 export const PortfolioActionSchema = z.object({
   symbol: z.string(),
@@ -104,6 +98,8 @@ Rules:
    a single adverse move closes all positions simultaneously.
 10. For liquid funds, gold ETFs, silver ETFs, index ETFs, and Sovereign Gold Bonds, RSI and
     volume ratio are not meaningful signals - do not reference them in your analysis.
+11. When REGIME is BEAR_TRENDING or CRISIS in the user message, default to HOLD or TRIM;
+    recommend ADD only with exceptional idiosyncratic evidence from the holding-specific data.
 
 Output ONLY a single JSON object matching the schema. No markdown fences.
 
@@ -128,48 +124,6 @@ HOLD is only acceptable if idiosyncratic recovery evidence exists in the supplie
 Otherwise prefer TRIM or EXIT and say why. Cite the drawdown magnitude in triggerReason.`;
 }
 
-function truncateTriggerReason(s: string): string {
-  if (s.length <= 280) return s;
-  return `${s.slice(0, 276)}…`;
-}
-
-/**
- * Momentum overlay (spec §6.4): rank decay → EXIT; false-flag → block ADD.
- * No-op when `mom_rank` / `mom_false_flag` are absent from `signals`.
- */
-export function applyMomentumPortfolioGuardrails(
-  action: PortfolioAction,
-  signals: Record<string, number>,
-): PortfolioAction {
-  const cfg = loadMomentumConfig();
-  const rank = signals.mom_rank;
-  const exitTh = cfg.exit_rank_threshold;
-
-  if (rank != null && Number.isFinite(rank) && rank > exitTh) {
-    if (action.action === 'EXIT') return action;
-    const suffix = `[Momentum: mom_rank ${rank} > ${exitTh} — rank decay EXIT.]`;
-    return {
-      ...action,
-      action: 'EXIT',
-      conviction: Math.max(action.conviction, 0.68),
-      triggerReason: truncateTriggerReason(`${action.triggerReason} ${suffix}`),
-    };
-  }
-
-  const falseFlag = signals.mom_false_flag === 1;
-  if (falseFlag && action.action === 'ADD') {
-    const suffix = '[Guardrail: mom_false_flag=1 — do not ADD.]';
-    return {
-      ...action,
-      action: 'HOLD',
-      conviction: Math.min(action.conviction, 0.55),
-      triggerReason: truncateTriggerReason(`${action.triggerReason} ${suffix}`),
-    };
-  }
-
-  return action;
-}
-
 /** Code-level enforcement: ADD into extension (RSI / 52W) and averaging-down R:R. */
 export function applyPortfolioAddGuardrails(
   action: PortfolioAction,
@@ -180,7 +134,7 @@ export function applyPortfolioAddGuardrails(
   if (action.action !== 'ADD') return action;
 
   const symbol = action.symbol.toUpperCase();
-  const isSignalExcluded = EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol);
+  const isSignalExcluded = isAllocationInstrument(symbol);
   const rsi = signals.rsi_14;
   const pctHi = signals.pct_from_52w_high;
   const volRatio = signals.volume_ratio_20d;
@@ -272,27 +226,35 @@ function getOpenPaperTradeCountForSymbol(symbol: string, db: DatabaseType): numb
   return row.c;
 }
 
+interface LatestPaperTradeContext {
+  entryPrice: number;
+  sourceDate: string;
+  signalType: PaperTradeSignalType;
+}
+
 function getMostRecentPaperTradeEntry(
   symbol: string,
   asOfDate: string,
   db: DatabaseType,
-): { entryPrice: number; sourceDate: string } | null {
+): LatestPaperTradeContext | null {
   const row = db
     .prepare(
       `
-      SELECT entry_price AS entryPrice, source_date AS sourceDate
+      SELECT entry_price AS entryPrice, source_date AS sourceDate, signal_type AS signalType
       FROM paper_trades
       WHERE symbol = ? AND source_date <= ?
       ORDER BY source_date DESC, id DESC
       LIMIT 1
     `,
     )
-    .get(symbol.toUpperCase(), asOfDate) as { entryPrice: number; sourceDate: string } | undefined;
+    .get(symbol.toUpperCase(), asOfDate) as
+    | { entryPrice: number; sourceDate: string; signalType: PaperTradeSignalType }
+    | undefined;
   return row ?? null;
 }
 
 function sanitizeStockContextForExcludedSignals(symbol: string, context: string): string {
-  if (!EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol.toUpperCase())) return context;
+  if (!isAllocationInstrument(symbol)) return context;
   return context
     .split('\n')
     .filter((line) => !/^\s*(rsi_14|volume_ratio_20d)\s*:/.test(line))
@@ -377,9 +339,18 @@ export async function analysePortfolio(
     };
   }
 
+  const weightResult = computeInvestedPortfolioWeights(allHoldings);
+  const allocationQueue = filtered.filter((h) => isAllocationInstrument(h.symbol));
+  const equityQueue = filtered.filter((h) => !isAllocationInstrument(h.symbol));
+  const regimeCtx = loadPortfolioRegimeContext(date, db);
+
+  const allocationRows = allocationQueue.map((h) =>
+    buildAllocationCarryRow(h, date, weightResult.weightsPct),
+  );
+
   const fullQueue: PortfolioHoldingRow[] = [];
   const liteQueue: PortfolioHoldingRow[] = [];
-  for (const h of filtered) {
+  for (const h of equityQueue) {
     if (needsPortfolioLlmReview(h, date, db)) fullQueue.push(h);
     else liteQueue.push(h);
   }
@@ -388,6 +359,8 @@ export async function analysePortfolio(
     {
       date,
       holdings: filtered.length,
+      allocation: allocationQueue.length,
+      equity: equityQueue.length,
       fullLlm: fullQueue.length,
       lite: liteQueue.length,
       concurrency,
@@ -395,14 +368,25 @@ export async function analysePortfolio(
     'portfolio analyser starting',
   );
 
-  const liteRows = liteQueue.map((h) => buildLitePortfolioRow(h, date, db));
+  const liteRows = liteQueue.map((h) =>
+    buildLitePortfolioRow(h, date, db, weightResult.weightsPct),
+  );
 
   const limit = pLimit(concurrency);
   const outcomes = await Promise.all(
     fullQueue.map((h) =>
       limit(async () => {
         try {
-          const row = await analyseOne(h, date, db, llm);
+          const row = await analyseOne(
+            h,
+            date,
+            db,
+            llm,
+            weightResult.weightsPct,
+            weightResult.investedTotalInr,
+            regimeCtx.append,
+            regimeCtx.regime,
+          );
           return { ok: true as const, row };
         } catch (err) {
           log.warn(
@@ -422,7 +406,7 @@ export async function analysePortfolio(
     else failed++;
   }
 
-  const results = [...liteRows, ...fullResults];
+  const results = [...allocationRows, ...liteRows, ...fullResults];
   upsertPortfolioAnalysis(results, db);
 
   const byAction = empty();
@@ -451,14 +435,48 @@ export async function analysePortfolio(
   };
 }
 
+function buildAllocationCarryRow(
+  h: PortfolioHoldingRow,
+  date: string,
+  weightsPct: Map<string, number>,
+): PortfolioAnalysisRow {
+  const weight = weightsPct.get(h.symbol.toUpperCase()) ?? 0;
+  const weightNote = weight > 0 ? ` Weight ${weight.toFixed(1)}% of invested book.` : '';
+  return {
+    symbol: h.symbol,
+    date,
+    action: 'HOLD',
+    conviction: 0,
+    thesis: `Allocation sleeve (ETF/SGB/liquid fund): carry or rebalance to target allocation only; equity ADD/TRIM/EXIT rules do not apply.${weightNote}`,
+    bullPoints: ['Allocation instrument — hold for sleeve target, not equity thesis'],
+    bearPoints: ['Rebalance if sleeve drifts from target allocation'],
+    triggerReason: 'ALLOCATION_INSTRUMENT — excluded from equity review',
+    suggestedStop: null,
+    suggestedTarget: null,
+    pnlPct: h.pnlPct ?? null,
+    model: 'none',
+    raw: null,
+  };
+}
+
 function buildLitePortfolioRow(
   h: PortfolioHoldingRow,
   date: string,
   db: DatabaseType,
+  weightsPct: Map<string, number>,
 ): PortfolioAnalysisRow {
   const copy = buildLiteSnapshotCopy(h, date, db);
   const signals = getLatestSignalsMap(h.symbol, date, db);
   const latestPaperEntry = getMostRecentPaperTradeEntry(h.symbol, date, db);
+  const entrySource = resolveHoldingEntrySource(h.symbol, date, db);
+  const guardCtx: StrategyGuardrailCtx = {
+    symbol: h.symbol,
+    date,
+    entrySource,
+    db,
+    pnlPct: h.pnlPct ?? null,
+    weightPct: weightsPct.get(h.symbol.toUpperCase()) ?? null,
+  };
   const baseAction: PortfolioAction = {
     symbol: h.symbol,
     action: 'HOLD' as const,
@@ -470,7 +488,7 @@ function buildLitePortfolioRow(
     suggestedStop: null,
     suggestedTarget: null,
   };
-  const g = applyMomentumPortfolioGuardrails(
+  const g = applyStrategyPortfolioGuardrails(
     applyPortfolioAddGuardrails(
       baseAction,
       signals,
@@ -478,6 +496,7 @@ function buildLitePortfolioRow(
       latestPaperEntry,
     ),
     signals,
+    guardCtx,
   );
 
   return {
@@ -502,17 +521,34 @@ async function analyseOne(
   date: string,
   db: DatabaseType,
   llm: LlmProvider,
+  weightsPct: Map<string, number>,
+  investedTotalInr: number,
+  regimeContextAppend: string | null,
+  regime: Regime | null,
 ): Promise<PortfolioAnalysisRow> {
+  const entrySource = resolveHoldingEntrySource(h.symbol, date, db);
   const stockContext = sanitizeStockContextForExcludedSignals(
     h.symbol,
     buildStockContext(h.symbol, date, db, 'portfolio'),
   );
-  const positionContext = buildPositionContext(h, date, db);
+  const positionContext = buildPositionContext(
+    h,
+    date,
+    db,
+    entrySource,
+    weightsPct,
+    investedTotalInr,
+  );
   const openPaperTradeCount = getOpenPaperTradeCountForSymbol(h.symbol, db);
   const deep = h.pnlPct != null && h.pnlPct <= getPortfolioDeepLossPct();
-  const system = deep ? `${PORTFOLIO_SYSTEM}${portfolioDeepLossAddon()}` : PORTFOLIO_SYSTEM;
+  let system = deep ? `${PORTFOLIO_SYSTEM}${portfolioDeepLossAddon()}` : PORTFOLIO_SYSTEM;
+  if (isDefensiveRegime(regime)) {
+    system = `${system}\n\nACTIVE REGIME: ${regime} — apply rule 11 strictly.`;
+  }
 
-  const prompt = `${positionContext}\n\n${stockContext}`;
+  const promptParts = [positionContext, stockContext];
+  if (regimeContextAppend) promptParts.push(regimeContextAppend);
+  const prompt = promptParts.join('\n\n');
   const result = await llm.generateJson({
     system,
     user: prompt,
@@ -521,7 +557,15 @@ async function analyseOne(
   });
   const signals = getLatestSignalsMap(h.symbol, date, db);
   const latestPaperEntry = getMostRecentPaperTradeEntry(h.symbol, date, db);
-  const a: PortfolioAction = applyMomentumPortfolioGuardrails(
+  const guardCtx: StrategyGuardrailCtx = {
+    symbol: h.symbol,
+    date,
+    entrySource,
+    db,
+    pnlPct: h.pnlPct ?? null,
+    weightPct: weightsPct.get(h.symbol.toUpperCase()) ?? null,
+  };
+  const a: PortfolioAction = applyStrategyPortfolioGuardrails(
     applyPortfolioAddGuardrails(
       applyOpenPaperTradeAddBlock(result.data, openPaperTradeCount),
       signals,
@@ -532,6 +576,7 @@ async function analyseOne(
       latestPaperEntry,
     ),
     signals,
+    guardCtx,
   );
 
   return {
@@ -551,13 +596,28 @@ async function analyseOne(
   };
 }
 
-function buildPositionContext(h: PortfolioHoldingRow, date: string, db: DatabaseType): string {
+function buildPositionContext(
+  h: PortfolioHoldingRow,
+  date: string,
+  db: DatabaseType,
+  entrySource: PortfolioEntrySource,
+  weightsPct: Map<string, number>,
+  investedTotalInr: number,
+): string {
   const symbol = h.symbol.toUpperCase();
-  const isSignalExcluded = EFFECTIVE_RSI_SIGNAL_EXCLUDED_SYMBOLS.has(symbol);
+  const isSignalExcluded = isAllocationInstrument(symbol);
+  const positionValue = h.qty * (h.lastPrice ?? h.avgPrice);
+  const weightPct = weightsPct.get(symbol) ?? null;
   const lines: string[] = [`# Position: ${h.symbol} (${h.exchange})`];
   lines.push(`Quantity: ${h.qty}`);
   lines.push(`Avg buy price: ₹${h.avgPrice.toFixed(2)}`);
   if (h.lastPrice != null) lines.push(`Last price: ₹${h.lastPrice.toFixed(2)}`);
+  lines.push(`Current position value: ₹${positionValue.toFixed(2)}`);
+  if (weightPct != null && investedTotalInr > 0) {
+    lines.push(`Current portfolio weight (invested book): ${weightPct.toFixed(2)}%`);
+    const conc = formatConcentrationContextLine(weightPct);
+    if (conc) lines.push(conc);
+  }
   if (h.pnl != null) lines.push(`Unrealised P&L: ₹${h.pnl.toFixed(2)}`);
   if (h.pnlPct != null) lines.push(`Unrealised P&L %: ${h.pnlPct.toFixed(2)}%`);
   if (h.dayChangePct != null) lines.push(`Day change %: ${h.dayChangePct.toFixed(2)}%`);
@@ -567,11 +627,20 @@ function buildPositionContext(h: PortfolioHoldingRow, date: string, db: Database
     lines.push('Signal treatment: RSI and volume ratio are excluded for this ETF/SGB symbol.');
   }
 
+  const qgFlags = getQualityGarpDeteriorationFlagsForSymbol(symbol, date, db);
+  if (qgFlags.length > 0) {
+    lines.push(
+      `\nQuality deterioration flags (${qgFlags.length}): ${qgFlags.join(', ')} — review TRIM; EXIT only when entry source is quality_garp and severe.`,
+    );
+  }
+
   const openPaperTradeCount = getOpenPaperTradeCountForSymbol(symbol, db);
   const latestPaperEntry = getMostRecentPaperTradeEntry(symbol, date, db);
   lines.push('\n## Paper Trade Ledger Context');
   lines.push(`Open paper trades: ${openPaperTradeCount}`);
+  lines.push(`Entry source: ${entrySource}`);
   if (latestPaperEntry) {
+    lines.push(`Paper signal type: ${latestPaperEntry.signalType}`);
     lines.push(
       `Most recent paper trade entry: ₹${latestPaperEntry.entryPrice.toFixed(2)} (${latestPaperEntry.sourceDate})`,
     );

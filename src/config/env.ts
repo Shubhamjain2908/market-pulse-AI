@@ -69,12 +69,18 @@ const EnvSchema = z.object({
   KITE_ACCESS_TOKEN: z.string().optional(),
   KITE_API_BASE: z.string().url().default('https://api.kite.trade'),
   KITE_AUTH_PORT: z.coerce.number().int().min(1).max(65535).default(3001),
+  KITE_USER_ID: z.string().optional(),
+  KITE_PASSWORD: z.string().optional(),
+  KITE_TOTP_SECRET: z.string().optional(),
+  /** Must match the redirect URL registered in your Kite Connect app. */
+  KITE_REDIRECT_URL: z.string().url().optional(),
+  KITE_AUTO_LOGIN_HEADLESS: z.enum(['true', 'false']).default('true'),
   /** Where to source portfolio holdings: manual JSON or live from Kite. */
   PORTFOLIO_SOURCE: z.enum(['manual', 'kite']).default('manual'),
 
   NEWS_API_KEY: z.string().optional(),
 
-  BRIEFING_DELIVERY: z.enum(['file', 'email', 'slack', 'telegram']).default('file'),
+  BRIEFING_DELIVERY: z.enum(['file', 'email']).default('file'),
   BRIEFING_OUTPUT_DIR: z.string().default('./briefings'),
 
   SMTP_HOST: z.string().default('smtp.gmail.com'),
@@ -83,11 +89,6 @@ const EnvSchema = z.object({
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().optional(),
   SMTP_TO: z.string().optional(),
-
-  SLACK_WEBHOOK_URL: z.string().url().optional(),
-
-  TELEGRAM_BOT_TOKEN: z.string().optional(),
-  TELEGRAM_CHAT_ID: z.string().optional(),
 
   /**
    * Parallel LLM calls when analysing portfolio holdings (`mp daily`,
@@ -100,6 +101,11 @@ const EnvSchema = z.object({
    * trigger gate (deep loss, alerts, news, screens, technical extremes).
    */
   PORTFOLIO_ANALYSIS_DISABLE_LITE: z.enum(['0', '1']).default('0'),
+  /**
+   * `'1'` — insert PORTFOLIO_ADD rows from portfolio analyser ADD actions.
+   * `'0'` (default) — skip forward-test inserts (negative historical expectancy).
+   */
+  PORTFOLIO_ADD_PAPER_TRADES: z.enum(['0', '1']).default('0'),
 
   /** Briefing: news window ending at briefing IST midnight (hours lookback). */
   BRIEFING_NEWS_WINDOW_HOURS: z.coerce.number().int().min(1).max(168).default(48),

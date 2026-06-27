@@ -21,6 +21,7 @@ import { ingestYahooSnapshots } from '../ingestors/yahoo-snapshot-ingestor.js';
 import { clearRunBudget, LlmBudgetExceededError, startRunBudget } from '../llm/index.js';
 import { child } from '../logger.js';
 import { getMarketClosure, isSundayIst } from '../market/nse-calendar.js';
+import { runMomentumRanker } from '../rankers/momentum-ranker.js';
 import { type EvaluateTradesResult, runEvaluatePaperTrades } from '../scripts/evaluate-trades.js';
 import { applyMomentumRegimeGateExits } from '../strategies/momentum-rebalance.js';
 import { type BriefRunResult, runBriefingComposer } from './briefing-composer.js';
@@ -30,11 +31,42 @@ import { runPortfolioSync } from './portfolio-sync.js';
 import { type RunRegimeAgentResult, runRegimeAgent } from './regime-agent.js';
 import { maybeWriteDailyRunSummary } from './run-summary.js';
 import { runSignalEnricher } from './signal-enricher.js';
+import { runStage } from './stage-runner.js';
 import { runStockScreener } from './stock-screener.js';
 import { detectStopLossBreaches } from './stop-loss-detector.js';
 import { generateTheses } from './thesis-generator.js';
 
 const log = child({ component: 'daily-workflow' });
+
+/** Fail-open momentum rank refresh (writes `mom_rank` / `mom_false_flag` for thesis + gate). */
+export function runMomentumRankStage(
+  runDate: string,
+  asOf: string,
+  db: ReturnType<typeof getDb>,
+): ReturnType<typeof runMomentumRanker> | null {
+  recordPipelineStage({ runDate, stage: 'momentum-rank', status: 'started' }, db);
+  try {
+    const rankResult = runMomentumRanker({ asOf, db });
+    recordPipelineStage(
+      {
+        runDate,
+        stage: 'momentum-rank',
+        status: 'success',
+        metadata: {
+          signalsWritten: rankResult.signalsWritten,
+          eligibleCount: rankResult.eligibleCount,
+        },
+      },
+      db,
+    );
+    return rankResult;
+  } catch (err) {
+    const msg = (err as Error).message;
+    recordPipelineStage({ runDate, stage: 'momentum-rank', status: 'failed', errorMsg: msg }, db);
+    log.warn({ err: msg }, 'momentum rank failed; continuing workflow');
+    return null;
+  }
+}
 
 export interface DailyWorkflowOptions {
   /** ISO date (YYYY-MM-DD). Defaults to today IST. */
@@ -54,7 +86,7 @@ export interface DailyWorkflowResult {
   portfolioCount: number;
   hasNarrative: boolean;
   html: string;
-  delivery: 'file' | 'email' | 'slack' | 'telegram';
+  delivery: 'file' | 'email';
   /** True when `date` was a weekend or NSE holiday — no ingest / enrichment / fresh LLMs ran. */
   holidayMode?: boolean;
   /** Human-readable closure label when `holidayMode` is true. */
@@ -68,29 +100,19 @@ export async function runDailyWorkflow(
 
   if (isSundayIst(date)) {
     const sundayDb = getDb();
-    recordPipelineStage({ runDate: date, stage: 'earnings-calendar', status: 'started' }, sundayDb);
-    try {
-      await syncMomentumEarningsCalendarFromYahoo(
-        getMomentumUniverseSymbols({ fresh: true }),
-        sundayDb,
-        { refDate: date },
-      );
-      recordPipelineStage(
-        { runDate: date, stage: 'earnings-calendar', status: 'success' },
-        sundayDb,
-      );
-    } catch (err) {
-      recordPipelineStage(
-        {
-          runDate: date,
-          stage: 'earnings-calendar',
-          status: 'failed',
-          errorMsg: (err as Error).message,
-        },
-        sundayDb,
-      );
+    const earningsStage = await runStage({
+      db: sundayDb,
+      runDate: date,
+      stage: 'earnings-calendar',
+      policy: 'warn',
+      work: () =>
+        syncMomentumEarningsCalendarFromYahoo(getMomentumUniverseSymbols(), sundayDb, {
+          refDate: date,
+        }),
+    });
+    if (!earningsStage.ok) {
       log.warn(
-        { err: (err as Error).message },
+        { err: earningsStage.message },
         'Sunday Yahoo earnings calendar refresh failed; continuing',
       );
     }
@@ -166,48 +188,39 @@ export async function runDailyWorkflow(
 
   try {
     if (!opts.skipPortfolio) {
-      recordPipelineStage({ runDate, stage: 'portfolio-sync', status: 'started' }, db);
-      try {
-        // Phase 4.5: portfolio sync + stop-loss are outside regime gates (`portfolio_exit_signals` /
-        // `trailing_stop_update` are always-on at 100% in strategy-gates.json).
-        await runPortfolioSync({ date });
-        const stopLoss = detectStopLossBreaches({ date });
-        log.info(
-          { checked: stopLoss.checked, breached: stopLoss.breached },
-          'stop-loss detector complete',
+      const portfolioSyncStage = await runStage({
+        db,
+        runDate,
+        stage: 'portfolio-sync',
+        policy: 'warn',
+        work: async () => {
+          // Phase 4.5: portfolio sync + stop-loss are outside regime gates (`portfolio_exit_signals` /
+          // `trailing_stop_update` are always-on at 100% in strategy-gates.json).
+          await runPortfolioSync({ date });
+          const stopLoss = detectStopLossBreaches({ date });
+          log.info(
+            { checked: stopLoss.checked, breached: stopLoss.breached },
+            'stop-loss detector complete',
+          );
+        },
+      });
+      if (!portfolioSyncStage.ok) {
+        log.warn(
+          { err: portfolioSyncStage.message },
+          'portfolio sync/stop-loss failed; continuing workflow',
         );
-        recordPipelineStage({ runDate, stage: 'portfolio-sync', status: 'success' }, db);
-      } catch (err) {
-        const msg = (err as Error).message;
-        recordPipelineStage(
-          { runDate, stage: 'portfolio-sync', status: 'failed', errorMsg: msg },
-          db,
-        );
-        log.warn({ err: msg }, 'portfolio sync/stop-loss failed; continuing workflow');
-        warnings.push({ category: 'Portfolio sync', message: msg });
+        warnings.push({ category: 'Portfolio sync', message: portfolioSyncStage.message });
       }
     }
 
-    recordPipelineStage({ runDate, stage: 'ingest', status: 'started' }, db);
-    let ingestResult: IngestRunResult;
-    try {
-      ingestResult = await runDailyIngestor({ date });
-      recordPipelineStage(
-        {
-          runDate,
-          stage: 'ingest',
-          status: 'success',
-          metadata: { symbolCount: ingestResult.symbols },
-        },
-        db,
-      );
-    } catch (err) {
-      recordPipelineStage(
-        { runDate, stage: 'ingest', status: 'failed', errorMsg: (err as Error).message },
-        db,
-      );
-      throw err;
-    }
+    const ingestResult: IngestRunResult = await runStage({
+      db,
+      runDate,
+      stage: 'ingest',
+      policy: 'fatal',
+      work: () => runDailyIngestor({ date }),
+      metadata: (result) => ({ symbolCount: result.symbols }),
+    });
     for (const f of ingestResult.failures) {
       warnings.push({
         category: 'Ingest',
@@ -215,110 +228,109 @@ export async function runDailyWorkflow(
       });
     }
 
-    recordPipelineStage({ runDate, stage: 'corporate-actions', status: 'started' }, db);
-    try {
-      await applyCorporateActionsFromYahooSplits(db, { refDate: date });
-      recordPipelineStage({ runDate, stage: 'corporate-actions', status: 'success' }, db);
-    } catch (err) {
-      const msg = (err as Error).message;
-      recordPipelineStage(
-        { runDate, stage: 'corporate-actions', status: 'failed', errorMsg: msg },
-        db,
+    const corporateActionsStage = await runStage({
+      db,
+      runDate,
+      stage: 'corporate-actions',
+      policy: 'warn',
+      work: () => applyCorporateActionsFromYahooSplits(db, { refDate: date }),
+    });
+    if (!corporateActionsStage.ok) {
+      log.warn(
+        { err: corporateActionsStage.message },
+        'corporate actions from Yahoo splits failed; continuing workflow',
       );
-      log.warn({ err: msg }, 'corporate actions from Yahoo splits failed; continuing workflow');
-      warnings.push({ category: 'Corporate actions', message: msg });
+      warnings.push({ category: 'Corporate actions', message: corporateActionsStage.message });
     }
 
-    recordPipelineStage({ runDate, stage: 'enrich', status: 'started' }, db);
-    try {
-      await runSignalEnricher({ date });
-      recordPipelineStage({ runDate, stage: 'enrich', status: 'success' }, db);
-    } catch (err) {
-      recordPipelineStage(
-        { runDate, stage: 'enrich', status: 'failed', errorMsg: (err as Error).message },
-        db,
-      );
-      throw err;
-    }
+    await runStage({
+      db,
+      runDate,
+      stage: 'enrich',
+      policy: 'fatal',
+      work: () => runSignalEnricher({ date }),
+    });
     log.info('pipeline: enrich complete, starting yahoo snapshot ingest');
 
-    recordPipelineStage({ runDate, stage: 'yahoo-snapshot', status: 'started' }, db);
-    try {
-      const snap = await ingestYahooSnapshots(db, { date });
+    const yahooSnapshotStage = await runStage({
+      db,
+      runDate,
+      stage: 'yahoo-snapshot',
+      policy: 'warn',
+      work: () => ingestYahooSnapshots(db, { date }),
+    });
+    if (yahooSnapshotStage.ok) {
+      const snap = yahooSnapshotStage.result;
       if (snap.failed > 0) {
         log.warn(snap, 'yahoo snapshot ingest partial failures');
       } else {
         log.info(snap, 'yahoo snapshot ingest complete');
       }
-      recordPipelineStage({ runDate, stage: 'yahoo-snapshot', status: 'success' }, db);
-    } catch (err) {
-      recordPipelineStage(
-        {
-          runDate,
-          stage: 'yahoo-snapshot',
-          status: 'failed',
-          errorMsg: (err as Error).message,
-        },
-        db,
-      );
+    } else {
       log.warn(
-        { err: (err as Error).message },
+        { err: yahooSnapshotStage.message },
         'yahoo snapshot ingest failed unexpectedly; continuing workflow',
       );
     }
 
-    recordPipelineStage({ runDate, stage: 'ext-signal', status: 'started' }, db);
-    try {
-      await runExtSignalHoldingsIngestor(db);
-      recordPipelineStage({ runDate, stage: 'ext-signal', status: 'success' }, db);
-    } catch (err) {
-      const msg = (err as Error).message;
-      recordPipelineStage({ runDate, stage: 'ext-signal', status: 'failed', errorMsg: msg }, db);
-      warnings.push({
-        category: 'External signals',
-        message: `ext_signal_holdings ingest failed: ${msg}`,
-      });
-      log.warn({ err }, 'ext_signal: ingest failed — thesis corroboration unavailable');
+    const rankResult = runMomentumRankStage(runDate, date, db);
+    if (rankResult) {
+      log.info(
+        {
+          signalsWritten: rankResult.signalsWritten,
+          eligibleCount: rankResult.eligibleCount,
+        },
+        'momentum rank complete',
+      );
     }
 
-    recordPipelineStage({ runDate, stage: 'inav', status: 'started' }, db);
-    try {
-      const inav = await fetchInavSnapshots({ date, db });
+    const extSignalStage = await runStage({
+      db,
+      runDate,
+      stage: 'ext-signal',
+      policy: 'warn',
+      work: () => runExtSignalHoldingsIngestor(db),
+    });
+    if (!extSignalStage.ok) {
+      warnings.push({
+        category: 'External signals',
+        message: `ext_signal_holdings ingest failed: ${extSignalStage.message}`,
+      });
+      log.warn(
+        { err: extSignalStage.error },
+        'ext_signal: ingest failed — thesis corroboration unavailable',
+      );
+    }
+
+    const inavStage = await runStage({
+      db,
+      runDate,
+      stage: 'inav',
+      policy: 'warn',
+      work: () => fetchInavSnapshots({ date, db }),
+    });
+    if (inavStage.ok) {
+      const inav = inavStage.result;
       if (inav.failed) {
         log.warn({ date }, 'inav snapshot ingest skipped after NSE failure');
       }
-      recordPipelineStage({ runDate, stage: 'inav', status: 'success' }, db);
-    } catch (err) {
-      const msg = (err as Error).message;
-      recordPipelineStage({ runDate, stage: 'inav', status: 'failed', errorMsg: msg }, db);
+    } else {
       warnings.push({
         category: 'ETF iNAV',
-        message: `iNAV fetch failed: ${msg}`,
+        message: `iNAV fetch failed: ${inavStage.message}`,
       });
-      log.warn({ err }, 'iNAV: fetch failed — ETF pricing card will not render');
+      log.warn({ err: inavStage.error }, 'iNAV: fetch failed — ETF pricing card will not render');
     }
 
     log.info('pipeline: inav snapshots complete, starting regime classification');
-    recordPipelineStage({ runDate, stage: 'regime', status: 'started' }, db);
-    let regimeAgent: RunRegimeAgentResult;
-    try {
-      regimeAgent = await runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) });
-      recordPipelineStage(
-        {
-          runDate,
-          stage: 'regime',
-          status: 'success',
-          metadata: { regime: regimeAgent.regime },
-        },
-        db,
-      );
-    } catch (err) {
-      recordPipelineStage(
-        { runDate, stage: 'regime', status: 'failed', errorMsg: (err as Error).message },
-        db,
-      );
-      throw err;
-    }
+    const regimeAgent: RunRegimeAgentResult = await runStage({
+      db,
+      runDate,
+      stage: 'regime',
+      policy: 'fatal',
+      work: () => runRegimeAgent({ date, skipLlm: Boolean(opts.skipAi) }),
+      metadata: (result) => ({ regime: result.regime }),
+    });
     const momRegimeExits = applyMomentumRegimeGateExits({
       calendarDate: date,
       regime: regimeAgent.regime,
@@ -328,21 +340,20 @@ export async function runDailyWorkflow(
       log.info({ momRegimeExits }, 'momentum regime gate: closed paper trades');
     }
 
-    recordPipelineStage({ runDate, stage: 'screen', status: 'started' }, db);
-    try {
-      const screenResult = await runStockScreener({ date, regime: regimeAgent.regime });
-      const matchCount = Object.values(screenResult.matchesByScreen).reduce((sum, n) => sum + n, 0);
-      recordPipelineStage(
-        { runDate, stage: 'screen', status: 'success', metadata: { matchCount } },
-        db,
-      );
-    } catch (err) {
-      recordPipelineStage(
-        { runDate, stage: 'screen', status: 'failed', errorMsg: (err as Error).message },
-        db,
-      );
-      throw err;
-    }
+    await runStage({
+      db,
+      runDate,
+      stage: 'screen',
+      policy: 'fatal',
+      work: () => runStockScreener({ date, regime: regimeAgent.regime }),
+      metadata: (screenResult) => {
+        const matchCount = Object.values(screenResult.matchesByScreen).reduce(
+          (sum, n) => sum + n,
+          0,
+        );
+        return { matchCount };
+      },
+    });
 
     let thesisRun:
       | {
@@ -465,26 +476,14 @@ export async function runDailyWorkflow(
       }
     }
 
-    recordPipelineStage({ runDate, stage: 'evaluate', status: 'started' }, db);
-    let paperEval: EvaluateTradesResult;
-    try {
-      paperEval = runEvaluatePaperTrades(date, db, { skipAi: opts.skipAi });
-      recordPipelineStage(
-        {
-          runDate,
-          stage: 'evaluate',
-          status: 'success',
-          metadata: { evaluated: paperEval.evaluated, closed: paperEval.closed },
-        },
-        db,
-      );
-    } catch (err) {
-      recordPipelineStage(
-        { runDate, stage: 'evaluate', status: 'failed', errorMsg: (err as Error).message },
-        db,
-      );
-      throw err;
-    }
+    const paperEval: EvaluateTradesResult = await runStage({
+      db,
+      runDate,
+      stage: 'evaluate',
+      policy: 'fatal',
+      work: () => runEvaluatePaperTrades(date, db, { skipAi: opts.skipAi }),
+      metadata: (result) => ({ evaluated: result.evaluated, closed: result.closed }),
+    });
     log.info(paperEval, 'paper trade evaluation');
 
     let briefing: BriefRunResult;

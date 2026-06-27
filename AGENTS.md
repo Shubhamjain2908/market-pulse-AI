@@ -5,7 +5,7 @@
 - Keep stage outputs DB-backed and rerunnable for replay/debug (`src/db/schema.sql`, `src/cli.ts`).
 
 ## Core Architecture
-- Main orchestration is `runDailyWorkflow` in `src/agents/daily-workflow.ts`: optional portfolio sync + stop-loss -> ingest -> enrich -> regime -> gated screens -> sentiment/thesis (if AI enabled) -> paper-trade evaluation -> briefing. Each stage records to `pipeline_runs` via `src/db/pipeline-queries.ts`; briefing degrades when required stages (`enrich`, `regime`, `screen`) failed.
+- Main orchestration is `runDailyWorkflow` in `src/agents/daily-workflow.ts`: optional portfolio sync + stop-loss -> ingest -> enrich -> yahoo-snapshot -> momentum-rank -> ext-signal -> regime -> gated screens -> sentiment/thesis (if AI enabled) -> paper-trade evaluation -> briefing. Each stage appends to `pipeline_runs` via `src/db/pipeline-queries.ts`; briefing degrades when the **latest** status for required stages (`enrich`, `regime`, `screen`) is `failed` (retries on the same `run_date` can clear degraded mode).
 - `src/cli.ts` stays thin command wiring; domain logic belongs under `src/agents`, `src/analysers`, `src/enrichers`, `src/strategies`.
 - Market-closure mode is first-class: weekends/holidays skip ingest and fresh LLM calls but still compose a persisted-data briefing.
 
@@ -14,7 +14,7 @@
 - DB pattern is explicit prepared statements + transactions (no ORM) in `src/db/queries.ts` and domain helpers (`src/db/pipeline-queries.ts`, `src/db/regime-queries.ts`, etc.).
 - Migrations are append-only SQL in `src/db/migrations`; `schema.sql` is base migration in `src/db/migrate.ts`.
 - LLM abstraction is `LlmProvider` (`src/llm/types.ts`); provider selection is centralized in `src/llm/factory.ts`.
-- External surfaces: market data (`free` Yahoo/NSE/Screener or Kite), delivery (`file`/`email`/`slack`/`telegram`), providers (`cursor-agent`, `vertex`, `anthropic`, `openai`, `google-studio`, `mock`).
+- External surfaces: market data (`free` Yahoo/NSE/Screener or Kite), delivery (`file`/`email`), providers (`cursor-agent`, `vertex`, `anthropic`, `openai`, `google-studio`, `mock`).
 
 ## Project Conventions
 - Validate env/config/LLM JSON with zod (`src/config/env.ts`, `src/config/loaders.ts`); avoid unvalidated parsing paths.
@@ -36,6 +36,7 @@
 - Bootstrap: `pnpm install`, `pnpm migrate`, `pnpm cli doctor`.
 - Main runs: `pnpm daily`, `pnpm daily --skip-ai`, `pnpm cli run-all`.
 - Stage debugging: `pnpm cli ingest -d YYYY-MM-DD`, `pnpm cli enrich -d YYYY-MM-DD`, `pnpm cli regime -d YYYY-MM-DD --no-narrative`, `pnpm cli screen -d YYYY-MM-DD`, `pnpm cli brief -d YYYY-MM-DD --skip-ai`.
+- Diagnostics: `pnpm cli fundamental-screen-audit -d YYYY-MM-DD`, `pnpm cli ext-signal-cross-ref -d YYYY-MM-DD`, `pnpm cli ext-signal-smoke`.
 - Quality gate before handoff: `pnpm typecheck && pnpm test && pnpm lint`.
 
 ## Scheduler and Tests

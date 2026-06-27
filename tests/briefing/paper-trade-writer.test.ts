@@ -7,6 +7,7 @@ const mockError = vi.hoisted(() => vi.fn());
 const mockWarn = vi.hoisted(() => vi.fn());
 const mockInfo = vi.hoisted(() => vi.fn());
 const noop = vi.hoisted(() => vi.fn());
+const portfolioAddPaperTrades = vi.hoisted(() => ({ value: '0' as '0' | '1' }));
 
 vi.mock('../../src/logger.js', () => {
   const stub = () => ({
@@ -18,6 +19,16 @@ vi.mock('../../src/logger.js', () => {
   });
   const logger = stub();
   return { child: stub, logger };
+});
+
+vi.mock('../../src/config/env.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../src/config/env.js')>();
+  return {
+    ...mod,
+    get config() {
+      return { ...mod.config, PORTFOLIO_ADD_PAPER_TRADES: portfolioAddPaperTrades.value };
+    },
+  };
 });
 
 import { recordPaperTrades } from '../../src/briefing/paper-trade-writer.js';
@@ -32,6 +43,7 @@ describe('recordPaperTrades', () => {
   beforeEach(() => {
     dbPath = join(tmpdir(), `mp-ptw-${Date.now()}.db`);
     process.env.DATABASE_PATH = dbPath;
+    portfolioAddPaperTrades.value = '0';
     db = getDb({ path: dbPath });
     migrate(db);
     mockError.mockClear();
@@ -49,7 +61,17 @@ describe('recordPaperTrades', () => {
     }
   });
 
+  function seedPathAScreen(symbol: string, date: string): void {
+    db.prepare(
+      `
+      INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+      VALUES (?, ?, 'rsi_oversold_bounce', 1, '{}')
+    `,
+    ).run(symbol, date);
+  }
+
   it('inserts AI_PICK from thesis cards with valid levels', () => {
+    seedPathAScreen('ABCD', '2026-05-01');
     const theses: ThesisCard[] = [
       {
         symbol: 'ABCD',
@@ -72,7 +94,8 @@ describe('recordPaperTrades', () => {
     expect(open[0]?.maxHoldDays).toBe(30);
   });
 
-  it('inserts PORTFOLIO_ADD when action is ADD and levels are numeric', () => {
+  it('inserts PORTFOLIO_ADD when action is ADD and levels are numeric and flag enabled', () => {
+    portfolioAddPaperTrades.value = '1';
     const portfolio: PortfolioSummary = {
       totalValue: 1,
       totalPnl: 0,
@@ -106,6 +129,44 @@ describe('recordPaperTrades', () => {
     expect(o).toHaveLength(1);
     expect(o[0]?.signalType).toBe('PORTFOLIO_ADD');
     expect(o[0]?.maxHoldDays).toBe(90);
+  });
+
+  it('skips PORTFOLIO_ADD inserts by default', () => {
+    const portfolio: PortfolioSummary = {
+      totalValue: 1,
+      totalPnl: 0,
+      totalPnlPct: 0,
+      dayChange: null,
+      dayChangePct: null,
+      source: 'manual',
+      positions: [
+        {
+          symbol: 'INFY',
+          qty: 1,
+          avgPrice: 100,
+          lastPrice: 150,
+          pnl: null,
+          pnlPct: null,
+          dayChangePct: null,
+          action: 'ADD',
+          conviction: 0.8,
+          thesis: null,
+          triggerReason: null,
+          bullPoints: [],
+          bearPoints: [],
+          suggestedStop: 140,
+          suggestedTarget: 180,
+        },
+      ],
+    };
+    const r = recordPaperTrades('2026-05-01', [], portfolio, db);
+    expect(r.insertedPortfolioAdd).toBe(0);
+    expect(r.blockedPortfolioAdd).toBe(1);
+    expect(getOpenPaperTrades(db)).toHaveLength(0);
+    expect(mockInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: 'INFY', event: 'portfolio_add_paper_disabled' }),
+      'PORTFOLIO_ADD paper trade disabled by config',
+    );
   });
 
   it('skips invalid long setup (target <= entry)', () => {
@@ -177,7 +238,8 @@ describe('recordPaperTrades', () => {
     );
   });
 
-  it('raises AI_PICK stop to 8% hard floor when LLM stop is too wide', () => {
+  it('applies 8% floor backstop when LLM stop is too wide', () => {
+    seedPathAScreen('WIDE', '2026-05-01');
     const r = recordPaperTrades(
       '2026-05-01',
       [aiPickThesis('WIDE', '₹100', '₹88', '₹120')],
@@ -187,13 +249,34 @@ describe('recordPaperTrades', () => {
     expect(r.insertedAiPick).toBe(1);
     const trade = getOpenPaperTrades(db)[0];
     expect(trade?.stopLoss).toBe(92);
-    expect(mockWarn).toHaveBeenCalledWith(
-      { symbol: 'WIDE', originalStop: 88, effectiveStop: 92 },
+    expect(mockWarn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ originalStop: expect.any(Number) }),
       'AI_PICK stop raised to 8% hard floor',
     );
   });
 
+  it('widens tight AI_PICK stop to minimum distance', () => {
+    seedPathAScreen('TIGHT', '2026-05-01');
+    db.prepare(
+      `INSERT INTO signals (symbol, date, name, value, source) VALUES ('TIGHT', '2026-05-01', 'atr_14', 2.5, 'test')`,
+    ).run();
+    const r = recordPaperTrades(
+      '2026-05-01',
+      [aiPickThesis('TIGHT', '₹100', '₹99.5', '₹120')],
+      undefined,
+      db,
+    );
+    expect(r.insertedAiPick).toBe(1);
+    const trade = getOpenPaperTrades(db)[0];
+    expect(trade?.stopLoss).toBe(97.5);
+    expect(mockWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'ai_pick_stop_normalized', symbol: 'TIGHT' }),
+      'AI_PICK stop widened to minimum distance',
+    );
+  });
+
   it('inserts AI_PICK with LLM stop when above hard floor', () => {
+    seedPathAScreen('OK', '2026-05-01');
     const r = recordPaperTrades(
       '2026-05-01',
       [aiPickThesis('OK', '₹100', '₹95', '₹120')],
@@ -219,12 +302,23 @@ describe('recordPaperTrades', () => {
       stopLoss: '₹95',
       target: '₹120',
       timeHorizon: 'medium',
-      confidence: 5,
+      confidence: 7,
       triggerReason: 't',
     };
   }
 
+  it('blocks AI_PICK via eligibility gate when no confirmation path', () => {
+    const r = recordPaperTrades('2026-05-01', [aiPickThesisCard('NOGATE')], undefined, db);
+    expect(r.insertedAiPick).toBe(0);
+    expect(r.blockedAiPick).toBe(1);
+    expect(mockInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'ai_pick_blocked', symbol: 'NOGATE' }),
+      'AI_PICK blocked by eligibility gate',
+    );
+  });
+
   it('blocks AI_PICK when OPEN momentum_mf exists for the symbol', () => {
+    seedPathAScreen('RELIANCE', '2026-05-01');
     db.prepare(
       `
       INSERT INTO paper_trades (
@@ -296,6 +390,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('blocks PORTFOLIO_ADD when another OPEN paper trade exists for the symbol', () => {
+    portfolioAddPaperTrades.value = '1';
     db.prepare(
       `
       INSERT INTO paper_trades (
@@ -346,6 +441,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('accumulates crossStrategyBlocked across branches in one run', () => {
+    portfolioAddPaperTrades.value = '1';
     db.prepare(
       `
       INSERT INTO paper_trades (
@@ -371,6 +467,7 @@ describe('recordPaperTrades', () => {
     `,
     ).run();
     seedCatalystScreen('RELIANCE', '2026-05-01');
+    seedPathAScreen('INFY', '2026-05-01');
 
     const portfolio: PortfolioSummary = {
       totalValue: 1,
@@ -414,6 +511,7 @@ describe('recordPaperTrades', () => {
   });
 
   it('allows AI_PICK when prior paper trade is CLOSED', () => {
+    seedPathAScreen('RELIANCE', '2026-05-01');
     db.prepare(
       `
       INSERT INTO paper_trades (

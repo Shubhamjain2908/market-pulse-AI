@@ -47,7 +47,7 @@ describe('stock screener analyser: quality_garp', () => {
   it('persists quality_garp with matched value payload and regime meta', () => {
     const db = new Database(':memory:');
     migrate(db);
-    seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
+    seedStrategyGates(loadStrategyGates().rows, db);
 
     db.prepare(
       `INSERT INTO symbols (symbol, exchange, sector, is_index, is_active) VALUES (?, 'NSE', ?, 0, 1)`,
@@ -88,7 +88,7 @@ describe('stock screener analyser: quality_garp', () => {
   it('excludes symbol when third_roe is missing', () => {
     const db = new Database(':memory:');
     migrate(db);
-    seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
+    seedStrategyGates(loadStrategyGates().rows, db);
 
     db.prepare(
       `
@@ -124,7 +124,7 @@ describe('stock screener analyser: quality_garp', () => {
   it('excludes ETF symbols from config even when fundamentals pass', () => {
     const db = new Database(':memory:');
     migrate(db);
-    seedStrategyGates(loadStrategyGates({ fresh: true }).rows, db);
+    seedStrategyGates(loadStrategyGates().rows, db);
 
     insertQualityBaseRows(db, 'NIFTYBEES');
 
@@ -134,5 +134,18 @@ describe('stock screener analyser: quality_garp', () => {
     );
     expect(result.matchesByScreen.quality_garp).toBe(0);
     expect(result.funnelByScreen?.quality_garp?.etf_exclusion).toBe(1);
+  });
+
+  it('uses the yahoo_annual universe for live quality_garp when symbols are not overridden', () => {
+    const db = new Database(':memory:');
+    migrate(db);
+    seedStrategyGates(loadStrategyGates().rows, db);
+
+    insertQualityBaseRows(db, 'NOTWATCH');
+
+    const result = runStockScreenAnalyser({ date: '2026-05-28', onlyScreen: 'quality_garp' }, db);
+
+    expect(result.matchesByScreen.quality_garp).toBe(1);
+    expect(result.funnelByScreen?.quality_garp?.universe).toBe(1);
   });
 });

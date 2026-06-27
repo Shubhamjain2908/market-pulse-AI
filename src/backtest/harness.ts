@@ -18,8 +18,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
-import { QUALITY_GARP_SCREEN } from '../analysers/quality-garp-gates.js';
-import { resolveQualityGarpSymbols } from '../analysers/quality-garp-universe.js';
+import { QUALITY_GARP_SCREEN, resolveQualityGarpSymbols } from '../analysers/quality-garp.js';
 import { DbSignalProvider } from '../analysers/signal-provider.js';
 import { runStockScreenAnalyser } from '../analysers/stock-screener.js';
 import { loadScreens, loadWatchlist } from '../config/loaders.js';
