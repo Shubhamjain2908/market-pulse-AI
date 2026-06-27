@@ -318,7 +318,7 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 `kite-auto-login` stays idle (~tens of MB) between triggers; Playwright/Chromium spin up only during the login job (~30s), then close. Low-memory Chromium flags in `login.ts` for 1GB VM.
 
 **Kite token flow:**
-1. **08:30 (automated):** `runKiteAutoLogin()` → Kite Connect login URL → userid/password/TOTP → redirect to `KITE_REDIRECT_URL` (duckdns `/auth/callback`) → `kite-auth` exchanges `request_token` → writes `KITE_ACCESS_TOKEN` to `.env` + SQLite `config.kite_access_token`. Auto-login polls for a **changed** token in local sqlite (same host as `kite-auth` only — do not run auto-login on a laptop when redirect points at Oracle).
+1. **08:30 (automated):** `runKiteAutoLogin()` → Kite Connect login URL → userid/password/TOTP → redirect to `KITE_REDIRECT_URL` (duckdns `/auth/callback`) → `kite-auth` exchanges `request_token` → writes `KITE_ACCESS_TOKEN` to `.env` + SQLite `config.kite_access_token`. Auto-login polls for a **refreshed** row in local sqlite (new token value or new `updated_at`; same host as `kite-auth` only — do not run auto-login on a laptop when redirect points at Oracle).
 2. **Manual fallback:** `pnpm kite-login` (interactive) or open `/auth/kite` in browser. Required if auto-login fails before 08:45.
 3. **08:45 pipeline:** `portfolio-sync` / live scan read token from sqlite config or `.env`. If token missing/expired: Kite paths skip gracefully; ingest/enrich/screen/brief still run.
 
