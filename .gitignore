@@ -20,6 +20,9 @@ data/
 *.db-wal
 *.db-shm
 
+# playwright auto-login failure screenshots
+errors/
+
 # logs
 logs/
 *.log

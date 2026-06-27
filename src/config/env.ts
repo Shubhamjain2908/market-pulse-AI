@@ -69,6 +69,12 @@ const EnvSchema = z.object({
   KITE_ACCESS_TOKEN: z.string().optional(),
   KITE_API_BASE: z.string().url().default('https://api.kite.trade'),
   KITE_AUTH_PORT: z.coerce.number().int().min(1).max(65535).default(3001),
+  KITE_USER_ID: z.string().optional(),
+  KITE_PASSWORD: z.string().optional(),
+  KITE_TOTP_SECRET: z.string().optional(),
+  /** Must match the redirect URL registered in your Kite Connect app. */
+  KITE_REDIRECT_URL: z.string().url().optional(),
+  KITE_AUTO_LOGIN_HEADLESS: z.enum(['true', 'false']).default('true'),
   /** Where to source portfolio holdings: manual JSON or live from Kite. */
   PORTFOLIO_SOURCE: z.enum(['manual', 'kite']).default('manual'),
 
