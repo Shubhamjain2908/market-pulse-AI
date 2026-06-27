@@ -70,6 +70,22 @@ export async function runKiteAutoLogin(
         { cause: err },
       );
     }
+    if (
+      msg.includes('shared libraries') ||
+      msg.includes('libatk') ||
+      msg.includes('exitCode=127')
+    ) {
+      throw new Error(
+        'Chromium system libraries missing (Linux). Run once on the VM: sudo pnpm playwright:install-deps',
+        { cause: err },
+      );
+    }
+    if (process.platform === 'linux' && msg.includes('has been closed')) {
+      throw new Error(
+        'Chromium failed to start on Linux. Run once: sudo pnpm playwright:install-deps (then retry pnpm kite-auto-login)',
+        { cause: err },
+      );
+    }
     throw err;
   }
 

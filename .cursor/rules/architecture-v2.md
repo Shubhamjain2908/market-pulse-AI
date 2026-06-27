@@ -322,7 +322,7 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 2. **Manual fallback:** `pnpm kite-login` (interactive) or open `/auth/kite` in browser. Required if auto-login fails before 08:45.
 3. **08:45 pipeline:** `portfolio-sync` / live scan read token from sqlite config or `.env`. If token missing/expired: Kite paths skip gracefully; ingest/enrich/screen/brief still run.
 
-**Env (auto-login):** `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`, `KITE_REDIRECT_URL` (must match Kite Connect app), `KITE_AUTO_LOGIN_HEADLESS=true`. Playwright browsers: `pnpm playwright:install` once per deploy (`PLAYWRIGHT_BROWSERS_PATH=0` → `node_modules`).
+**Env (auto-login):** `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`, `KITE_REDIRECT_URL` (must match Kite Connect app), `KITE_AUTO_LOGIN_HEADLESS=true`. Playwright: `pnpm playwright:install` (browser binary); on Linux VM also `sudo pnpm playwright:install-deps` once (`PLAYWRIGHT_BROWSERS_PATH=0` → `node_modules`).
 
 **CLI vs package.json:** Pipeline stages are **`pnpm cli <cmd>`** (ingest, enrich, screen, brief, …). `package.json` keeps only deploy/ops shortcuts (`daily`, `schedule`, `migrate`, `deploy`), Kite trio, and scripts **not** wired into `cli.ts` (`fundamentals:refresh`, `cot:gold`, `regime:seed-gates`, `backtest:option-a`, …).
 

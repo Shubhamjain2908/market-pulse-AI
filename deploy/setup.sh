@@ -23,7 +23,10 @@ need_cmd() {
 install_apt() {
   info "Installing prerequisites (apt)"
   sudo apt-get update -y
-  sudo apt-get install -y curl ca-certificates git build-essential python3
+  sudo apt-get install -y curl ca-certificates git build-essential python3 \
+    libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libxkbcommon0 \
+  libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2t64 libpango-1.0-0 \
+  libcairo2 libnss3 libnspr4
 }
 
 install_dnf() {
@@ -76,6 +79,10 @@ else
     cd "$MP_INSTALL_DIR"
     mkdir -p deploy/logs data briefings secrets
     pnpm install
+    PLAYWRIGHT_BROWSERS_PATH=0 pnpm exec playwright install chromium
+    if need_cmd sudo; then
+      sudo env PLAYWRIGHT_BROWSERS_PATH=0 pnpm exec playwright install-deps chromium || true
+    fi
     pnpm run build
   )
 fi
