@@ -393,6 +393,15 @@ To enable it:
    Starts recurring jobs at 08:45 / 16:30 on weekdays and 08:00 on
    Saturdays (IST), using your configured delivery channel.
 
+   **Kite token auto-login (Oracle VM only):** when your Kite redirect URL
+   points at the same host as `kite-auth` (e.g. duckdns), run
+   `pnpm kite-auto-login:schedule` or the PM2 `kite-auto-login` app at
+   08:30 IST Mon–Fri — 15 minutes before the pipeline. Requires
+   `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`, and
+   `KITE_REDIRECT_URL` in `.env`. Failures are logged only; the main
+   scheduler keeps running. Fall back to `pnpm kite-login` manually if
+   auto-login fails before 08:45.
+
 If you'd rather skip Kite entirely, leave `PORTFOLIO_SOURCE=manual` (the
 default) and edit `config/portfolio.json`. Same downstream output —
 just no live LTPs or day-change tracking.
