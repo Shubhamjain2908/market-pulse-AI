@@ -234,9 +234,9 @@ pnpm cli fundamental-screen-audit  # quality_at_value / dividend_compounder gate
 pnpm cli ext-signal-cross-ref      # ext_signal_holdings vs watchlist, mom_rank, portfolio
 
 # Phase 6 — Market regime filter
-pnpm regime                # classify + LLM narrative (or templated fallback) → regime_daily
-pnpm regime --no-narrative # skip LLM; templated fallback narrative only (still upserts regime_daily)
-pnpm regime:gate-summary   # allowed strategies + multipliers for regime on -d date
+pnpm cli regime                # classify + LLM narrative (or templated fallback) → regime_daily
+pnpm cli regime --no-narrative # skip LLM; templated fallback narrative only (still upserts regime_daily)
+pnpm cli regime:gate-summary   # allowed strategies + multipliers for regime on -d date
 pnpm regime:seed-gates      # upsert config/strategy-gates.json → regime_strategy_gate
 pnpm regime:backfill        # historical regime_daily backfill script
 ```
@@ -393,13 +393,22 @@ To enable it:
    Starts recurring jobs at 08:45 / 16:30 on weekdays and 08:00 on
    Saturdays (IST), using your configured delivery channel.
 
+   **Kite token auto-login (Oracle VM only):** when your Kite redirect URL
+   points at the same host as `kite-auth` (e.g. duckdns), run
+   `pnpm kite-auto-login:schedule` or the PM2 `kite-auto-login` app at
+   08:30 IST Mon–Fri — 15 minutes before the pipeline. Requires
+   `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`, and
+   `KITE_REDIRECT_URL` in `.env`. Failures are logged only; the main
+   scheduler keeps running. Fall back to `pnpm kite-login` manually if
+   auto-login fails before 08:45.
+
 If you'd rather skip Kite entirely, leave `PORTFOLIO_SOURCE=manual` (the
 default) and edit `config/portfolio.json`. Same downstream output —
 just no live LTPs or day-change tracking.
 
 ### Intraday scanning (`mp scan`)
 
-`pnpm scan` does a one-shot Kite quote fetch for the union of your
+`pnpm cli scan` does a one-shot Kite quote fetch for the union of your
 watchlist and current holdings, persists each tick to `intraday_quotes`,
 and flags any symbol whose intraday move exceeds `--threshold` (default
 `3` percent) as a live alert. Cron-friendly — the command exits on
@@ -482,7 +491,7 @@ A **regime-gated** momentum sleeve that ranks a configurable universe, writes **
 - **Ranker** — `pnpm cli momentum-rank` → [`src/rankers/momentum-ranker.ts`](src/rankers/momentum-ranker.ts) reads those factor rows for `asOf` and writes **`mom_rank`**, `mom_composite_score`, **`mom_false_flag`**, `mom_rank_excluded`.
 - **Rebalance** — `pnpm cli momentum-rebalance` → [`src/strategies/momentum-rebalance.ts`](src/strategies/momentum-rebalance.ts): optional embedded ranker pass, liquidations when regime ∉ gate, rank-decay exits, new entries with sector cap + blackout checks + **`mom_false_flag` hard-block** (`falseFlagBlocked` counter) + **`atr_14` required** (`atrMissingSkipped` when missing/≤0; no 2% proxy) + **cross-strategy dedup** (`crossStrategyBlocked` when another OPEN `paper_trades` row exists); optional LLM entry thesis (false-flag thesis confidence is clamped in-strategy when thesis runs).
 
-Shortcuts: `pnpm momentum:rank` / `pnpm momentum:rebalance` (wrappers around the same CLI commands).
+Use `pnpm cli momentum-rank` / `pnpm cli momentum-rebalance` for manual runs (Sunday scheduler uses the same commands).
 
 - **Daily workflow** — [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) runs Yahoo momentum earnings refresh on **Sunday** IST ([`syncMomentumEarningsCalendarFromYahoo`](src/ingestors/yahoo/earnings-ingestor.ts) → [`replaceMomentumEarningsCalendarForSymbol`](src/db/momentum-queries.ts); **empty Yahoo response retains** existing `earnings_calendar` rows); [**`applyMomentumRegimeGateExits`**](src/strategies/momentum-rebalance.ts) after regime classification on trading days.
 
@@ -661,7 +670,7 @@ Legacy open trades with `trailing_multiplier = 2.0` in DB are normalized to the 
 
 **Evaluation**
 
-- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) + [`src/scripts/trailing-stop-engine.ts`](src/scripts/trailing-stop-engine.ts) — branches on **`stop_type`**: **trailing** path uses config-driven mults (no inline 2.0/1.5/15%), bar walk from `source_date` to `asOf`, **incremental resume** from the last `trailing_stop_log` bar (non-`STOPPED_OUT`), idempotent log inserts; **fixed** path skips trailing math/logs and evaluates persisted `stop_loss` / `target` / `max_hold_days` under the same **circuit-breaker envelope** (gap-down skips SL/TP; gap-up suppresses fake `highest_close` only); Day-1 ATR latch uses [`nextOpenOnOrAfter`](src/market/trading-days.ts) when `source_date` is a non-session day; prior-close / corp-action lookups via [`getPrevClose`](src/db/queries.ts) / [`hasCorporateActionInRange`](src/db/queries.ts); **`pnpm cli evaluate`** / **`pnpm evaluate`** with **`--skip-ai`**
+- [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) + [`src/scripts/trailing-stop-engine.ts`](src/scripts/trailing-stop-engine.ts) — branches on **`stop_type`**: **trailing** path uses config-driven mults (no inline 2.0/1.5/15%), bar walk from `source_date` to `asOf`, **incremental resume** from the last `trailing_stop_log` bar (non-`STOPPED_OUT`), idempotent log inserts; **fixed** path skips trailing math/logs and evaluates persisted `stop_loss` / `target` / `max_hold_days` under the same **circuit-breaker envelope** (gap-down skips SL/TP; gap-up suppresses fake `highest_close` only); Day-1 ATR latch uses [`nextOpenOnOrAfter`](src/market/trading-days.ts) when `source_date` is a non-session day; prior-close / corp-action lookups via [`getPrevClose`](src/db/queries.ts) / [`hasCorporateActionInRange`](src/db/queries.ts); **`pnpm cli evaluate`** with **`--skip-ai`**
 - [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` before briefing composition so same-run closures appear in the brief
 
 **Briefing**

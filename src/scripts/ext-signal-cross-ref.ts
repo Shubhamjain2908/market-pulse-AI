@@ -46,7 +46,7 @@ export function runExtSignalCrossRef(
 
   const momTop = getTopMomentumRankSnapshotForSession(sessionDate, 15, db);
   const momRankBySymbol = new Map(momTop.map((r) => [r.symbol, r.rank]));
-  // ponytail: if Sunday ranker hasn't written session rows yet, fall back to latest ≤ session
+  // if Sunday ranker hasn't written session rows yet, fall back to latest ≤ session
   if (momTop.length === 0) {
     const fallback = db
       .prepare(

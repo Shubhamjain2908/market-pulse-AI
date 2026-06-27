@@ -2,9 +2,9 @@
 ---
 
 ## 1. Core Stack & Philosophy
-**Runtime:** Node.js 22 + TypeScript (ESM), `better-sqlite3`, `node-cron`, PM2 for process management
+**Runtime:** Node.js 22 + TypeScript (ESM), `better-sqlite3`, `croner`, PM2 for process management
 
-**Broker:** Zerodha Kite Connect API — portfolio sync, GTT orders (manual trigger only). Daily OAuth token expires 6 AM IST — refreshed manually via `/auth/kite` endpoint before 8:45 AM pipeline run.
+**Broker:** Zerodha Kite Connect API — portfolio sync, GTT orders (manual trigger only). Daily OAuth token expires ~6 AM IST. **Auto-refresh:** Playwright + TOTP at **08:30 IST Mon–Fri** on the Oracle VM (`src/auth/kite-auto-login/`, PM2 `kite-auto-login`) when redirect URL is colocated with `kite-auth`. **Manual fallback:** `pnpm kite-login` or `https://[duckdns]/auth/kite` before the **08:45** pipeline if auto-login fails.
 
 **LLM:** Currently DeepSeek-V3 via OpenAI-compatible SDK (`baseURL: https://api.deepseek.com`). Provider abstraction in `src/llm/provider.ts` — switchable via `LLM_PROVIDER` env var (`anthropic` | `deepseek` | `gemini` | `openai`). All LLM calls go through `generateJson()` with Zod schema validation + 1 retry on parse failure.
 
@@ -13,7 +13,8 @@
 **Deployment:** Oracle Cloud Always Free VM (`VM.Standard.E2.1.Micro`, 1 OCPU, ap-hyderabad-1). SQLite file on persistent disk. Nginx reverse proxy for Kite auth endpoint. DuckDNS free subdomain for HTTPS.
 
 **Pipeline schedule:**
-- `8:45 AM IST Mon–Fri` — full daily pipeline (PM2 managed)
+- `8:30 AM IST Mon–Fri` — Kite OAuth auto-login (PM2 `kite-auto-login`; fail-open — logs only, pipeline still runs at 08:45)
+- `8:45 AM IST Mon–Fri` — full daily pipeline (PM2 `market-pulse` / `cli schedule`)
 - `8:00 AM IST Sunday` — momentum rebalance job
 - `10:15 AM IST Mon–Fri` — healthcheck cron (email alert on failure)
 
@@ -306,25 +307,41 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 
 **VM:** Oracle Cloud Always Free, `VM.Standard.E2.1.Micro`, Ubuntu 22.04, `ap-hyderabad-1`. 1 OCPU, 1GB RAM, 50GB disk.
 
-**Process manager:** PM2. Two processes: `market-pulse` (main app, `dist/cli.js schedule`) and `kite-auth` (Express auth server, port 3001).
+**Process manager:** PM2 — **three** app processes (see `deploy/ecosystem.config.cjs`):
 
-**Kite token flow:** Daily manual refresh. User opens `https://[duckdns-subdomain].duckdns.org/auth/kite` on phone before 8:45 AM, completes OAuth, token written to SQLite `config` table. If token missing at pipeline start: Kite sync skipped gracefully, rest of pipeline runs.
+| PM2 name | Entry | Role |
+|---|---|---|
+| `market-pulse` | `dist/cli.js schedule` | Main croner: 08:45 / 16:30 weekdays, Sat 08:00, Sun jobs |
+| `kite-auth` | `dist/auth/kite-auth-server.js` | Express OAuth callback (`/auth/kite`, `/auth/callback`, port 3001) |
+| `kite-auto-login` | `dist/auth/kite-auto-login/index.js` | Thin croner daemon: fires `runKiteAutoLogin()` at **08:30 IST Mon–Fri** only |
+
+`kite-auto-login` stays idle (~tens of MB) between triggers; Playwright/Chromium spin up only during the login job (~30s), then close. Low-memory Chromium flags in `login.ts` for 1GB VM.
+
+**Kite token flow:**
+1. **08:30 (automated):** `runKiteAutoLogin()` → Kite Connect login URL → userid/password/TOTP → redirect to `KITE_REDIRECT_URL` (duckdns `/auth/callback`) → `kite-auth` exchanges `request_token` → writes `KITE_ACCESS_TOKEN` to `.env` + SQLite `config.kite_access_token`. Auto-login polls for a **changed** token in local sqlite (same host as `kite-auth` only — do not run auto-login on a laptop when redirect points at Oracle).
+2. **Manual fallback:** `pnpm kite-login` (interactive) or open `/auth/kite` in browser. Required if auto-login fails before 08:45.
+3. **08:45 pipeline:** `portfolio-sync` / live scan read token from sqlite config or `.env`. If token missing/expired: Kite paths skip gracefully; ingest/enrich/screen/brief still run.
+
+**Env (auto-login):** `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`, `KITE_REDIRECT_URL` (must match Kite Connect app), `KITE_AUTO_LOGIN_HEADLESS=true`. Playwright browsers: `pnpm playwright:install` once per deploy (`PLAYWRIGHT_BROWSERS_PATH=0` → `node_modules`).
+
+**CLI vs package.json:** Pipeline stages are **`pnpm cli <cmd>`** (ingest, enrich, screen, brief, …). `package.json` keeps only deploy/ops shortcuts (`daily`, `schedule`, `migrate`, `deploy`), Kite trio, and scripts **not** wired into `cli.ts` (`fundamentals:refresh`, `cot:gold`, `regime:seed-gates`, `backtest:option-a`, …).
 
 **Nginx:** Reverse proxy on port 443 (Let's Encrypt via Certbot + DuckDNS). Only `/auth/` routes exposed publicly. Everything else returns 403.
 
-**Cron:**
+**Cron (reference — most jobs use PM2 croner, not raw cron):**
 ```
-45 8 * * 1-5   full daily pipeline (via PM2 schedule, not raw cron)
-0  8 * * 0     momentum rebalance
+30 8 * * 1-5   kite auto-login (PM2 kite-auto-login)
+45 8 * * 1-5   full daily pipeline (PM2 market-pulse schedule)
+0  8 * * 0     momentum rebalance (PM2 market-pulse schedule)
 15 10 * * 1-5  healthcheck → email alert on failure
-30 16 * * 1-5  EOD summary job
+30 16 * * 1-5  EOD summary job (PM2 market-pulse schedule)
 ```
 
 **Deploy scripts:** `deploy/sync-env-to-vm.sh`, `deploy/sync-db-to-vm.sh` (rsync with WAL checkpoint), `deploy/setup.sh` (Node 22 + pnpm + PM2 bootstrap), `deploy/ecosystem.config.cjs`.
 
 **Healthcheck (`deploy/healthcheck.ts`):** When `BRIEFING_DELIVERY=email`, verifies today's `briefings` row with `delivery_method=email` and non-null `delivered_at` (row absent if SMTP accepted zero recipients). Also checks `regime_daily` row present, no pino errors in PM2 logs, optional run-summary JSON thesis failure count. Logs **GTT post-fix tranche** metrics (`paper_trades` closed since `2026-05-14`, grouped by `signal_type`) on every run — empty tranche is logged, not a failure. Appends TSV to `deploy/logs/health.log`. Sends alert email on failure (includes tranche block).
 
-**config table** note — Kite token stored here
+**config table** — `kite_access_token` (+ `updated_at`); written by `kite-auth` callback and/or `kite-auto-login` persistence.
 
 ---
 

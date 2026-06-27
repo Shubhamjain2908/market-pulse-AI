@@ -23,7 +23,7 @@ export function isFundamentalSignal(signal: string): boolean {
 
 export function normalizeFundamentalForScreen(column: string, value: number): number {
   if (!PERCENT_SCALE_IF_FRACTION.has(column)) return value;
-  // ponytail: |v|<1 heuristic; Screener stores e.g. 17.7% as 17.7. Upgrade: tag unit in DB.
+  // |v|<1 heuristic; Screener stores e.g. 17.7% as 17.7. Upgrade: tag unit in DB.
   if (Math.abs(value) > 0 && Math.abs(value) < 1) return value * 100;
   return value;
 }

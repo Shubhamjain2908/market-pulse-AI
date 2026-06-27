@@ -159,7 +159,7 @@ export function renderMomentumBriefingBlock(
         —
         ${
           rebalance.skippedReason === 'missing_regime'
-            ? 'did not run (no <code>regime_daily</code> row for this session — run <code>pnpm regime</code> for the session date first).'
+            ? 'did not run (no <code>regime_daily</code> row for this session — run <code>pnpm cli regime</code> for the session date first).'
             : 'did not run entries/exits (momentum sleeve gated for this regime / strategy gates).'
         }
       </div>`
