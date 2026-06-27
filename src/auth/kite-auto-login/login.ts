@@ -27,7 +27,7 @@ const TOTP_SELECTORS = [
   '#userid:visible',
 ];
 
-// ponytail: 1GB VM flags — drop --single-process if login becomes unstable
+// 1GB VM flags — drop --single-process if login becomes unstable
 const LOW_MEMORY_CHROMIUM_ARGS = [
   '--no-sandbox',
   '--disable-setuid-sandbox',
@@ -149,7 +149,7 @@ async function fillFirst(page: Page, selectors: string[], value: string): Promis
   await loc.fill(value);
 }
 
-/** ponytail: Enter on the filled field — avoids disabled processing submit buttons */
+/** Enter on the filled field — avoids disabled processing submit buttons */
 async function fillAndSubmit(page: Page, selectors: string[], value: string): Promise<void> {
   const loc = await firstVisible(page, selectors);
   await loc.fill(value);
@@ -307,7 +307,7 @@ async function firstVisible(page: Page, selectors: string[]): Promise<Locator> {
       await loc.waitFor({ state: 'visible', timeout: 8_000 });
       return loc;
     } catch {
-      // ponytail: try next selector
+      // try next selector
     }
   }
   throw new Error(`No visible element among: ${selectors.join(', ')}`);

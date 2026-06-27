@@ -1,7 +1,7 @@
 /**
  * Thin scheduler daemon for kite auto-login (08:30 IST Mon–Fri).
  *
- * ponytail: PM2 keeps this process alive 24/7 (~tens of MB idle). Playwright +
+ * PM2 keeps this process alive 24/7 (~tens of MB idle). Playwright +
  * Chromium spin up only inside `runKiteAutoLogin()` at the cron trigger, then
  * close. For a zero-idle alternative, use system cron:
  *   30 8 * * 1-5 cd /opt/market-pulse-ai && pnpm kite-auto-login

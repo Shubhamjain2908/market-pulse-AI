@@ -65,7 +65,7 @@ function escalate(
   };
 }
 
-// ponytail: load QG universe only on first quality_garp guardrail hit per session date
+// load QG universe only on first quality_garp guardrail hit per session date
 let qgCacheDate: string | null = null;
 let qgCache: Map<string, QualityGarpFundamentalRow> | null = null;
 const profitGrowthCache = new Map<string, number | null>();
@@ -424,7 +424,7 @@ function catalystHoldExpired(
         };
       }
     } catch {
-      /* ponytail: malformed criteria → no catalyst exit */
+      /* malformed criteria → no catalyst exit */
     }
   }
 
