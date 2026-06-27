@@ -42,9 +42,6 @@ importers:
       juice:
         specifier: ^12.1.1
         version: 12.1.1
-      node-cron:
-        specifier: ^4.5.0
-        version: 4.5.0
       nodemailer:
         specifier: ^9.0.1
         version: 9.0.1
@@ -91,9 +88,6 @@ importers:
       '@types/node':
         specifier: ^25.9.3
         version: 25.9.3
-      '@types/node-cron':
-        specifier: ^3.0.11
-        version: 3.0.11
       '@types/nodemailer':
         specifier: ^8.0.0
         version: 8.0.0
@@ -640,9 +634,6 @@ packages:
 
   '@types/http-errors@2.0.5':
     resolution: {integrity: sha512-r8Tayk8HJnX0FztbZN7oVqGccWgw98T/0neJphO91KkmOzug1KkofZURD4UaD5uH8AqcFLfdPErnBod0u71/qg==}
-
-  '@types/node-cron@3.0.11':
-    resolution: {integrity: sha512-0ikrnug3/IyneSHqCBeslAhlK2aBfYek1fGo4bP4QnZPmiqSGRK+Oy7ZMisLWkesffJvQ1cqAcBnJC+8+nxIAg==}
 
   '@types/node@25.9.3':
     resolution: {integrity: sha512-603BddQMv3pUcr4U2dhujk83N2tTDVr/34wII2B6bJy6g+8WD6yUb11jszNs0gdi4PesVWl7ABt8nYMVpnLUcg==}
@@ -1480,10 +1471,6 @@ packages:
   node-abi@3.89.0:
     resolution: {integrity: sha512-6u9UwL0HlAl21+agMN3YAMXcKByMqwGx+pq+P76vii5f7hTPtKDp08/H9py6DY+cfDw7kQNTGEj/rly3IgbNQA==}
     engines: {node: '>=10'}
-
-  node-cron@4.5.0:
-    resolution: {integrity: sha512-4Trh+kjvbXokyJkwQumvD5YAgeJfgHLR/sKyu71uSmxfCR5QMO1hldpvmFZOICN5pLgNY+J5Y8+ar3XKo5/4tQ==}
-    engines: {node: '>=20'}
 
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
@@ -2579,8 +2566,6 @@ snapshots:
 
   '@types/http-errors@2.0.5': {}
 
-  '@types/node-cron@3.0.11': {}
-
   '@types/node@25.9.3':
     dependencies:
       undici-types: 7.24.6
@@ -3440,8 +3425,6 @@ snapshots:
   node-abi@3.89.0:
     dependencies:
       semver: 7.7.4
-
-  node-cron@4.5.0: {}
 
   node-domexception@1.0.0: {}
 
