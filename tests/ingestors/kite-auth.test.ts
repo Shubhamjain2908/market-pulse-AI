@@ -2,7 +2,26 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { upsertEnvVar } from '../../src/ingestors/kite/auth.js';
+import { extractRequestToken, upsertEnvVar } from '../../src/ingestors/kite/auth.js';
+
+describe('extractRequestToken', () => {
+  it('parses request_token from a redirect URL', () => {
+    expect(
+      extractRequestToken(
+        'https://127.0.0.1:3001/auth/callback?request_token=abc123XYZ&action=login',
+      ),
+    ).toBe('abc123XYZ');
+  });
+
+  it('accepts a bare alphanumeric token', () => {
+    expect(extractRequestToken('abc123XYZ')).toBe('abc123XYZ');
+  });
+
+  it('returns null for empty or invalid input', () => {
+    expect(extractRequestToken('')).toBeNull();
+    expect(extractRequestToken('not-a-token')).toBeNull();
+  });
+});
 
 describe('upsertEnvVar', () => {
   let dir: string;
