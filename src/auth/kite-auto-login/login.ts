@@ -102,7 +102,7 @@ export async function runKiteAutoLogin(
     page = await context.newPage();
 
     migrate();
-    const priorToken = readKiteAccessTokenFromDb();
+    const priorSnapshot = readKiteAccessTokenSnapshot();
 
     await page.goto(client.loginUrl(), { waitUntil: 'domcontentloaded', timeout: 60_000 });
 
@@ -117,7 +117,7 @@ export async function runKiteAutoLogin(
 
     await waitForLoginComplete(page);
 
-    const { accessToken, userId } = await resolveAccessToken(page, client, priorToken);
+    const { accessToken, userId } = await resolveAccessToken(page, client, priorSnapshot);
 
     persistKiteAccessToken(accessToken, envPath);
 
@@ -136,7 +136,13 @@ export async function runKiteAutoLogin(
     };
   } catch (err) {
     if (page) {
-      await captureFailureScreenshot(page);
+      const successVisible = await page
+        .getByText('Kite token updated successfully')
+        .isVisible()
+        .catch(() => false);
+      if (!successVisible) {
+        await captureFailureScreenshot(page);
+      }
     }
     throw err;
   } finally {
@@ -223,7 +229,7 @@ async function waitForLoginComplete(page: Page): Promise<void> {
 async function resolveAccessToken(
   page: Page,
   client: KiteClient,
-  priorToken: string,
+  priorSnapshot: KiteAccessTokenSnapshot,
 ): Promise<{ accessToken: string; userId: string }> {
   migrate();
 
@@ -235,8 +241,7 @@ async function resolveAccessToken(
 
   // kite-auth-server exchanges on callback — read local sqlite (works on Oracle VM)
   if (onSuccessPage || onCallback) {
-    const pollMs = onSuccessPage ? 2_500 : 20_000;
-    const fromDb = await waitForChangedKiteAccessToken(priorToken, pollMs);
+    const fromDb = await waitForRefreshedKiteAccessToken(priorSnapshot, 45_000);
     if (fromDb) {
       log.info({ tokenPreview: mask(fromDb) }, 'access_token loaded from sqlite');
       return { accessToken: fromDb, userId: config.KITE_USER_ID?.trim() ?? 'unknown' };
@@ -261,34 +266,52 @@ function throwRemoteCallbackError(onSuccessPage: boolean): never {
   const redirectLabel = config.KITE_REDIRECT_URL?.trim() ?? 'your Kite Connect redirect URL';
   if (onSuccessPage) {
     throw new Error(
-      `Kite login succeeded on ${redirectLabel} — token was saved on that server, not this machine (${config.DATABASE_PATH}). ` +
-        'Run `pnpm kite-auto-login` on the Oracle VM. For local dev use `pnpm kite-login`.',
+      `Kite login succeeded on ${redirectLabel} but local sqlite (${config.DATABASE_PATH}) was not refreshed. ` +
+        'Run auto-login on the same host as kite-auth, or use `pnpm kite-login` for local dev.',
     );
   }
   throw new Error(
-    `No new kite_access_token in local sqlite after callback to ${redirectLabel}. ` +
+    `No refreshed kite_access_token in local sqlite after callback to ${redirectLabel}. ` +
       'Run kite-auto-login on the same host as kite-auth.',
   );
 }
 
-async function waitForChangedKiteAccessToken(
-  priorToken: string,
+export interface KiteAccessTokenSnapshot {
+  token: string;
+  updatedAt: string | null;
+}
+
+/** True when kite-auth (or auto-login) wrote a new session after our snapshot. */
+export function kiteAccessTokenRefreshed(
+  prior: KiteAccessTokenSnapshot,
+  current: KiteAccessTokenSnapshot,
+): boolean {
+  if (!current.token) return false;
+  if (current.token !== prior.token) return true;
+  return current.updatedAt != null && current.updatedAt !== prior.updatedAt;
+}
+
+async function waitForRefreshedKiteAccessToken(
+  priorSnapshot: KiteAccessTokenSnapshot,
   timeoutMs = 45_000,
 ): Promise<string | null> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const token = readKiteAccessTokenFromDb();
-    if (token && token !== priorToken) return token;
+    const current = readKiteAccessTokenSnapshot();
+    if (kiteAccessTokenRefreshed(priorSnapshot, current)) return current.token;
     await sleep(200);
   }
   return null;
 }
 
-function readKiteAccessTokenFromDb(): string {
+function readKiteAccessTokenSnapshot(): KiteAccessTokenSnapshot {
   const row = getDb()
-    .prepare("SELECT value FROM config WHERE key = 'kite_access_token' LIMIT 1")
-    .get() as { value?: string | null } | undefined;
-  return row?.value?.trim() ?? '';
+    .prepare("SELECT value, updated_at FROM config WHERE key = 'kite_access_token' LIMIT 1")
+    .get() as { value?: string | null; updated_at?: string | null } | undefined;
+  return {
+    token: row?.value?.trim() ?? '',
+    updatedAt: row?.updated_at ?? null,
+  };
 }
 
 function persistKiteAccessToken(token: string, envPath: string): void {
