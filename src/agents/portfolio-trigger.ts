@@ -190,10 +190,7 @@ export function buildLiteSnapshotCopy(
 ): LiteSnapshotCopy {
   const s = getLatestSignalsMap(h.symbol, date, db);
   const snap = parseSignalSnapshot(s);
-  const techLine = formatTechnicalLine(snap);
-  const structure = buildPortfolioStructureContext(s);
-  const structureLine = structure ? formatStageStructureLine(structure) : null;
-  const line = structureLine ? `${structureLine} · ${techLine}` : techLine;
+  const line = formatPortfolioTechSummary(s);
   const pnl = h.pnlPct != null ? `${h.pnlPct.toFixed(1)}%` : 'n/a';
 
   const bullPoints: string[] = [];
@@ -243,11 +240,6 @@ export function buildLiteSnapshotCopy(
   if (bearPoints.length === 0) {
     bearPoints.push('No major technical red flags in snapshot (RSI / vol / 52W band)');
   }
-  if (structure?.qualityBias === 'accumulate_on_pullback') {
-    bullPoints.unshift(
-      `${structure.stageLabel} — structurally strong; timing may still block ADD (see guardrails)`,
-    );
-  }
 
   return {
     thesis: `Technical snapshot (lite path — no full LLM call this run). ${line}. Unrealised P&L ${pnl} vs entry.`,
@@ -271,6 +263,18 @@ export function formatTechnicalLine(snap: SignalSnapshot): string {
   return `Technicals: ${parts.join(' · ')}`;
 }
 
+function formatPortfolioTechSummary(
+  signals: Record<string, number>,
+  stripTechnicalsPrefix = false,
+): string {
+  const techLine = formatTechnicalLine(parseSignalSnapshot(signals));
+  const structure = buildPortfolioStructureContext(signals);
+  const structureLine = structure ? formatStageStructureLine(structure) : null;
+  if (!structureLine) return techLine;
+  const tech = stripTechnicalsPrefix ? techLine.replace(/^Technicals: /, '') : techLine;
+  return `${structureLine} · ${tech}`;
+}
+
 /** One-line summary for the HTML card (may be null if no data). */
 export function technicalSummaryLine(
   symbol: string,
@@ -279,13 +283,7 @@ export function technicalSummaryLine(
 ): string | null {
   const s = getLatestSignalsMap(symbol, date, db);
   if (Object.keys(s).length === 0) return null;
-  const snap = parseSignalSnapshot(s);
-  const techLine = formatTechnicalLine(snap);
-  const structure = buildPortfolioStructureContext(s);
-  const structureLine = structure ? formatStageStructureLine(structure) : null;
-  const line = structureLine
-    ? `${structureLine} · ${techLine.replace(/^Technicals: /, '')}`
-    : techLine;
+  const line = formatPortfolioTechSummary(s, true);
   const signalRow = db
     .prepare(
       `

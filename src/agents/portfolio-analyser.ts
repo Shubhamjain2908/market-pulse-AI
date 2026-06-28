@@ -692,10 +692,6 @@ function buildPositionContext(
   if (structure) {
     lines.push('\n## Structural context (Weinstein stage)');
     lines.push(formatStructureContextBlock(structure));
-  } else if (!signals.mom_rank) {
-    lines.push(
-      '\n## Structural context: no momentum rank — use weinstein_stage_* technical signals when present (run enrich).',
-    );
   }
 
   return lines.join('\n');

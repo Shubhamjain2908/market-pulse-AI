@@ -227,7 +227,7 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
   **Read contract:** screen evaluation (`DbSignalProvider` technical branch) and portfolio/thesis merges (`getLatestSignalsMap` / `getLatestSignalsMapsForSymbols`) only load rows on or before the as-of date **and** on or after `date(as_of, '-90 days')`; empty window → empty map / null (no deep-history fallback). Latest row **per `name`** still wins inside that window (mixed daily technical + weekly `mom_*` dates).
   Key signal names: `sma_20, sma_50, sma_200, ema_9, ema_21, rsi_14, atr_14, 
   volume_ratio_20d, pct_from_52w_high, pct_from_52w_low, close,
-  pct_above_sma200, sma200_slope_30d_pct, weinstein_stage_code, weinstein_stage_score,
+  pct_above_sma200, sma200_slope_30d_pct, weinstein_stage_code,
   mom_12_1_return, mom_relative_strength_ba, 
   mom_volume_breakout_flag, mom_composite_score, mom_rank, mom_false_flag,
   mom_liquidity_pass, mom_earnings_blackout`

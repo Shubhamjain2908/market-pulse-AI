@@ -10,7 +10,6 @@ describe('portfolio-structure', () => {
   it('builds accumulate_on_pullback for Stage 2B', () => {
     const ctx = buildPortfolioStructureContext({
       weinstein_stage_code: WEINSTEIN_STAGE.STAGE_2B,
-      weinstein_stage_score: 30,
       pct_above_sma200: 6.2,
       sma200_slope_30d_pct: 0.8,
       rsi_14: 72,
@@ -23,25 +22,16 @@ describe('portfolio-structure', () => {
     expect(formatStageStructureLine(ctx, 'HOLD')).toContain('HOLD, not ADD here');
   });
 
-  it('enriches HOLD with structural note when quality is strong', () => {
+  it('enriches HOLD trigger when structurally strong', () => {
     const out = enrichActionWithStructureContext(
-      {
-        action: 'HOLD',
-        thesis: 'Base thesis',
-        triggerReason: 'Near 52W high',
-        bullPoints: [],
-      },
+      { action: 'HOLD', triggerReason: 'Near 52W high' },
       {
         weinstein_stage_code: WEINSTEIN_STAGE.STAGE_2B,
-        weinstein_stage_score: 30,
         pct_above_sma200: 4,
         rsi_14: 75,
         pct_from_52w_high: -2,
       },
     );
     expect(out.triggerReason).toContain('structurally strong');
-    expect(out.bullPoints[0]).toMatch(/Stage 2B/);
-    expect(out.thesis).toBe('Base thesis');
-    expect(out.thesis).not.toContain('quality_bias');
   });
 });

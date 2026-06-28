@@ -11,7 +11,7 @@
  *   volume_ratio_20d
  *   pct_from_52w_high, pct_from_52w_low
  *   pct_above_sma200, sma200_slope_30d_pct
- *   weinstein_stage_code, weinstein_stage_score
+ *   weinstein_stage_code
  *   close (mirrored so screen-engine cross-comparisons like
  *   `close > sma_50` are simple lookups)
  */
@@ -160,7 +160,10 @@ export class TechnicalEnricher {
         });
       }
 
-      const stage = computeWeinsteinStage(closes, i);
+      const stage = computeWeinsteinStage(closes, i, {
+        sma50: series.sma_50?.[i],
+        sma200: series.sma_200?.[i],
+      });
       if (stage.pctAboveSma200 != null) {
         out.push({
           symbol,
@@ -179,22 +182,13 @@ export class TechnicalEnricher {
           source: 'technical',
         });
       }
-      out.push(
-        {
-          symbol,
-          date: bar.date,
-          name: 'weinstein_stage_code',
-          value: stage.stageCode,
-          source: 'technical',
-        },
-        {
-          symbol,
-          date: bar.date,
-          name: 'weinstein_stage_score',
-          value: stage.stageScore,
-          source: 'technical',
-        },
-      );
+      out.push({
+        symbol,
+        date: bar.date,
+        name: 'weinstein_stage_code',
+        value: stage.stageCode,
+        source: 'technical',
+      });
     }
     return out;
   }

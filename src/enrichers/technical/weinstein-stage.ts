@@ -22,6 +22,11 @@ export interface WeinsteinStageResult {
   sma200Slope30dPct: number | null;
 }
 
+export interface WeinsteinMasAtBar {
+  sma50?: number | null;
+  sma200?: number | null;
+}
+
 /** Rolling mean; uses all available bars when history < period (ponytail: same as skill script). */
 function rollingMa(closes: number[], period: number): number {
   const n = closes.length;
@@ -46,40 +51,56 @@ export function weinsteinStageLabel(code: number): string {
   }
 }
 
+export function weinsteinStageScore(code: number): number {
+  switch (code) {
+    case WEINSTEIN_STAGE.STAGE_2B:
+      return 30;
+    case WEINSTEIN_STAGE.STAGE_2A:
+      return 25;
+    case WEINSTEIN_STAGE.STAGE_1:
+      return 15;
+    case WEINSTEIN_STAGE.STAGE_3:
+      return 8;
+    case WEINSTEIN_STAGE.STAGE_4:
+      return 0;
+    default:
+      return 15;
+  }
+}
+
+function insufficient(): WeinsteinStageResult {
+  return {
+    stageCode: WEINSTEIN_STAGE.INSUFFICIENT,
+    stageScore: weinsteinStageScore(WEINSTEIN_STAGE.INSUFFICIENT),
+    pctAboveSma200: null,
+    sma200Slope30dPct: null,
+  };
+}
+
 /**
  * Classify Weinstein stage from oldest-first closes through `index` (inclusive).
  * Requires at least 50 bars for a non-insufficient read.
  */
-export function computeWeinsteinStage(closes: number[], index: number): WeinsteinStageResult {
+export function computeWeinsteinStage(
+  closes: number[],
+  index: number,
+  mas?: WeinsteinMasAtBar,
+): WeinsteinStageResult {
   const slice = closes.slice(0, index + 1);
   const n = slice.length;
-  if (n < 50) {
-    return {
-      stageCode: WEINSTEIN_STAGE.INSUFFICIENT,
-      stageScore: 15,
-      pctAboveSma200: null,
-      sma200Slope30dPct: null,
-    };
-  }
+  if (n < 50) return insufficient();
 
   const closeToday = slice[n - 1];
-  if (closeToday == null) {
-    return {
-      stageCode: WEINSTEIN_STAGE.INSUFFICIENT,
-      stageScore: 15,
-      pctAboveSma200: null,
-      sma200Slope30dPct: null,
-    };
-  }
-  const ma50 = rollingMa(slice, 50);
+  if (closeToday == null) return insufficient();
+
+  const ma50 = mas?.sma50 ?? rollingMa(slice, 50);
   const ma150 = rollingMa(slice, 150);
-  const ma200 = rollingMa(slice, 200);
+  const ma200 = mas?.sma200 ?? rollingMa(slice, 200);
 
   const priorSlice = n > 30 ? slice.slice(0, n - 30) : slice;
   const ma200Prior = rollingMa(priorSlice, 200);
   const slope200 = ma200 - ma200Prior;
   const sma200Slope30dPct = ma200Prior > 0 ? (slope200 / ma200Prior) * 100 : null;
-
   const pctAboveSma200 = ma200 > 0 ? ((closeToday - ma200) / ma200) * 100 : null;
 
   const rising200 = slope200 > 0;
@@ -89,31 +110,23 @@ export function computeWeinsteinStage(closes: number[], index: number): Weinstei
   const near200 = Math.abs(pctAbove200) < 5;
 
   let stageCode: WeinsteinStageCode;
-  let stageScore: number;
-
   if (orderUp && rising200) {
     stageCode = WEINSTEIN_STAGE.STAGE_2B;
-    stageScore = 30;
   } else if (orderDown && !rising200) {
     stageCode = WEINSTEIN_STAGE.STAGE_4;
-    stageScore = 0;
   } else if (near200 && Math.abs(slope200 / ma200) < 0.005) {
     stageCode = WEINSTEIN_STAGE.STAGE_1;
-    stageScore = 15;
   } else if (!rising200 && Math.abs(pctAbove200) < 8) {
     stageCode = WEINSTEIN_STAGE.STAGE_3;
-    stageScore = 8;
   } else if (closeToday > ma200) {
     stageCode = WEINSTEIN_STAGE.STAGE_2A;
-    stageScore = 25;
   } else {
     stageCode = WEINSTEIN_STAGE.STAGE_3;
-    stageScore = 8;
   }
 
   return {
     stageCode,
-    stageScore,
+    stageScore: weinsteinStageScore(stageCode),
     pctAboveSma200,
     sma200Slope30dPct,
   };

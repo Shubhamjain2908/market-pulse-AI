@@ -64,11 +64,6 @@ export function isDefensiveRegime(regime: Regime | null | undefined): boolean {
   return regime === 'BEAR_TRENDING' || regime === 'CRISIS';
 }
 
-export {
-  buildPortfolioStructureContext,
-  formatStageStructureLine,
-} from './portfolio-structure.js';
-
 /** Single regime read for portfolio LLM posture block + defensive system rule. */
 export function loadPortfolioRegimeContext(
   date: string,

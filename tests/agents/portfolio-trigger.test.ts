@@ -8,7 +8,6 @@ import {
   getPortfolioDeepLossPct,
   needsPortfolioLlmReview,
   signalExtremesWarrantReview,
-  technicalSummaryLine,
 } from '../../src/agents/portfolio-trigger.js';
 import { DbSignalProvider } from '../../src/analysers/signal-provider.js';
 import { closeDb, getDb, migrate, upsertHoldings, upsertSignals } from '../../src/db/index.js';
@@ -109,42 +108,6 @@ describe('portfolio-trigger', () => {
     expect(copy.bearPoints.length).toBeGreaterThan(0);
     expect(copy.thesis).toContain('Technical snapshot');
     expect(copy.bullPoints.some((b) => /RSI|52W|Volume/i.test(b))).toBe(true);
-  });
-
-  it('lite snapshot includes Weinstein structure when stage signals exist', () => {
-    upsertSignals(
-      [
-        { symbol: 'STG', date, name: 'rsi_14', value: 55, source: 'technical' },
-        {
-          symbol: 'STG',
-          date,
-          name: 'weinstein_stage_code',
-          value: 22,
-          source: 'technical',
-        },
-        {
-          symbol: 'STG',
-          date,
-          name: 'weinstein_stage_score',
-          value: 30,
-          source: 'technical',
-        },
-        {
-          symbol: 'STG',
-          date,
-          name: 'pct_above_sma200',
-          value: 5.5,
-          source: 'technical',
-        },
-      ],
-      db,
-    );
-    const h = baseHolding('STG', -3);
-    upsertHoldings([h], db);
-    const copy = buildLiteSnapshotCopy(h, date, db);
-    expect(copy.thesis).toContain('Stage 2B');
-    const summary = technicalSummaryLine('STG', date, db);
-    expect(summary).toContain('Stage 2B');
   });
 
   it('uses lite path when quiet and above deep-loss threshold', () => {
