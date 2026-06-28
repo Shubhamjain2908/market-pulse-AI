@@ -262,7 +262,7 @@ pnpm tsx scripts/smoke-llm.mts
 
 Rough breakdown:
 
-- **Portfolio analysis** — by default, a **trigger gate** decides whether each holding gets a full LLM JSON review (deep unrealised loss, recent alerts/news/screens, or stretched technicals). Otherwise the row is a deterministic **lite snapshot** (token-efficient). Set `PORTFOLIO_ANALYSIS_DISABLE_LITE=1` for legacy behaviour (full LLM on **every** holding). Until recently these ran **strictly one after another**, so a large book dominates wall-clock time when every row is full LLM (for example ~88 holdings × ~10 s each with Cursor Agent ≈ **15 minutes** for this stage alone).
+- **Portfolio analysis** — by default, a **trigger gate** decides whether each holding gets a full LLM JSON review (deep unrealised loss, recent alerts/news/screens, or stretched technicals). Otherwise the row is a deterministic **lite snapshot** (token-efficient). Set `PORTFOLIO_ANALYSIS_DISABLE_LITE=1` for legacy behaviour (full LLM on **every** holding). **Structural vs timing:** technical enrich now emits Weinstein stage signals (`weinstein_stage_code`, `weinstein_stage_score`, `pct_above_sma200`, `sma200_slope_30d_pct`). Portfolio cards and `trigger_reason` separate **structural quality** (e.g. Stage 2B → accumulate on pullbacks) from **execution timing** (`HOLD`/`ADD`/`TRIM`/`EXIT`). A name can be structurally strong yet remain `HOLD` when ADD guardrails block extension (RSI > 70, within 3% of 52W high, weak volume, etc.). Held names without `mom_*` (momentum cold-start) still get stage context from these technical signals. Until recently these ran **strictly one after another**, so a large book dominates wall-clock time when every row is full LLM (for example ~88 holdings × ~10 s each with Cursor Agent ≈ **15 minutes** for this stage alone).
 - **Parallelism** — set `PORTFOLIO_ANALYSIS_CONCURRENCY` (default **8**) so Vertex/Gemini processes multiple holdings at once. Expect the portfolio stage to shrink to on the order of **⌈N / concurrency⌉ × (latency per call)** — often **~2–6 minutes** for 80+ names at concurrency 8 and ~3–8 s per Flash call, depending on quota and prompt size. If Vertex returns `429` / rate-limit errors, lower concurrency.
 - **Other LLM work** — batched news sentiment, up to five watchlist theses, optional mood narrative: typically **~1–4 minutes** combined on Vertex Flash (highly variable).
 
@@ -385,7 +385,9 @@ To enable it:
    pnpm daily
    ```
    The briefing now contains a "My Portfolio" section right under the
-   market-mood banner, with every position's recommended action.
+   market-mood banner, with every position's recommended action and a
+   one-line **stage/structure** summary (e.g. `Stage 2B · above 200DMA ·
+   accumulate on pullbacks · HOLD, not ADD here` when timing blocks adds).
 5. Optional automation:
    ```
    pnpm schedule

@@ -103,7 +103,7 @@ CREATE TABLE cot_gold (
 CREATE TABLE signals (
   symbol     TEXT NOT NULL,
   date       TEXT NOT NULL,
-  name       TEXT NOT NULL, -- e.g. 'sma_20', 'rsi_14', 'volume_ratio_20d'
+  name       TEXT NOT NULL, -- e.g. 'sma_20', 'rsi_14', 'volume_ratio_20d', 'weinstein_stage_code'
   value      REAL NOT NULL,
   source     TEXT NOT NULL, -- 'technical' | 'fundamental' | 'sentiment' | 'flow'
   computed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
