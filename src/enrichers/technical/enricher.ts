@@ -10,6 +10,8 @@
  *   atr_14
  *   volume_ratio_20d
  *   pct_from_52w_high, pct_from_52w_low
+ *   pct_above_sma200, sma200_slope_30d_pct
+ *   weinstein_stage_code, weinstein_stage_score
  *   close (mirrored so screen-engine cross-comparisons like
  *   `close > sma_50` are simple lookups)
  */
@@ -19,6 +21,7 @@ import { getDb, upsertSignals } from '../../db/index.js';
 import { child } from '../../logger.js';
 import type { RawQuote, Signal } from '../../types/domain.js';
 import { atr, type Bar, ema, fiftyTwoWeek, rsi, sma, volumeRatio } from './indicators.js';
+import { computeWeinsteinStage } from './weinstein-stage.js';
 
 const log = child({ component: 'technical-enricher' });
 
@@ -156,6 +159,42 @@ export class TechnicalEnricher {
           source: 'technical',
         });
       }
+
+      const stage = computeWeinsteinStage(closes, i);
+      if (stage.pctAboveSma200 != null) {
+        out.push({
+          symbol,
+          date: bar.date,
+          name: 'pct_above_sma200',
+          value: stage.pctAboveSma200,
+          source: 'technical',
+        });
+      }
+      if (stage.sma200Slope30dPct != null) {
+        out.push({
+          symbol,
+          date: bar.date,
+          name: 'sma200_slope_30d_pct',
+          value: stage.sma200Slope30dPct,
+          source: 'technical',
+        });
+      }
+      out.push(
+        {
+          symbol,
+          date: bar.date,
+          name: 'weinstein_stage_code',
+          value: stage.stageCode,
+          source: 'technical',
+        },
+        {
+          symbol,
+          date: bar.date,
+          name: 'weinstein_stage_score',
+          value: stage.stageScore,
+          source: 'technical',
+        },
+      );
     }
     return out;
   }
