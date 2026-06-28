@@ -40,6 +40,11 @@ import {
   truncateTriggerReason,
 } from './portfolio-strategy-guardrails.js';
 import {
+  buildPortfolioStructureContext,
+  enrichActionWithStructureContext,
+  formatStructureContextBlock,
+} from './portfolio-structure.js';
+import {
   buildLiteSnapshotCopy,
   getLatestSignalsMap,
   getPortfolioDeepLossPct,
@@ -498,16 +503,17 @@ function buildLitePortfolioRow(
     signals,
     guardCtx,
   );
+  const enriched = enrichActionWithStructureContext(g, signals);
 
   return {
     symbol: h.symbol,
     date,
-    action: g.action,
-    conviction: g.conviction,
-    thesis: g.thesis,
-    bullPoints: g.bullPoints,
-    bearPoints: g.bearPoints,
-    triggerReason: g.triggerReason,
+    action: enriched.action,
+    conviction: enriched.conviction,
+    thesis: enriched.thesis,
+    bullPoints: enriched.bullPoints,
+    bearPoints: enriched.bearPoints,
+    triggerReason: enriched.triggerReason,
     suggestedStop: g.suggestedStop ?? null,
     suggestedTarget: g.suggestedTarget ?? null,
     pnlPct: h.pnlPct ?? null,
@@ -578,16 +584,17 @@ async function analyseOne(
     signals,
     guardCtx,
   );
+  const enriched = enrichActionWithStructureContext(a, signals);
 
   return {
     symbol: h.symbol,
     date,
-    action: a.action,
-    conviction: a.conviction,
-    thesis: a.thesis,
-    bullPoints: a.bullPoints,
-    bearPoints: a.bearPoints,
-    triggerReason: a.triggerReason,
+    action: enriched.action,
+    conviction: enriched.conviction,
+    thesis: enriched.thesis,
+    bullPoints: enriched.bullPoints,
+    bearPoints: enriched.bearPoints,
+    triggerReason: enriched.triggerReason,
     suggestedStop: a.suggestedStop ?? null,
     suggestedTarget: a.suggestedTarget ?? null,
     pnlPct: h.pnlPct ?? null,
@@ -678,6 +685,17 @@ function buildPositionContext(
       }
       lines.push(`- ${a.date} ${a.kind}: ${a.message}`);
     }
+  }
+
+  const signals = getLatestSignalsMap(h.symbol, date, db);
+  const structure = buildPortfolioStructureContext(signals);
+  if (structure) {
+    lines.push('\n## Structural context (Weinstein stage)');
+    lines.push(formatStructureContextBlock(structure));
+  } else if (!signals.mom_rank) {
+    lines.push(
+      '\n## Structural context: no momentum rank — use weinstein_stage_* technical signals when present (run enrich).',
+    );
   }
 
   return lines.join('\n');

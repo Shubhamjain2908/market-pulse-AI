@@ -6,6 +6,7 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import type { PortfolioHoldingRow } from '../db/index.js';
 import { lastOpenOnOrBefore } from '../market/trading-days.js';
+import { buildPortfolioStructureContext, formatStageStructureLine } from './portfolio-structure.js';
 
 /**
  * Unrealised loss at or below this level always forces a full LLM portfolio review.
@@ -189,7 +190,10 @@ export function buildLiteSnapshotCopy(
 ): LiteSnapshotCopy {
   const s = getLatestSignalsMap(h.symbol, date, db);
   const snap = parseSignalSnapshot(s);
-  const line = formatTechnicalLine(snap);
+  const techLine = formatTechnicalLine(snap);
+  const structure = buildPortfolioStructureContext(s);
+  const structureLine = structure ? formatStageStructureLine(structure) : null;
+  const line = structureLine ? `${structureLine} · ${techLine}` : techLine;
   const pnl = h.pnlPct != null ? `${h.pnlPct.toFixed(1)}%` : 'n/a';
 
   const bullPoints: string[] = [];
@@ -239,6 +243,11 @@ export function buildLiteSnapshotCopy(
   if (bearPoints.length === 0) {
     bearPoints.push('No major technical red flags in snapshot (RSI / vol / 52W band)');
   }
+  if (structure?.qualityBias === 'accumulate_on_pullback') {
+    bullPoints.unshift(
+      `${structure.stageLabel} — structurally strong; timing may still block ADD (see guardrails)`,
+    );
+  }
 
   return {
     thesis: `Technical snapshot (lite path — no full LLM call this run). ${line}. Unrealised P&L ${pnl} vs entry.`,
@@ -270,7 +279,13 @@ export function technicalSummaryLine(
 ): string | null {
   const s = getLatestSignalsMap(symbol, date, db);
   if (Object.keys(s).length === 0) return null;
-  const line = formatTechnicalLine(parseSignalSnapshot(s));
+  const snap = parseSignalSnapshot(s);
+  const techLine = formatTechnicalLine(snap);
+  const structure = buildPortfolioStructureContext(s);
+  const structureLine = structure ? formatStageStructureLine(structure) : null;
+  const line = structureLine
+    ? `${structureLine} · ${techLine.replace(/^Technicals: /, '')}`
+    : techLine;
   const signalRow = db
     .prepare(
       `
