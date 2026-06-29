@@ -1,11 +1,16 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { getSizeMultiplier, isStrategyAllowed } from '../db/index.js';
-import { getQualityGarpFundamentals, upsertScreenResults } from '../db/queries.js';
+import {
+  getQualityGarpFundamentals,
+  getTrailingOpmStdDev,
+  upsertScreenResults,
+} from '../db/queries.js';
 import type { ScreenResult } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
 import type { ScreenEngineResult } from './engine.js';
 import {
   createEmptyQualityGarpFunnel,
+  OPM_STD_DEV_MAX_PCT,
   persistQualityGarpFunnel,
   QUALITY_GARP_DE_MAX,
   QUALITY_GARP_PB_MAX,
@@ -42,6 +47,7 @@ interface QualityGarpMatchedCriteria {
   sma_50: number;
   close: number;
   pct_from_sma50: number;
+  opm_std_dev: number | null;
 }
 
 interface QualityGarpEvaluation {
@@ -94,12 +100,14 @@ export function runQualityGarpScreen(
       funnel.candidates_pe_pb++;
     }
 
+    const opmStdDev = getTrailingOpmStdDev(symbol, date, 4, db);
     const evaluation = evaluateQualityGarpSymbol(
       symbol,
       date,
       fundamental,
       provider,
       etfExclusions,
+      opmStdDev,
     );
     const totalCriteria = QUALITY_GARP_TOTAL_GATES;
 
@@ -177,6 +185,7 @@ function evaluateQualityGarpSymbol(
   fundamentals: ReturnType<typeof getQualityGarpFundamentals>[number] | undefined,
   provider: SignalProvider,
   etfExclusions: Set<string>,
+  opmStdDev: number | null,
 ): QualityGarpEvaluation {
   let matchedCount = 0;
 
@@ -316,6 +325,18 @@ function evaluateQualityGarpSymbol(
   }
   matchedCount++;
 
+  if (opmStdDev !== null) {
+    if (opmStdDev > OPM_STD_DEV_MAX_PCT) {
+      return {
+        passed: false,
+        score: gateScore(matchedCount),
+        matchedCount,
+        failedGate: 'opm_stability',
+      };
+    }
+    matchedCount++;
+  }
+
   return {
     passed: true,
     score: gateScore(matchedCount),
@@ -337,6 +358,7 @@ function evaluateQualityGarpSymbol(
       sma_50: sma50,
       close,
       pct_from_sma50: pctFromSma50,
+      opm_std_dev: opmStdDev,
     },
   };
 }

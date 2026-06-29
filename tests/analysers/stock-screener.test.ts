@@ -148,4 +148,59 @@ describe('stock screener analyser: quality_garp', () => {
     expect(result.matchesByScreen.quality_garp).toBe(1);
     expect(result.funnelByScreen?.quality_garp?.universe).toBe(1);
   });
+
+  it('passes through OPM gate when OPM data is absent (fail-open)', () => {
+    const db = new Database(':memory:');
+    migrate(db);
+    seedStrategyGates(loadStrategyGates().rows, db);
+
+    db.prepare(
+      `INSERT INTO symbols (symbol, exchange, sector, is_index, is_active) VALUES (?, 'NSE', ?, 0, 1)`,
+    ).run('NOOPM', 'Technology');
+    insertQualityBaseRows(db, 'NOOPM');
+
+    const result = runStockScreenAnalyser(
+      { date: '2026-05-28', symbols: ['NOOPM'], onlyScreen: 'quality_garp' },
+      db,
+    );
+    expect(result.matchesByScreen.quality_garp).toBe(1);
+    expect(result.funnelByScreen?.quality_garp?.passed).toBe(1);
+
+    const row = db
+      .prepare(
+        `SELECT matched_criteria AS matchedCriteria FROM screens
+         WHERE symbol = 'NOOPM' AND date = '2026-05-28' AND screen_name = 'quality_garp'`,
+      )
+      .get() as { matchedCriteria: string } | undefined;
+    expect(row).toBeTruthy();
+    const payload = JSON.parse(row!.matchedCriteria) as Record<string, unknown>;
+    expect(payload).toHaveProperty('opm_std_dev');
+    expect(payload.opm_std_dev).toBeNull();
+  });
+
+  it('blocks symbol with volatile OPM (std-dev > 5%)', () => {
+    const db = new Database(':memory:');
+    migrate(db);
+    seedStrategyGates(loadStrategyGates().rows, db);
+
+    db.prepare(
+      `INSERT INTO symbols (symbol, exchange, sector, is_index, is_active) VALUES (?, 'NSE', ?, 0, 1)`,
+    ).run('VOLOPM', 'Technology');
+    insertQualityBaseRows(db, 'VOLOPM');
+
+    const insOpm = db.prepare(
+      `INSERT INTO quarterly_fundamentals (symbol, quarter_end, opm_pct, source) VALUES (?, ?, ?, 'screener')`,
+    );
+    insOpm.run('VOLOPM', '2025-03-31', 5);
+    insOpm.run('VOLOPM', '2025-06-30', 25);
+    insOpm.run('VOLOPM', '2025-09-30', 8);
+    insOpm.run('VOLOPM', '2025-12-31', 30);
+
+    const result = runStockScreenAnalyser(
+      { date: '2026-05-28', symbols: ['VOLOPM'], onlyScreen: 'quality_garp' },
+      db,
+    );
+    expect(result.matchesByScreen.quality_garp).toBe(0);
+    expect(result.funnelByScreen?.quality_garp?.opm_stability).toBe(1);
+  });
 });

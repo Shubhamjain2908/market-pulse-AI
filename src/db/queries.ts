@@ -546,6 +546,34 @@ export function upsertQuarterlyFundamentals(
 }
 
 // ---------------------------------------------------------------------------
+// OPM stability — null if < quarters rows (fail-open)
+// ---------------------------------------------------------------------------
+
+export function getTrailingOpmStdDev(
+  symbol: string,
+  asOf: string,
+  quarters: number = 4,
+  db: DatabaseType = getDb(),
+): number | null {
+  const rows = db
+    .prepare(`
+      SELECT opm_pct FROM quarterly_fundamentals
+      WHERE symbol = ? AND quarter_end <= ? AND opm_pct IS NOT NULL
+      ORDER BY quarter_end DESC
+      LIMIT ?
+    `)
+    .all(symbol.toUpperCase(), asOf, quarters) as Array<{ opm_pct: number }>;
+
+  if (rows.length < quarters) return null;
+
+  const n = rows.length;
+  const sum = rows.reduce((s, r) => s + r.opm_pct, 0);
+  const mean = sum / n;
+  const variance = rows.reduce((s, r) => s + (r.opm_pct - mean) ** 2, 0) / n;
+  return Math.sqrt(variance);
+}
+
+// ---------------------------------------------------------------------------
 // Signals
 // ---------------------------------------------------------------------------
 

@@ -13,7 +13,7 @@ trades. Currently NOT met.
 
 **Live:** `quality_garp` dispatcher in [`stock-screener.ts`](src/analysers/stock-screener.ts) + [`getQualityGarpFundamentals`](src/db/queries.ts) (yahoo annual ×3 + snapshot/screener coalesce + promoter join). Gates: PE≤35, PB≤6, **3yr ROE≥18%**, **ROCE≥20%**, **D/E<0.5**, **PEG<1.2**, RSI<45, within 5% of SMA50, no promoter selling; ETF exclusion; regime **BULL 1.0× / CHOPPY 0.75×**. Refresh: `pnpm fundamentals:refresh`. README: [Quality-GARP screener](README.md#quality-garp-screener).
 
-**v2 backlog (deferred):** `operating_margin_pct` column + OPM stability gate; Dec-FY `as_of` edge cases.
+**v2 backlog (deferred):** Dec-FY `as_of` edge cases.
 
 ---
 
@@ -22,6 +22,33 @@ trades. Currently NOT met.
 **Live:** `catalyst_entry` screen + [`catalyst-screener.ts`](src/analysers/catalyst-screener.ts); earnings 5–14 days out; `close > sma_50` OR within 15% of 52W low; `BULL_TRENDING` gate only; thesis catalyst block + **confidence ≤ 6**; `paper_trades` `stop_type='fixed'` at 96%/108%; `max_hold_days = days_to_earnings + 2` (**calendar** days). README: [Catalyst-driven entry](README.md#catalyst-driven-entry-pre-earnings).
 
 **v2 backlog:** analyst estimate revision feed; concall keyword triggers; sector-event proximity; trading-session `max_hold_days` from `quotes` (fixes holiday/weekend early `TIME_EXIT`).
+
+---
+
+## Shipped — OPM stability gate (B-ENG-11, 2026-06-30)
+
+**Gate added:** Trailing 4-quarter OPM std-dev > 5% → hard block.
+Fail-open when <4 quarters of `quarterly_fundamentals.opm_pct` data.
+
+- Data source: `quarterly_fundamentals.opm_pct` (166 symbols, 3,222 rows)
+- Coverage audit: 113/241 yahoo_annual symbols have ≥4 quarters (46.9%)
+- Threshold: `OPM_STD_DEV_MAX_PCT = 5.0` in `quality-garp.ts`
+- Distribution: median 2.33%, P75 4.21% — 5.0× is 1.7× median, not aggressive
+- Implementation: `getTrailingOpmStdDev` in `queries.ts`, gate 11 in `evaluateQualityGarpSymbol`
+
+**Backlog:**
+
+### B-ENG-12: EPS momentum factor upgrade
+- Replace `profit_growth_yoy` proxy (Factor 2, 25% weight) in momentum ranker
+  with QoQ EPS growth from `quarterly_fundamentals.eps`
+- Current proxy is annual/snapshot — ~zero cross-sectional variation between
+  report cycles
+- quarterly_fundamentals.eps gives true quarterly cadence; QoQ growth is
+  computable as `(eps_t - eps_t-4) / abs(eps_t-4)` for YoY-on-quarterly basis
+- Prerequisite: EPS coverage audit (currently 63.3% of 188 symbols);
+  validate cross-sectional variation actually improves before swapping
+- Gate: backtest momentum_mf with new Factor 2 vs current; merge only if
+  profit factor >= current baseline
 
 ---
 
@@ -128,11 +155,11 @@ This is the natural next build *after* GTT activates. All data dependencies alre
 
 ---
 
-## Build Priority Order (updated 2026-05-28)
+## Build Priority Order (updated 2026-06-30)
 
 | Priority | Strategy                                | Status             | Blocker                                     |
 |----------|-----------------------------------------|--------------------|---------------------------------------------|
-| 1        | Quality-GARP v2 (OPM gate)                 | **Shipped v2**  | operating_margin_pct migration; Dec-FY as_of edge cases     |
+| 1        | Quality-GARP v2 (OPM gate)                 | **Shipped v3**  | —                                           |
 | 2        | Catalyst-Driven Entry (v2: session hold) | **Shipped v1**     | Calendar-day hold → trading-session count   |
 | 3        | yahoo_snapshot daily refresh monitoring | Operational        | Watch 429 rate first week                   |
 | 4        | Dynamic Position Sizer                  | Waiting            | GTT gate must be active first               |
