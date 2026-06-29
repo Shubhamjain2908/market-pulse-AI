@@ -557,20 +557,21 @@ A **regime-gated**, long-horizon sleeve that combines Yahoo annual/snapshot fund
 - Latest **`nse_shareholding` / `screener`** row: `promoter_holding_pct`, `promoter_holding_change_qoq`.
 - Requires fundamentals backfill coverage (see [`strategy-backlog.md`](strategy-backlog.md)).
 
-**Ten evaluation gates (v2)** ([`evaluateQualityGarpSymbol`](src/analysers/stock-screener.ts))
+**Eleven evaluation gates (v2)** ([`evaluateQualityGarpSymbol`](src/analysers/stock-screener.ts))
 
-| # | Gate |
-|---|------|
-| 1 | Not on ETF/SGB exclusion list |
-| 2 | Fundamentals row present |
-| 3 | `pe` / `pb` non-null; **pe ≤ 35**, **pb ≤ 6** |
-| 4 | **3-year ROE ≥ 18%** (`latest`, `prev`, `third` annual rows) |
-| 5 | **latest ROCE ≥ 20%** |
-| 6 | **debt_to_equity < 0.5** |
-| 7 | **PEG < 1.2** (derived when Yahoo omits `trailingPegRatio`) |
-| 8 | **RSI14 < 45** (technical dip) |
-| 9 | **\|close − SMA50\| ≤ 5%** |
-| 10 | Promoter QoQ change **fail-open on NULL**; block only on active selling |
+| # | Gate | Fail semantics |
+|---|------|----------------|
+| 1 | Not on ETF/SGB exclusion list | Hard block |
+| 2 | Fundamentals row present | Hard block |
+| 3 | `pe` / `pb` non-null; **pe ≤ 35**, **pb ≤ 6** | Hard block |
+| 4 | **3-year ROE ≥ 18%** (`latest`, `prev`, `third` annual rows) | Hard block |
+| 5 | **latest ROCE ≥ 20%** | Hard block |
+| 6 | **debt_to_equity < 0.5** | Hard block |
+| 7 | **PEG < 1.2** (derived when Yahoo omits `trailingPegRatio`) | Hard block |
+| 8 | **RSI14 < 45** (technical dip) | Hard block |
+| 9 | **\|close − SMA50\| ≤ 5%** | Hard block |
+| 10 | Promoter QoQ change | **Fail-open on NULL**; block only on active selling |
+| 11 | **Trailing 4-quarter OPM std-dev ≤ 5%** | **Fail-open on NULL** (<4 quarters of data); hard block when data exists and std-dev > 5% |
 
 Hard-null on `pe`, `pb`, `third_roe`, `latest_roce`, `debt_to_equity`, `peg`, `sma_50`, `close` blocks the symbol (guardrail). ETF list enforced; **no** `alreadyOwned` filter on the screener itself (thesis generator still skips held / open-paper symbols).
 
@@ -587,7 +588,7 @@ Hard-null on `pe`, `pb`, `third_roe`, `latest_roce`, `debt_to_equity`, `peg`, `s
 
 **v2 backlog (not yet gated)**
 
-- Operating-margin stability (`operating_margin_pct` migration); Dec-FY `as_of` edge cases.
+- Dec-FY `as_of` edge cases.
 
 **Orchestration**
 
