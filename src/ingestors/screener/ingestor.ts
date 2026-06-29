@@ -11,10 +11,14 @@
 import { RATE_LIMITS } from '../../constants.js';
 import { child } from '../../logger.js';
 import { skipScreenerFundamentalsFetch } from '../../market/screener-symbol-skip.js';
-import type { Fundamentals } from '../../types/domain.js';
+import type { Fundamentals, QuarterlyFundamentals } from '../../types/domain.js';
 import { createHttpClient, type HttpClient } from '../base/http-client.js';
 import type { Ingestor, IngestorCapability, IngestorContext, IngestResult } from '../types.js';
-import { parseScreenerHtml } from './parser.js';
+import {
+  parseCashFlowFundamentals,
+  parseQuarterlyFundamentals,
+  parseScreenerHtml,
+} from './parser.js';
 
 const log = child({ component: 'screener-ingestor' });
 const SCREENER_BASE = 'https://www.screener.in';
@@ -44,9 +48,19 @@ export function buildScreenerCompanyPaths(symbol: string): string[] {
 
 export class ScreenerIngestor implements Ingestor {
   readonly name = 'screener';
-  readonly capabilities: ReadonlySet<IngestorCapability> = new Set(['fundamentals']);
+  readonly capabilities: ReadonlySet<IngestorCapability> = new Set([
+    'fundamentals',
+    'quarterly_fundamentals',
+  ]);
 
   private readonly client: HttpClient;
+
+  /**
+   * Simple in-memory page cache so fetchQuarterlyFundamentals reuses the
+   * HTML already fetched by fetchFundamentals for the same symbol in the
+   * same pipeline run.
+   */
+  private pageCache = new Map<string, string>();
 
   constructor(client?: HttpClient) {
     this.client =
@@ -88,7 +102,77 @@ export class ScreenerIngestor implements Ingestor {
     return { data, failed, source: this.name };
   }
 
+  async fetchQuarterlyFundamentals(
+    ctx: IngestorContext = {},
+  ): Promise<IngestResult<QuarterlyFundamentals>> {
+    const symbols = ctx.symbols ?? [];
+    const data: QuarterlyFundamentals[] = [];
+    const failed: string[] = [];
+
+    for (const symbol of symbols) {
+      if (ctx.signal?.aborted) break;
+      if (skipScreenerFundamentalsFetch(symbol)) {
+        continue;
+      }
+      try {
+        // First check cache (populated by fetchFundamentals), otherwise fetch
+        let html = this.pageCache.get(symbol.toUpperCase());
+        if (!html) {
+          html = await this.fetchPage(symbol, ctx.signal);
+        }
+        // Parse quarterly and cash-flow tables directly (no need for top-ratios parse here)
+        const quarterly = parseQuarterlyFundamentals(html, {
+          symbol,
+          source: this.name,
+          asOf: ctx.date,
+        });
+        const cashFlow = parseCashFlowFundamentals(html, {
+          symbol,
+          source: this.name,
+          asOf: ctx.date,
+        });
+
+        // Merge cash-flow data into quarterly rows by matching quarter_end
+        const quarterlyMap = new Map<string, QuarterlyFundamentals>();
+        for (const q of quarterly) {
+          quarterlyMap.set(q.quarterEnd, { ...q });
+        }
+        for (const cf of cashFlow) {
+          const existing = quarterlyMap.get(cf.quarterEnd);
+          if (existing) {
+            // Merge cash flow fields into existing quarterly row
+            existing.operatingCashFlow = cf.operatingCashFlow;
+            existing.freeCashFlow = cf.freeCashFlow;
+          } else {
+            // Standalone cash-flow row (fiscal year with no quarterly overlap)
+            quarterlyMap.set(cf.quarterEnd, { ...cf });
+          }
+        }
+
+        const rows = [...quarterlyMap.values()];
+        if (rows.length > 0) {
+          data.push(...rows);
+        } else {
+          log.warn({ symbol }, 'screener quarterly parse returned no data');
+          failed.push(symbol);
+        }
+      } catch (err) {
+        if (getHttpStatusCode(err) === 404) {
+          continue;
+        }
+        log.warn({ symbol, err: (err as Error).message }, 'screener quarterly fetch failed');
+        failed.push(symbol);
+      }
+    }
+
+    return { data, failed, source: this.name };
+  }
+
   private async fetchPage(symbol: string, signal?: AbortSignal): Promise<string> {
+    const upper = symbol.toUpperCase();
+    const cached = this.pageCache.get(upper);
+    if (cached) return cached;
+
     await this.client.acquire(signal);
     // Try consolidated first (preferred for groups), then standalone.
     const paths = buildScreenerCompanyPaths(symbol);
@@ -96,7 +180,9 @@ export class ScreenerIngestor implements Ingestor {
     for (const path of paths) {
       try {
         const res = await this.client.got(`${SCREENER_BASE}${path}`, { signal });
-        return res.body;
+        const html = res.body;
+        this.pageCache.set(upper, html);
+        return html;
       } catch (err) {
         lastErr = err;
       }
