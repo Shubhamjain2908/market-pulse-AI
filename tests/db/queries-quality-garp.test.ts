@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getDb, migrate } from '../../src/db/index.js';
-import { getQualityGarpFundamentals } from '../../src/db/queries.js';
+import { getQualityGarpFundamentals, getTrailingOpmStdDev } from '../../src/db/queries.js';
 
 describe('getQualityGarpFundamentals', () => {
   let dbPath: string;
@@ -104,5 +104,135 @@ describe('getQualityGarpFundamentals', () => {
     const row = getQualityGarpFundamentals('2026-06-06', db)[0];
     expect(row?.latestRoe).toBe(0.21);
     expect(row?.latestRoce).toBe(0.24);
+  });
+});
+
+describe('getTrailingOpmStdDev', () => {
+  let dbPath: string;
+  let db: ReturnType<typeof getDb>;
+
+  beforeEach(() => {
+    dbPath = join(tmpdir(), `mp-opm-${Date.now()}-${Math.random()}.db`);
+    db = getDb({ path: dbPath });
+    migrate(db);
+  });
+
+  afterEach(() => {
+    db.close();
+    closeDb();
+    for (const suffix of ['', '-wal', '-shm']) {
+      try {
+        rmSync(`${dbPath}${suffix}`);
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+
+  function insertOpmRows(
+    symbol: string,
+    rows: Array<{ quarterEnd: string; opmPct: number | null }>,
+  ): void {
+    const stmt = db.prepare(`
+      INSERT INTO quarterly_fundamentals (symbol, quarter_end, opm_pct, source)
+      VALUES (?, ?, ?, 'screener')
+    `);
+    for (const r of rows) {
+      stmt.run(symbol, r.quarterEnd, r.opmPct);
+    }
+  }
+
+  it('(a) returns low std-dev for stable OPM series and gate passes', async () => {
+    const symbol = 'STABLE';
+    insertOpmRows(symbol, [
+      { quarterEnd: '2025-03-31', opmPct: 18 },
+      { quarterEnd: '2025-06-30', opmPct: 19 },
+      { quarterEnd: '2025-09-30', opmPct: 17.5 },
+      { quarterEnd: '2025-12-31', opmPct: 18.5 },
+    ]);
+
+    const sd = getTrailingOpmStdDev(symbol, '2026-01-01', 4, db);
+    expect(sd).not.toBeNull();
+    expect(sd!).toBeLessThanOrEqual(5.0);
+  });
+
+  it('(b) returns high std-dev for volatile OPM series and gate blocks', async () => {
+    const symbol = 'VOLATILE';
+    insertOpmRows(symbol, [
+      { quarterEnd: '2025-03-31', opmPct: 5 },
+      { quarterEnd: '2025-06-30', opmPct: 25 },
+      { quarterEnd: '2025-09-30', opmPct: 8 },
+      { quarterEnd: '2025-12-31', opmPct: 30 },
+    ]);
+
+    const sd = getTrailingOpmStdDev(symbol, '2026-01-01', 4, db);
+    expect(sd).not.toBeNull();
+    expect(sd!).toBeGreaterThan(5.0);
+  });
+
+  it('(c) returns null with only 3 quarters of data', async () => {
+    const symbol = 'ONLY3';
+    insertOpmRows(symbol, [
+      { quarterEnd: '2025-03-31', opmPct: 15 },
+      { quarterEnd: '2025-06-30', opmPct: 16 },
+      { quarterEnd: '2025-09-30', opmPct: 14 },
+    ]);
+
+    const sd = getTrailingOpmStdDev(symbol, '2026-01-01', 4, db);
+    expect(sd).toBeNull();
+  });
+
+  it('(d) returns null with zero OPM data (all null opm_pct)', async () => {
+    const symbol = 'NULLOPM';
+    // Insert rows with null OPM
+    db.prepare(
+      `INSERT INTO quarterly_fundamentals (symbol, quarter_end, opm_pct, source)
+       VALUES (?, ?, NULL, 'screener')`,
+    ).run(symbol, '2025-03-31');
+    db.prepare(
+      `INSERT INTO quarterly_fundamentals (symbol, quarter_end, opm_pct, source)
+       VALUES (?, ?, NULL, 'screener')`,
+    ).run(symbol, '2025-06-30');
+
+    const sd = getTrailingOpmStdDev(symbol, '2026-01-01', 4, db);
+    expect(sd).toBeNull();
+  });
+
+  it('(e) PIT: asOf bounds the trailing window correctly', async () => {
+    const symbol = 'PITBOUND';
+    insertOpmRows(symbol, [
+      { quarterEnd: '2024-12-31', opmPct: 15 },
+      { quarterEnd: '2025-03-31', opmPct: 16 },
+      { quarterEnd: '2025-06-30', opmPct: 17 },
+      { quarterEnd: '2025-09-30', opmPct: 18 },
+      { quarterEnd: '2025-12-31', opmPct: 19 },
+      { quarterEnd: '2026-03-31', opmPct: 20 },
+    ]);
+
+    // asOf = 2025-10-15 should only see 4 quarters (2025-09-30 down to 2024-12-31)
+    const sd = getTrailingOpmStdDev(symbol, '2025-10-15', 4, db);
+    expect(sd).not.toBeNull();
+    // The 4 quarters visible: 15, 16, 17, 18 → mean 16.5
+    // variance = ((15-16.5)^2 + (16-16.5)^2 + (17-16.5)^2 + (18-16.5)^2) / 4
+    //          = (2.25 + 0.25 + 0.25 + 2.25) / 4 = 5/4 = 1.25
+    // sd = sqrt(1.25) ≈ 1.118
+    expect(sd!).toBeCloseTo(1.118, 2);
+  });
+
+  it('(f) boundary: std-dev exactly 5.0 passes gate (> not >=)', async () => {
+    const symbol = 'BOUNDARY';
+    // [10, 20, 10, 20] → mean=15, variance=(25+25+25+25)/4=25, sd=5.0
+    insertOpmRows(symbol, [
+      { quarterEnd: '2025-03-31', opmPct: 10 },
+      { quarterEnd: '2025-06-30', opmPct: 20 },
+      { quarterEnd: '2025-09-30', opmPct: 10 },
+      { quarterEnd: '2025-12-31', opmPct: 20 },
+    ]);
+
+    const sd = getTrailingOpmStdDev(symbol, '2026-01-01', 4, db);
+    expect(sd).not.toBeNull();
+    expect(sd!).toBeCloseTo(5.0, 5);
+    // Gate uses strict >, so exactly 5.0 should pass
+    expect(sd! > 5.0).toBe(false);
   });
 });

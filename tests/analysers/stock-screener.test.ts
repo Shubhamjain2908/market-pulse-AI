@@ -1,5 +1,6 @@
 import Database, { type Database as DatabaseType } from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
+import { OPM_STD_DEV_MAX_PCT } from '../../src/analysers/quality-garp.js';
 import { runStockScreenAnalyser } from '../../src/analysers/stock-screener.js';
 import { loadStrategyGates } from '../../src/config/loaders.js';
 import { migrate } from '../../src/db/migrate.js';
@@ -147,5 +148,100 @@ describe('stock screener analyser: quality_garp', () => {
 
     expect(result.matchesByScreen.quality_garp).toBe(1);
     expect(result.funnelByScreen?.quality_garp?.universe).toBe(1);
+  });
+
+  it('passes through OPM gate when OPM data is absent (fail-open)', () => {
+    const db = new Database(':memory:');
+    migrate(db);
+    seedStrategyGates(loadStrategyGates().rows, db);
+
+    db.prepare(
+      `INSERT INTO symbols (symbol, exchange, sector, is_index, is_active) VALUES (?, 'NSE', ?, 0, 1)`,
+    ).run('NOOPM', 'Technology');
+    insertQualityBaseRows(db, 'NOOPM');
+    // No quarterly_fundamentals rows → OPM gate should be skipped (fail-open)
+
+    const result = runStockScreenAnalyser(
+      { date: '2026-05-28', symbols: ['NOOPM'], onlyScreen: 'quality_garp' },
+      db,
+    );
+    expect(result.matchesByScreen.quality_garp).toBe(1);
+    expect(result.funnelByScreen?.quality_garp?.passed).toBe(1);
+
+    const row = db
+      .prepare(
+        `SELECT matched_criteria AS matchedCriteria FROM screens
+         WHERE symbol = 'NOOPM' AND date = '2026-05-28' AND screen_name = 'quality_garp'`,
+      )
+      .get() as { matchedCriteria: string } | undefined;
+    expect(row).toBeTruthy();
+    const payload = JSON.parse(row!.matchedCriteria) as Record<string, unknown>;
+    expect(payload).toHaveProperty('opm_std_dev');
+    expect(payload.opm_std_dev).toBeNull();
+  });
+
+  it('blocks symbol with volatile OPM (std-dev > 5%)', () => {
+    const db = new Database(':memory:');
+    migrate(db);
+    seedStrategyGates(loadStrategyGates().rows, db);
+
+    db.prepare(
+      `INSERT INTO symbols (symbol, exchange, sector, is_index, is_active) VALUES (?, 'NSE', ?, 0, 1)`,
+    ).run('VOLOPM', 'Technology');
+    insertQualityBaseRows(db, 'VOLOPM');
+
+    // Insert 4 quarters of volatile OPM data
+    const insOpm = db.prepare(
+      `INSERT INTO quarterly_fundamentals (symbol, quarter_end, opm_pct, source) VALUES (?, ?, ?, 'screener')`,
+    );
+    insOpm.run('VOLOPM', '2025-03-31', 5);
+    insOpm.run('VOLOPM', '2025-06-30', 25);
+    insOpm.run('VOLOPM', '2025-09-30', 8);
+    insOpm.run('VOLOPM', '2025-12-31', 30);
+
+    const result = runStockScreenAnalyser(
+      { date: '2026-05-28', symbols: ['VOLOPM'], onlyScreen: 'quality_garp' },
+      db,
+    );
+    expect(result.matchesByScreen.quality_garp).toBe(0);
+    expect(result.funnelByScreen?.quality_garp?.opm_stability).toBe(1);
+  });
+
+  it('passes symbol with stable OPM data', () => {
+    const db = new Database(':memory:');
+    migrate(db);
+    seedStrategyGates(loadStrategyGates().rows, db);
+
+    db.prepare(
+      `INSERT INTO symbols (symbol, exchange, sector, is_index, is_active) VALUES (?, 'NSE', ?, 0, 1)`,
+    ).run('STABLEOPM', 'Technology');
+    insertQualityBaseRows(db, 'STABLEOPM');
+
+    // Insert 4 quarters of stable OPM data
+    const insOpm = db.prepare(
+      `INSERT INTO quarterly_fundamentals (symbol, quarter_end, opm_pct, source) VALUES (?, ?, ?, 'screener')`,
+    );
+    insOpm.run('STABLEOPM', '2025-03-31', 18);
+    insOpm.run('STABLEOPM', '2025-06-30', 19);
+    insOpm.run('STABLEOPM', '2025-09-30', 17.5);
+    insOpm.run('STABLEOPM', '2025-12-31', 18.5);
+
+    const result = runStockScreenAnalyser(
+      { date: '2026-05-28', symbols: ['STABLEOPM'], onlyScreen: 'quality_garp' },
+      db,
+    );
+    expect(result.matchesByScreen.quality_garp).toBe(1);
+    expect(result.funnelByScreen?.quality_garp?.passed).toBe(1);
+
+    const row = db
+      .prepare(
+        `SELECT matched_criteria AS matchedCriteria FROM screens
+         WHERE symbol = 'STABLEOPM' AND date = '2026-05-28' AND screen_name = 'quality_garp'`,
+      )
+      .get() as { matchedCriteria: string } | undefined;
+    expect(row).toBeTruthy();
+    const payload = JSON.parse(row!.matchedCriteria) as Record<string, unknown>;
+    expect(payload.opm_std_dev).not.toBeNull();
+    expect(payload.opm_std_dev as number).toBeLessThanOrEqual(OPM_STD_DEV_MAX_PCT);
   });
 });
