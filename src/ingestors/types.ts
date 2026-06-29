@@ -7,7 +7,13 @@
  * `fetchNews` and leave the rest as `undefined`.
  */
 
-import type { FiiDiiRow, Fundamentals, NewsItem, RawQuote } from '../types/domain.js';
+import type {
+  FiiDiiRow,
+  Fundamentals,
+  NewsItem,
+  QuarterlyFundamentals,
+  RawQuote,
+} from '../types/domain.js';
 
 export interface IngestorContext {
   /** ISO date (YYYY-MM-DD) the pipeline is targeting. Default: today, IST. */
@@ -38,8 +44,19 @@ export interface Ingestor {
 
   fetchQuotes?(ctx: IngestorContext): Promise<IngestResult<RawQuote>>;
   fetchFundamentals?(ctx: IngestorContext): Promise<IngestResult<Fundamentals>>;
+  /**
+   * Returns quarterly fundamentals (revenue, OPM, EPS, etc.) from the same
+   * Screener.in page already fetched for fundamentals. Implementations that
+   * share a page fetch with fetchFundamentals should cache the HTML internally.
+   */
+  fetchQuarterlyFundamentals?(ctx: IngestorContext): Promise<IngestResult<QuarterlyFundamentals>>;
   fetchNews?(ctx: IngestorContext): Promise<IngestResult<NewsItem>>;
   fetchFiiDii?(ctx: IngestorContext): Promise<IngestResult<FiiDiiRow>>;
 }
 
-export type IngestorCapability = 'quotes' | 'fundamentals' | 'news' | 'fii_dii';
+export type IngestorCapability =
+  | 'quotes'
+  | 'fundamentals'
+  | 'quarterly_fundamentals'
+  | 'news'
+  | 'fii_dii';

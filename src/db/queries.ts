@@ -9,6 +9,7 @@ import type {
   FiiDiiRow,
   Fundamentals,
   NewsItem,
+  QuarterlyFundamentals,
   RawQuote,
   ScreenResult,
   Signal,
@@ -495,6 +496,91 @@ export function getLatestCotGold(db: DatabaseType = getDb()): CotGoldRow | null 
     )
     .get();
   return (row as CotGoldRow | undefined) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Quarterly Fundamentals (from Screener.in #quarters & #cash-flow tables)
+// ---------------------------------------------------------------------------
+
+export function upsertQuarterlyFundamentals(
+  rows: QuarterlyFundamentals[],
+  db: DatabaseType = getDb(),
+): number {
+  if (rows.length === 0) return 0;
+  const stmt = db.prepare(`
+    INSERT INTO quarterly_fundamentals (
+      symbol, quarter_end, revenue, operating_profit, opm_pct, net_profit, eps,
+      operating_cash_flow, free_cash_flow, source
+    ) VALUES (
+      @symbol, @quarterEnd, @revenue, @operatingProfit, @opmPct, @netProfit, @eps,
+      @operatingCashFlow, @freeCashFlow, @source
+    )
+    ON CONFLICT(symbol, quarter_end) DO UPDATE SET
+      revenue            = COALESCE(excluded.revenue, quarterly_fundamentals.revenue),
+      operating_profit   = COALESCE(excluded.operating_profit, quarterly_fundamentals.operating_profit),
+      opm_pct            = COALESCE(excluded.opm_pct, quarterly_fundamentals.opm_pct),
+      net_profit         = COALESCE(excluded.net_profit, quarterly_fundamentals.net_profit),
+      eps                = COALESCE(excluded.eps, quarterly_fundamentals.eps),
+      operating_cash_flow = COALESCE(excluded.operating_cash_flow, quarterly_fundamentals.operating_cash_flow),
+      free_cash_flow     = COALESCE(excluded.free_cash_flow, quarterly_fundamentals.free_cash_flow),
+      source             = excluded.source
+  `);
+  const tx = db.transaction((batch: QuarterlyFundamentals[]) => {
+    for (const r of batch) {
+      stmt.run({
+        symbol: r.symbol,
+        quarterEnd: r.quarterEnd,
+        revenue: r.revenue ?? null,
+        operatingProfit: r.operatingProfit ?? null,
+        opmPct: r.opmPct ?? null,
+        netProfit: r.netProfit ?? null,
+        eps: r.eps ?? null,
+        operatingCashFlow: r.operatingCashFlow ?? null,
+        freeCashFlow: r.freeCashFlow ?? null,
+        source: r.source,
+      });
+    }
+  });
+  tx(rows);
+  return rows.length;
+}
+
+/** Fetch latest N quarters of quarterly fundamentals for a symbol. */
+export function getLatestQuarterlyFundamentals(
+  symbol: string,
+  limit = 8,
+  db: DatabaseType = getDb(),
+): QuarterlyFundamentals[] {
+  const rows = db
+    .prepare(
+      `
+      SELECT symbol, quarter_end AS quarterEnd, revenue, operating_profit AS operatingProfit,
+             opm_pct AS opmPct, net_profit AS netProfit, eps,
+             operating_cash_flow AS operatingCashFlow, free_cash_flow AS freeCashFlow, source
+      FROM quarterly_fundamentals
+      WHERE symbol = ?
+      ORDER BY quarter_end DESC
+      LIMIT ?
+    `,
+    )
+    .all(symbol.toUpperCase(), limit) as QuarterlyFundamentals[];
+  return rows;
+}
+
+/** Fetch the latest annual free cash flow for a symbol (Dec year-end row with FCF). */
+export function getLatestAnnualFcf(symbol: string, db: DatabaseType = getDb()): number | null {
+  const row = db
+    .prepare(
+      `
+      SELECT free_cash_flow AS fcf
+      FROM quarterly_fundamentals
+      WHERE symbol = ? AND free_cash_flow IS NOT NULL AND quarter_end LIKE '%-12-31'
+      ORDER BY quarter_end DESC
+      LIMIT 1
+    `,
+    )
+    .get(symbol.toUpperCase()) as { fcf: number } | undefined;
+  return row?.fcf ?? null;
 }
 
 // ---------------------------------------------------------------------------
