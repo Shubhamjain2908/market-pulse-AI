@@ -8,7 +8,14 @@
  */
 
 import { config } from '../config/env.js';
-import { getDb, insertNews, upsertFiiDii, upsertFundamentals, upsertQuotes } from '../db/index.js';
+import {
+  getDb,
+  insertNews,
+  upsertFiiDii,
+  upsertFundamentals,
+  upsertQuarterlyFundamentals,
+  upsertQuotes,
+} from '../db/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { NseIngestor } from '../ingestors/nse/ingestor.js';
 import { RssNewsIngestor } from '../ingestors/rss/ingestor.js';
@@ -35,6 +42,7 @@ export interface IngestRunResult {
   symbols: number;
   quotesWritten: number;
   fundamentalsWritten: number;
+  quarterlyFundamentalsWritten: number;
   newsWritten: number;
   fiiDiiWritten: number;
   /** Rows updated in `symbols` with Yahoo sector/industry (after ingest). */
@@ -59,6 +67,7 @@ export async function runDailyIngestor(opts: IngestRunOptions = {}): Promise<Ing
     symbols: symbols.length,
     quotesWritten: 0,
     fundamentalsWritten: 0,
+    quarterlyFundamentalsWritten: 0,
     newsWritten: 0,
     fiiDiiWritten: 0,
     failures: [],
@@ -180,6 +189,39 @@ export async function runDailyIngestor(opts: IngestRunOptions = {}): Promise<Ing
         reason: (err as Error).message,
       });
       log.warn({ err: (err as Error).message }, 'fundamentals ingestor failed');
+    }
+  }
+
+  // ---- Quarterly Fundamentals (Screener.in, same page, no extra requests) ----
+  if (fundIngestor.fetchQuarterlyFundamentals) {
+    try {
+      const r = await fundIngestor.fetchQuarterlyFundamentals(ctx);
+      result.quarterlyFundamentalsWritten = upsertQuarterlyFundamentals(r.data);
+      if (r.failed.length) {
+        result.failures.push({
+          capability: 'quarterly_fundamentals',
+          ingestor: fundIngestor.name,
+          reason: `${r.failed.length} symbols failed: ${r.failed.slice(0, 5).join(', ')}`,
+        });
+      }
+      log.info(
+        {
+          ingestor: fundIngestor.name,
+          written: result.quarterlyFundamentalsWritten,
+          rowsPerSymbol:
+            result.symbols > 0
+              ? Math.round(result.quarterlyFundamentalsWritten / result.symbols)
+              : 0,
+        },
+        'quarterly fundamentals ingested',
+      );
+    } catch (err) {
+      result.failures.push({
+        capability: 'quarterly_fundamentals',
+        ingestor: fundIngestor.name,
+        reason: (err as Error).message,
+      });
+      log.warn({ err: (err as Error).message }, 'quarterly fundamentals ingestor failed');
     }
   }
 
