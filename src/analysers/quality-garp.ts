@@ -75,12 +75,7 @@ export const QUALITY_GARP_ROE_MIN = 0.18;
 export const QUALITY_GARP_RSI_MAX = 45;
 export const QUALITY_GARP_SMA50_PCT_MAX = 5;
 
-// Trailing 4-quarter OPM std-dev threshold.
-// Distribution (113 covered symbols from 241 yahoo_annual universe):
-// median 2.33%, P75 4.21%, P90 6.87%.
-// 5% passes ~80% of covered symbols; blocks genuinely volatile
-// operators (MCX ~33%, GODREJPROP ~29%).
-// Fail-open: symbols with <4 quarters of data skip this gate.
+// Fail-open on <4 quarters. 5% ≈ P80 of covered symbols (median 2.33%, P75 4.21%).
 export const OPM_STD_DEV_MAX_PCT = 5.0;
 
 // ---------------------------------------------------------------------------

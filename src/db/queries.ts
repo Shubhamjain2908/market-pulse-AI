@@ -546,32 +546,23 @@ export function upsertQuarterlyFundamentals(
 }
 
 // ---------------------------------------------------------------------------
-// OPM stability (trailing 4-quarter OPM std-dev for quality_garp gate)
+// OPM stability — null if < quarters rows (fail-open)
 // ---------------------------------------------------------------------------
 
-const TRAILING_OPM_SQL = `
-  SELECT opm_pct FROM quarterly_fundamentals
-  WHERE symbol = ?
-    AND quarter_end <= ?
-    AND opm_pct IS NOT NULL
-  ORDER BY quarter_end DESC
-  LIMIT ?
-`;
-
-/**
- * Computes population std-dev of trailing `quarters` quarterly OPM percentage values.
- * Returns `null` when fewer than `quarters` rows are available (fail-open).
- * PIT-compliant: uses quarter_end <= asOf as the upper bound.
- */
 export function getTrailingOpmStdDev(
   symbol: string,
   asOf: string,
   quarters: number = 4,
   db: DatabaseType = getDb(),
 ): number | null {
-  const rows = db.prepare(TRAILING_OPM_SQL).all(symbol.toUpperCase(), asOf, quarters) as Array<{
-    opm_pct: number;
-  }>;
+  const rows = db
+    .prepare(`
+      SELECT opm_pct FROM quarterly_fundamentals
+      WHERE symbol = ? AND quarter_end <= ? AND opm_pct IS NOT NULL
+      ORDER BY quarter_end DESC
+      LIMIT ?
+    `)
+    .all(symbol.toUpperCase(), asOf, quarters) as Array<{ opm_pct: number }>;
 
   if (rows.length < quarters) return null;
 
