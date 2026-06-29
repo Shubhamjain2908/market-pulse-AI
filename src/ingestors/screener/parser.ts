@@ -14,7 +14,7 @@
 import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import { child } from '../../logger.js';
-import type { Fundamentals } from '../../types/domain.js';
+import type { Fundamentals, QuarterlyFundamentals } from '../../types/domain.js';
 import { isoDateIst } from '../base/dates.js';
 
 const log = child({ component: 'screener-parser' });
@@ -109,12 +109,15 @@ function parseFloatLoose(s: string | undefined): number | undefined {
 /**
  * Screener prints market cap in rupees-crore (e.g. "Rs. 21,34,567 Cr."). We
  * normalise to plain rupees-crore (the unit our schema uses).
+ * Handles negative values: "-₹500 Cr." → -500 and "(₹500 Cr.)" → -500.
  */
 function parseRupeeCrore(s: string | undefined): number | undefined {
   if (!s) return undefined;
-  const cleaned = s.replace(/[a-zA-Z₹.,\s]/g, '');
+  const isParenNegative = s.startsWith('(') && s.endsWith(')');
+  const cleaned = s.replace(/[()a-zA-Z₹.,\s]/g, '');
   const n = Number.parseFloat(cleaned);
-  return Number.isFinite(n) ? n : undefined;
+  if (!Number.isFinite(n)) return undefined;
+  return isParenNegative ? -n : n;
 }
 
 function normalizeLabel(s: string): string {
@@ -256,4 +259,276 @@ function parseDebtToEquityFromDataTables($: CheerioAPI): number | undefined {
     }
   }
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Quarterly Fundamentals (from #quarters table)
+// ---------------------------------------------------------------------------
+
+const MONTH_MAP: Record<string, string> = {
+  jan: '01',
+  feb: '02',
+  mar: '03',
+  apr: '04',
+  may: '05',
+  jun: '06',
+  jul: '07',
+  aug: '08',
+  sep: '09',
+  oct: '10',
+  nov: '11',
+  dec: '12',
+};
+
+function lastDayOfMonth(month: string, year: number): string {
+  return String(new Date(year, +month, 0).getDate());
+}
+
+/**
+ * Convert a Screener.in period label ("Dec 2025", "Dec 25", "Dec'25", "2025") to YYYY-MM-DD.
+ * Quarterly labels → last day of that month.
+ * Annual labels → 2025-12-31.
+ */
+function periodLabelToDate(label: string): string | null {
+  const trimmed = label.trim();
+
+  // Try quarterly format: "Dec 2025", "Dec 25", "Dec'25", "Dec' 25", "Dec-25"
+  const qMatch = trimmed.match(/^(\w{3})\s*['\u2019]?\s*(\d{2,4})$/i);
+  if (qMatch && qMatch[1] && qMatch[2]) {
+    const monthNum = MONTH_MAP[qMatch[1]!.toLowerCase()];
+    if (!monthNum) return null;
+    let year = Number.parseInt(qMatch[2]!, 10);
+    if (!Number.isFinite(year)) return null;
+    // Normalize 2-digit years to 4-digit: 25 → 2025, 98 → 1998
+    if (year < 100) {
+      year += year >= 50 ? 1900 : 2000;
+    }
+    const yearStr = String(year);
+    return `${yearStr}-${monthNum}-${lastDayOfMonth(monthNum, year)}`;
+  }
+
+  // Try annual format: "2025"
+  const yMatch = trimmed.match(/^(\d{4})$/);
+  if (yMatch) return `${yMatch[1]}-12-31`;
+  return null;
+}
+
+/** Labels in the #quarters table that map to revenue. */
+function isRevenueLabel(label: string): boolean {
+  const n = normalizeLabel(label);
+  // Screener.in often appends "+" or optional suffixes ("Sales +"), so use startsWith
+  return (
+    n.startsWith('sales') ||
+    n.startsWith('revenue') ||
+    n.startsWith('total revenue') ||
+    n.startsWith('total sales') ||
+    n.startsWith('income') ||
+    n.startsWith('revenue from operations')
+  );
+}
+
+/** Labels in the #quarters table that map to operating profit. */
+function isOperatingProfitLabel(label: string): boolean {
+  const n = normalizeLabel(label);
+  return n.startsWith('operating profit') || n.startsWith('op profit');
+}
+
+/** Labels in the #quarters table that map to OPM %. */
+function isOpmLabel(label: string): boolean {
+  const n = normalizeLabel(label);
+  return n.startsWith('opm') || n.startsWith('operating profit margin');
+}
+
+/** Labels in the #quarters table that map to net profit. Excludes Profit Before Tax / PBT / exceptional items. */
+function isNetProfitLabel(label: string): boolean {
+  const n = normalizeLabel(label);
+  // Exclude gross profit, PBT, and other non-net-profit lines
+  if (n.startsWith('gross profit')) return false;
+  if (/before tax|pretax|pbt|exceptional|extraordinary|discontinued/i.test(n)) return false;
+  return n.startsWith('net profit') || n.startsWith('profit') || n.startsWith('net income');
+}
+
+/** Labels in the #quarters table that map to EPS. */
+function isEpsLabel(label: string): boolean {
+  const n = normalizeLabel(label);
+  return (
+    n.startsWith('eps') ||
+    n.startsWith('earnings per share') ||
+    n.startsWith('diluted eps') ||
+    n.startsWith('basic eps')
+  );
+}
+
+/** Labels in the #cash-flow table that map to operating cash flow. */
+function isOperatingCashFlowLabel(label: string): boolean {
+  const n = normalizeLabel(label);
+  return (
+    n.startsWith('cash from operating') ||
+    n.startsWith('cash from ops') ||
+    n.startsWith('operating cash flow')
+  );
+}
+
+/** Labels in the #cash-flow table that map to free cash flow. */
+function isFreeCashFlowLabel(label: string): boolean {
+  const n = normalizeLabel(label);
+  return n.startsWith('free cash flow') || n.startsWith('fcf');
+}
+
+interface FinancialTable {
+  headers: string[];
+  rows: Record<string, string[]>;
+}
+
+/**
+ * Parse a Screener.in financial table (data-table) inside a section.
+ * Returns headers (period labels) and rows keyed by row label.
+ */
+function parseFinancialTable($: CheerioAPI, sectionId: string): FinancialTable | null {
+  const $section = $(`${sectionId} table.data-table`);
+  if ($section.length === 0) return null;
+
+  const headers: string[] = [];
+  $section.find('thead th').each((_, th) => {
+    headers.push($(th).text().trim());
+  });
+
+  // Skip header-only tables
+  if (headers.length < 2) return null;
+
+  const rows: Record<string, string[]> = {};
+  $section.find('tbody tr').each((_, tr) => {
+    const cells: string[] = [];
+    $(tr)
+      .find('td')
+      .each((_, td) => {
+        cells.push($(td).text().trim());
+      });
+    if (cells.length >= 2) {
+      const label = cells[0];
+      if (label) {
+        rows[label] = cells.slice(1);
+      }
+    }
+  });
+
+  if (Object.keys(rows).length === 0) return null;
+
+  return { headers, rows };
+}
+
+/**
+ * Extract quarterly financial data from the #quarters table.
+ * Returns an array of QuarterlyFundamentals, one per detected quarter.
+ */
+export function parseQuarterlyFundamentals(
+  html: string,
+  opts: ParseScreenerOptions,
+): QuarterlyFundamentals[] {
+  const $ = load(html);
+  const table = parseFinancialTable($, '#quarters');
+  if (!table) return [];
+
+  const symbol = opts.symbol.toUpperCase();
+  const source = opts.source;
+  const result: QuarterlyFundamentals[] = [];
+
+  // Column 0 is the first data column (most recent quarter)
+  for (let colIdx = 0; colIdx < table.headers.length - 1; colIdx++) {
+    // header[0] is usually empty (row labels column)
+    // header[colIdx + 1] is the period label
+    const periodHeader = table.headers[colIdx + 1];
+    if (!periodHeader) continue;
+
+    const quarterEnd = periodLabelToDate(periodHeader);
+    if (!quarterEnd) continue;
+
+    let revenue: number | undefined;
+    let operatingProfit: number | undefined;
+    let opmPct: number | undefined;
+    let netProfit: number | undefined;
+    let eps: number | undefined;
+
+    for (const [rowLabel, values] of Object.entries(table.rows)) {
+      const val = values[colIdx];
+      if (val === undefined || val === '' || val === '-') continue;
+
+      if (isRevenueLabel(rowLabel)) {
+        revenue = parseRupeeCrore(val);
+      } else if (isOperatingProfitLabel(rowLabel)) {
+        operatingProfit = parseRupeeCrore(val);
+      } else if (isOpmLabel(rowLabel)) {
+        opmPct = parseFloatLoose(val);
+      } else if (isNetProfitLabel(rowLabel)) {
+        netProfit = parseRupeeCrore(val);
+      } else if (isEpsLabel(rowLabel)) {
+        eps = parseFloatLoose(val);
+      }
+    }
+
+    result.push({
+      symbol,
+      quarterEnd,
+      revenue,
+      operatingProfit,
+      opmPct,
+      netProfit,
+      eps,
+      operatingCashFlow: undefined,
+      freeCashFlow: undefined,
+      source,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Extract annual cash flow data from the #cash-flow table.
+ * Returns QuarterlyFundamentals rows with cash flow fields populated at fiscal year end.
+ * Cash flow data on Screener.in is annual (fiscal year columns).
+ */
+export function parseCashFlowFundamentals(
+  html: string,
+  opts: ParseScreenerOptions,
+): QuarterlyFundamentals[] {
+  const $ = load(html);
+  const table = parseFinancialTable($, '#cash-flow');
+  if (!table) return [];
+
+  const symbol = opts.symbol.toUpperCase();
+  const source = opts.source;
+  const result: QuarterlyFundamentals[] = [];
+
+  for (let colIdx = 0; colIdx < table.headers.length - 1; colIdx++) {
+    const periodHeader = table.headers[colIdx + 1];
+    if (!periodHeader) continue;
+
+    const periodEnd = periodLabelToDate(periodHeader);
+    if (!periodEnd) continue;
+
+    let operatingCashFlow: number | undefined;
+    let freeCashFlow: number | undefined;
+
+    for (const [rowLabel, values] of Object.entries(table.rows)) {
+      const val = values[colIdx];
+      if (val === undefined || val === '' || val === '-') continue;
+
+      if (isOperatingCashFlowLabel(rowLabel)) {
+        operatingCashFlow = parseRupeeCrore(val);
+      } else if (isFreeCashFlowLabel(rowLabel)) {
+        freeCashFlow = parseRupeeCrore(val);
+      }
+    }
+
+    result.push({
+      symbol,
+      quarterEnd: periodEnd,
+      operatingCashFlow,
+      freeCashFlow,
+      source,
+    });
+  }
+
+  return result;
 }

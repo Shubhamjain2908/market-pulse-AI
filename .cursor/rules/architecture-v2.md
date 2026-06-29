@@ -187,7 +187,9 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 ### 3.5 Fundamentals backfill & Quality-GARP v2
 Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates Python annual backfill (241 symbols), screener ingest, then Yahoo snapshot (yahoo wins on `(symbol, as_of)` conflict). **`quality_garp`** gates: 3yr ROE≥18%, ROCE≥20%, D/E<0.5, PEG<1.2, PE/PB ceilings, RSI+SMA50 dip, promoter selling block.
 
-**Deferred:** `operating_margin_pct` migration + OPM stability gate; Dec-FY `as_of` edge cases.
+**Quarterly fundamentals (FY 2026 Q2):** Quarterly time-series (`revenue`, `operating_profit`, `opm_pct`, `net_profit`, `eps`, `operating_cash_flow`, `free_cash_flow`) now ingested from Screener.in `#quarters` + `#cash-flow` tables via the same HTML page as snapshot fundamentals (zero additional HTTP requests). Fetched automatically in `runDailyIngestor`; backfill via `pnpm backfill:quarterly`.
+
+**Deferred:** `operating_margin_pct` migration + OPM stability gate (now gatherable from `quarterly_fundamentals.opm_pct`); Dec-FY `as_of` edge cases.
 
 ---
 
@@ -236,6 +238,7 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
   promoter_holding_pct, promoter_holding_change_qoq, dividend_yield`.
   ⚠️ No sector column — sector is in `symbols` table.
   ⚠️ **Unit mix:** Yahoo snapshot may store `roe`/`roce`/`dividend_yield` as decimals; Screener as percent — normalized at screen read in `DbSignalProvider`.
+- **`quarterly_fundamentals`** — `(symbol, quarter_end)` PK. Quarterly time-series from Screener.in `#quarters` + `#cash-flow` tables. Columns: `revenue, operating_profit, opm_pct, net_profit, eps, operating_cash_flow, free_cash_flow`. Populated daily by `runDailyIngestor` (same page as `fundamentals` — zero extra HTTP requests). Backfill: `pnpm backfill:quarterly`. Banks (`Net Interest Income`) have nulls for revenue/OPM/OCF.
 - **`fii_dii`** — `(date, segment)` PK. Segments: `cash | fno | fno_index_fut | 
   fno_stock_fut`. Columns: `fii_buy, fii_sell, fii_net, dii_buy, dii_sell, dii_net`.
 - **`news`** — `(id)` PK, `UNIQUE(url)`. Columns: `symbol, headline, summary, 
@@ -373,7 +376,6 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 - fundamentals table coverage remains uneven; OPM-dependent extensions, Earnings Reversal, and PEG/ROE-CAGR-heavy variants remain deferred until backfill is complete.
 
 **Deferred to v2:**
-- Quarterly EPS scraper (true Factor 2 vs current `profit_growth_yoy` proxy)
 - Expanding universe from ~150 to NSE 500
 - Backtest infrastructure (walk-forward, transaction cost model, survivorship bias handling)
 - GTT Execution Module (activates when expectancy > 0 over 30+ trades — not yet met)

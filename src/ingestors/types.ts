@@ -7,7 +7,13 @@
  * `fetchNews` and leave the rest as `undefined`.
  */
 
-import type { FiiDiiRow, Fundamentals, NewsItem, RawQuote } from '../types/domain.js';
+import type {
+  FiiDiiRow,
+  Fundamentals,
+  NewsItem,
+  QuarterlyFundamentals,
+  RawQuote,
+} from '../types/domain.js';
 
 export interface IngestorContext {
   /** ISO date (YYYY-MM-DD) the pipeline is targeting. Default: today, IST. */
@@ -24,6 +30,12 @@ export interface IngestResult<T> {
   failed: string[];
   /** Provider name, useful for breadcrumbs. */
   source: string;
+  /**
+   * Optional data parsed from the same fetch page but belonging to a different
+   * schema. ScreenerIngestor sets this with quarterly fundamentals parsed from
+   * the same HTML as snapshot fundamentals.
+   */
+  quarterlyData?: QuarterlyFundamentals[];
 }
 
 export interface Ingestor {

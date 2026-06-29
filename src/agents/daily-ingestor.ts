@@ -8,7 +8,14 @@
  */
 
 import { config } from '../config/env.js';
-import { getDb, insertNews, upsertFiiDii, upsertFundamentals, upsertQuotes } from '../db/index.js';
+import {
+  getDb,
+  insertNews,
+  upsertFiiDii,
+  upsertFundamentals,
+  upsertQuarterlyFundamentals,
+  upsertQuotes,
+} from '../db/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { NseIngestor } from '../ingestors/nse/ingestor.js';
 import { RssNewsIngestor } from '../ingestors/rss/ingestor.js';
@@ -157,11 +164,14 @@ export async function runDailyIngestor(opts: IngestRunOptions = {}): Promise<Ing
     }
   }
 
-  // ---- Fundamentals (Screener.in) ----
+  // ---- Fundamentals (Screener.in) + Quarterly fundamentals (same page, no extra HTTP) ----
   if (fundIngestor.fetchFundamentals) {
     try {
       const r = await fundIngestor.fetchFundamentals(ctx);
       result.fundamentalsWritten = upsertFundamentals(r.data);
+      if (r.quarterlyData?.length) {
+        upsertQuarterlyFundamentals(r.quarterlyData);
+      }
       if (r.failed.length) {
         result.failures.push({
           capability: 'fundamentals',

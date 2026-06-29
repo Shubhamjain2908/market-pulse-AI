@@ -53,6 +53,32 @@ export const FundamentalsSchema = z.object({
 export type Fundamentals = z.infer<typeof FundamentalsSchema>;
 
 // ---------------------------------------------------------------------------
+// Quarterly Fundamentals (from Screener.in quarterly tables)
+// ---------------------------------------------------------------------------
+
+export const QuarterlyFundamentalsSchema = z.object({
+  symbol: z.string(),
+  /** Quarter-end date (YYYY-MM-DD), e.g. 2025-12-31 for Dec 2025 quarter. */
+  quarterEnd: z.string(),
+  /** Total revenue / sales for the quarter, in ₹ crores. */
+  revenue: z.number().optional(),
+  /** Operating profit for the quarter, in ₹ crores. */
+  operatingProfit: z.number().optional(),
+  /** Operating profit margin (OPM as percentage, e.g. 28.0 for 28%). */
+  opmPct: z.number().optional(),
+  /** Net profit / net income for the quarter, in ₹ crores. */
+  netProfit: z.number().optional(),
+  /** Earnings per share (diluted or basic as reported), in ₹. */
+  eps: z.number().optional(),
+  /** Operating cash flow for the quarter, in ₹ crores. */
+  operatingCashFlow: z.number().optional(),
+  /** Free cash flow for the quarter, in ₹ crores. */
+  freeCashFlow: z.number().optional(),
+  source: z.string(),
+});
+export type QuarterlyFundamentals = z.infer<typeof QuarterlyFundamentalsSchema>;
+
+// ---------------------------------------------------------------------------
 // News
 // ---------------------------------------------------------------------------
 
