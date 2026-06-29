@@ -10,7 +10,7 @@
 - Market-closure mode is first-class: weekends/holidays skip ingest and fresh LLM calls but still compose a persisted-data briefing.
 
 ## Data and Integration Boundaries
-- SQLite is the integration bus: ingestors write `quotes`/`fundamentals`/`news`/`fii_dii`, enrichers write `signals`, analysers write `screens`.
+- SQLite is the integration bus: ingestors write `quotes`/`fundamentals`/`quarterly_fundamentals`/`news`/`fii_dii`, enrichers write `signals`, analysers write `screens`.
 - DB pattern is explicit prepared statements + transactions (no ORM) in `src/db/queries.ts` and domain helpers (`src/db/pipeline-queries.ts`, `src/db/regime-queries.ts`, etc.).
 - Migrations are append-only SQL in `src/db/migrations`; `schema.sql` is base migration in `src/db/migrate.ts`.
 - LLM abstraction is `LlmProvider` (`src/llm/types.ts`); provider selection is centralized in `src/llm/factory.ts`.

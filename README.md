@@ -239,6 +239,11 @@ pnpm cli regime --no-narrative # skip LLM; templated fallback narrative only (st
 pnpm cli regime:gate-summary   # allowed strategies + multipliers for regime on -d date
 pnpm regime:seed-gates      # upsert config/strategy-gates.json → regime_strategy_gate
 pnpm regime:backfill        # historical regime_daily backfill script
+
+# Quarterly fundamentals (Screener.in time-series)
+pnpm backfill:quarterly                             # backfill ~188 symbols at 1 req/s (~3.5 min)
+SKIP_SCREENER_CHECK=1 pnpm backfill:quarterly        # skip 5s safety prompt (CI / automation)
+SYMBOLS=RELIANCE,INFY pnpm backfill:quarterly         # specific symbols only
 ```
 
 All commands accept `-d 2026-04-30` to target a specific trading date
@@ -311,6 +316,7 @@ sources transparently:
 | ------------------------- | ---------------------------------------------------------------------------- |
 | `signals` table (technical + optional momentum) | Technical (`pnpm cli enrich`): `close`, `sma_20`, `sma_50`, `sma_200`, `ema_9`, `ema_21`, `rsi_14`, `atr_14`, `volume_ratio_20d`, `pct_from_52w_high`, `pct_from_52w_low`. **Momentum factors + blackout** (same enrich path, momentum-universe symbols): `mom_12_1_return`, `mom_relative_strength_ba`, `mom_volume_breakout_flag`, `mom_earnings_blackout`. **Momentum rank** (`pnpm cli momentum-rank`): `mom_rank`, `mom_composite_score`, `mom_false_flag`, `mom_rank_excluded`. |
 | `fundamentals` table      | `pe`, `pb`, `peg`, `roe`, `roce`, `debt_to_equity`, `revenue_growth_yoy`, `profit_growth_yoy`, `promoter_holding_pct`, `promoter_holding_change_qoq`, `dividend_yield`, `market_cap`. **Unit mix:** Yahoo snapshot stores `roe` / `roce` / `dividend_yield` as decimals (e.g. `0.18`); Screener uses percent (`18`). [`normalizeFundamentalForScreen`](src/analysers/signal-provider.ts) scales `|v| < 1` × 100 at read time so DSL thresholds match. |
+| `quarterly_fundamentals` table | Quarterly time-series from Screener.in `#quarters` + `#cash-flow` tables: `revenue`, `operating_profit`, `opm_pct`, `net_profit`, `eps`, `operating_cash_flow`, `free_cash_flow`. Each row keyed by `(symbol, quarter_end)`. Parsed from the same HTML page as snapshot fundamentals — zero additional HTTP requests. Backfill via [`pnpm backfill:quarterly`](#cli-reference). |
 | `fii_dii` table (computed) | `fii_net`, `dii_net`, `fii_net_5d_sum`, `dii_net_5d_sum`, `fii_net_streak_days`, `dii_net_streak_days` |
 
 Operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `between` (tuple value),

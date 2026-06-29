@@ -80,6 +80,22 @@ CREATE TABLE inav_snapshots (
   PRIMARY KEY (symbol, date)
 );
 CREATE INDEX idx_inav_snapshots_date ON inav_snapshots(date);
+CREATE TABLE quarterly_fundamentals (
+  symbol                 TEXT NOT NULL,
+  quarter_end            TEXT NOT NULL, -- YYYY-MM-DD, last day of the quarter (e.g. 2026-03-31)
+  revenue                REAL,         -- ₹ crores
+  operating_profit       REAL,         -- ₹ crores
+  opm_pct                REAL,         -- Operating profit margin (percentage, e.g. 20.5 for 20.5%)
+  net_profit             REAL,         -- ₹ crores
+  eps                    REAL,         -- Earnings per share (₹)
+  operating_cash_flow    REAL,         -- ₹ crores (from #cash-flow table)
+  free_cash_flow         REAL,         -- ₹ crores (from #cash-flow table)
+  source                 TEXT NOT NULL,
+  ingested_at            TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (symbol, quarter_end)
+);
+CREATE INDEX IF NOT EXISTS idx_qf_symbol ON quarterly_fundamentals(symbol);
+CREATE INDEX IF NOT EXISTS idx_qf_quarter_end ON quarterly_fundamentals(quarter_end);
 CREATE TABLE ext_signal_holdings (
   strategy_name  TEXT NOT NULL,
   symbol         TEXT NOT NULL,

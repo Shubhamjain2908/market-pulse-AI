@@ -5,7 +5,7 @@ trades. Currently NOT met.
 
 **Built:** Market Regime Filter · Adaptive Trailing Stop · Multi-Factor Momentum (momentum_mf) · Quality-GARP (`quality_garp`, v2) · Catalyst-Driven Entry (`catalyst_entry`, v1)
 
-**Fundamentals backfill:** COMPLETE (2026-06-06). 241 symbols annual, Yahoo snapshot + screener refresh via `pnpm fundamentals:refresh`.
+**Fundamentals backfill:** COMPLETE (2026-06-06). 241 symbols annual, Yahoo snapshot + screener refresh via `pnpm fundamentals:refresh`. **Quarterly fundamentals** backfill COMPLETE (2026-06-29): `revenue`, `operating_profit`, `opm_pct`, `net_profit`, `eps`, `operating_cash_flow`, `free_cash_flow` from Screener.in `#quarters` + `#cash-flow` tables for 166 symbols (3,222 rows). Backfill: `pnpm backfill:quarterly`.
 
 ---
 
@@ -32,7 +32,7 @@ trades. Currently NOT met.
 **Deferred (data coverage):**
 - Promoter pledge % ingest + guardrail
 - Concall / transcript ingest for management-tone enrichment
-- Quarterly EPS / estimate-revision history for earnings-momentum logic
+- Quarterly estimate-revision history for earnings-momentum logic (quarterly EPS now ingested via `quarterly_fundamentals.eps` — estimate-revision feed still needed)
 - Sector-relative valuation aggregates
 - In-app benchmark comparison (NIFTY 500 / SMLCAP vs portfolio) — parity with kite-portfolio Module 1
 
@@ -43,7 +43,7 @@ trades. Currently NOT met.
 ### 1. Earnings Reversal Play
 
 **Category:** Stock picking + Quantitative | **Effort:** Medium | **Horizon:** Medium–long | **Build time:** 2–3 weeks
-**Stack needed:** Historical quarterly EPS data — needs Tickertape API or Screener scraping (NOT currently ingested)
+**Stack needed:** Historical quarterly EPS data (now partially ingested via `quarterly_fundamentals.eps` — estimate-revision feed still needed for consensus beats/misses)
 
 **Entry signals:**
 
@@ -57,8 +57,7 @@ trades. Currently NOT met.
 **AI role:** Read last two concall transcripts. Classify as genuine turnaround vs one-off. Identify what management says
 changed operationally.
 
-**Notes:** Blocked on data — no historical quarterly EPS series in current stack. Dependency on Concall Intelligence
-Engine (item 5 below) for full signal quality. Lowest priority until data source resolved.
+**Notes:** Partial data now available via `quarterly_fundamentals.eps` (Screener.in quarterly table). Full implementation still needs estimate-revision feed for consensus beat/miss signals and Concall Intelligence Engine (item 5 below) for qualitative turnaround confirmation. Progress from "blocked" to "needs one more data source".
 
 ---
 
