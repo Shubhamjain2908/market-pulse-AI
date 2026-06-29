@@ -1,11 +1,16 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { getSizeMultiplier, isStrategyAllowed } from '../db/index.js';
-import { getQualityGarpFundamentals, upsertScreenResults } from '../db/queries.js';
+import {
+  getQualityGarpFundamentals,
+  getTrailingOpmStdDev,
+  upsertScreenResults,
+} from '../db/queries.js';
 import type { ScreenResult } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
 import type { ScreenEngineResult } from './engine.js';
 import {
   createEmptyQualityGarpFunnel,
+  OPM_STD_DEV_MAX_PCT,
   persistQualityGarpFunnel,
   QUALITY_GARP_DE_MAX,
   QUALITY_GARP_PB_MAX,
@@ -42,6 +47,7 @@ interface QualityGarpMatchedCriteria {
   sma_50: number;
   close: number;
   pct_from_sma50: number;
+  opm_std_dev: number | null;
 }
 
 interface QualityGarpEvaluation {
@@ -50,6 +56,8 @@ interface QualityGarpEvaluation {
   matchedCount: number;
   failedGate?: QualityGarpFailGate;
   matchedCriteria?: QualityGarpMatchedCriteria;
+  /** Human-readable detail for debug logging (e.g. 'OPM std-dev 33.00% > 5.00%'). */
+  detail?: string;
 }
 
 export function runQualityGarpScreen(
@@ -100,6 +108,7 @@ export function runQualityGarpScreen(
       fundamental,
       provider,
       etfExclusions,
+      db,
     );
     const totalCriteria = QUALITY_GARP_TOTAL_GATES;
 
@@ -177,6 +186,7 @@ function evaluateQualityGarpSymbol(
   fundamentals: ReturnType<typeof getQualityGarpFundamentals>[number] | undefined,
   provider: SignalProvider,
   etfExclusions: Set<string>,
+  db: DatabaseType,
 ): QualityGarpEvaluation {
   let matchedCount = 0;
 
@@ -316,6 +326,23 @@ function evaluateQualityGarpSymbol(
   }
   matchedCount++;
 
+  // Gate 11: OPM stability (fail-open on insufficient data)
+  const opmStdDev = getTrailingOpmStdDev(symbol, date, 4, db);
+  if (opmStdDev !== null) {
+    if (opmStdDev > OPM_STD_DEV_MAX_PCT) {
+      return {
+        passed: false,
+        score: gateScore(matchedCount),
+        matchedCount,
+        failedGate: 'opm_stability',
+        detail: `OPM std-dev ${opmStdDev.toFixed(2)}% > ${OPM_STD_DEV_MAX_PCT}%`,
+      };
+    }
+    // opmStdDev <= threshold → pass, fall through
+  }
+  // null → skip gate (fail-open, <4 quarters of data)
+  matchedCount++;
+
   return {
     passed: true,
     score: gateScore(matchedCount),
@@ -337,6 +364,7 @@ function evaluateQualityGarpSymbol(
       sma_50: sma50,
       close,
       pct_from_sma50: pctFromSma50,
+      opm_std_dev: opmStdDev,
     },
   };
 }
