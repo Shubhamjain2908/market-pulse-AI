@@ -325,15 +325,17 @@ function evaluateQualityGarpSymbol(
   }
   matchedCount++;
 
-  if (opmStdDev !== null && opmStdDev > OPM_STD_DEV_MAX_PCT) {
-    return {
-      passed: false,
-      score: gateScore(matchedCount),
-      matchedCount,
-      failedGate: 'opm_stability',
-    };
+  if (opmStdDev !== null) {
+    if (opmStdDev > OPM_STD_DEV_MAX_PCT) {
+      return {
+        passed: false,
+        score: gateScore(matchedCount),
+        matchedCount,
+        failedGate: 'opm_stability',
+      };
+    }
+    matchedCount++;
   }
-  matchedCount++;
 
   return {
     passed: true,
