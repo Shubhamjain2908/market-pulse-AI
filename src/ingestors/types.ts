@@ -30,6 +30,12 @@ export interface IngestResult<T> {
   failed: string[];
   /** Provider name, useful for breadcrumbs. */
   source: string;
+  /**
+   * Optional data parsed from the same fetch page but belonging to a different
+   * schema. ScreenerIngestor sets this with quarterly fundamentals parsed from
+   * the same HTML as snapshot fundamentals.
+   */
+  quarterlyData?: QuarterlyFundamentals[];
 }
 
 export interface Ingestor {
@@ -44,19 +50,8 @@ export interface Ingestor {
 
   fetchQuotes?(ctx: IngestorContext): Promise<IngestResult<RawQuote>>;
   fetchFundamentals?(ctx: IngestorContext): Promise<IngestResult<Fundamentals>>;
-  /**
-   * Returns quarterly fundamentals (revenue, OPM, EPS, etc.) from the same
-   * Screener.in page already fetched for fundamentals. Implementations that
-   * share a page fetch with fetchFundamentals should cache the HTML internally.
-   */
-  fetchQuarterlyFundamentals?(ctx: IngestorContext): Promise<IngestResult<QuarterlyFundamentals>>;
   fetchNews?(ctx: IngestorContext): Promise<IngestResult<NewsItem>>;
   fetchFiiDii?(ctx: IngestorContext): Promise<IngestResult<FiiDiiRow>>;
 }
 
-export type IngestorCapability =
-  | 'quotes'
-  | 'fundamentals'
-  | 'quarterly_fundamentals'
-  | 'news'
-  | 'fii_dii';
+export type IngestorCapability = 'quotes' | 'fundamentals' | 'news' | 'fii_dii';

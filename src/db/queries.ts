@@ -545,44 +545,6 @@ export function upsertQuarterlyFundamentals(
   return rows.length;
 }
 
-/** Fetch latest N quarters of quarterly fundamentals for a symbol. */
-export function getLatestQuarterlyFundamentals(
-  symbol: string,
-  limit = 8,
-  db: DatabaseType = getDb(),
-): QuarterlyFundamentals[] {
-  const rows = db
-    .prepare(
-      `
-      SELECT symbol, quarter_end AS quarterEnd, revenue, operating_profit AS operatingProfit,
-             opm_pct AS opmPct, net_profit AS netProfit, eps,
-             operating_cash_flow AS operatingCashFlow, free_cash_flow AS freeCashFlow, source
-      FROM quarterly_fundamentals
-      WHERE symbol = ?
-      ORDER BY quarter_end DESC
-      LIMIT ?
-    `,
-    )
-    .all(symbol.toUpperCase(), limit) as QuarterlyFundamentals[];
-  return rows;
-}
-
-/** Fetch the latest annual free cash flow for a symbol (Dec year-end row with FCF). */
-export function getLatestAnnualFcf(symbol: string, db: DatabaseType = getDb()): number | null {
-  const row = db
-    .prepare(
-      `
-      SELECT free_cash_flow AS fcf
-      FROM quarterly_fundamentals
-      WHERE symbol = ? AND free_cash_flow IS NOT NULL AND quarter_end LIKE '%-12-31'
-      ORDER BY quarter_end DESC
-      LIMIT 1
-    `,
-    )
-    .get(symbol.toUpperCase()) as { fcf: number } | undefined;
-  return row?.fcf ?? null;
-}
-
 // ---------------------------------------------------------------------------
 // Signals
 // ---------------------------------------------------------------------------

@@ -281,25 +281,7 @@ const MONTH_MAP: Record<string, string> = {
 };
 
 function lastDayOfMonth(month: string, year: number): string {
-  if (month === '02') {
-    // Leap year check
-    const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-    return isLeap ? '29' : '28';
-  }
-  const MAP: Record<string, string> = {
-    '01': '31',
-    '03': '31',
-    '04': '30',
-    '05': '31',
-    '06': '30',
-    '07': '31',
-    '08': '31',
-    '09': '30',
-    '10': '31',
-    '11': '30',
-    '12': '31',
-  };
-  return MAP[month] ?? '30';
+  return String(new Date(year, +month, 0).getDate());
 }
 
 /**
@@ -487,11 +469,11 @@ export function parseQuarterlyFundamentals(
     result.push({
       symbol,
       quarterEnd,
-      revenue: revenue ?? undefined,
-      operatingProfit: operatingProfit ?? undefined,
-      opmPct: opmPct ?? undefined,
-      netProfit: netProfit ?? undefined,
-      eps: eps ?? undefined,
+      revenue,
+      operatingProfit,
+      opmPct,
+      netProfit,
+      eps,
       operatingCashFlow: undefined,
       freeCashFlow: undefined,
       source,
@@ -542,35 +524,11 @@ export function parseCashFlowFundamentals(
     result.push({
       symbol,
       quarterEnd: periodEnd,
-      revenue: undefined,
-      operatingProfit: undefined,
-      opmPct: undefined,
-      netProfit: undefined,
-      eps: undefined,
-      operatingCashFlow: operatingCashFlow ?? undefined,
-      freeCashFlow: freeCashFlow ?? undefined,
+      operatingCashFlow,
+      freeCashFlow,
       source,
     });
   }
 
   return result;
-}
-
-/**
- * Parse all financial tables from a single Screener.in HTML page.
- * Returns both snapshot fundamentals and quarterly/cash-flow data.
- * This avoids fetching the page multiple times.
- */
-export function parseAllScreenerData(
-  html: string,
-  opts: ParseScreenerOptions,
-): {
-  fundamentals: Fundamentals | null;
-  quarterly: QuarterlyFundamentals[];
-  cashFlow: QuarterlyFundamentals[];
-} {
-  const fundamentals = parseScreenerHtml(html, opts);
-  const quarterly = parseQuarterlyFundamentals(html, opts);
-  const cashFlow = parseCashFlowFundamentals(html, opts);
-  return { fundamentals, quarterly, cashFlow };
 }
