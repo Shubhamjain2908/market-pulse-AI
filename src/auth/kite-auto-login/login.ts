@@ -22,9 +22,9 @@ const log = child({ component: 'kite-auto-login' });
 const USER_ID_SELECTORS = ['#userid', 'form input[type="text"]:visible'];
 const PASSWORD_SELECTORS = ['#password', 'form input[type="password"]:visible'];
 const TOTP_SELECTORS = [
+  'input[type="number"][maxlength="6"]:visible',
+  'input[label="External TOTP"]:visible',
   'input[type="number"]:visible',
-  'input[maxlength="6"]:visible',
-  '#userid:visible',
 ];
 
 // 1GB VM flags — drop --single-process if login becomes unstable
@@ -112,7 +112,7 @@ export async function runKiteAutoLogin(
 
     if (!hasRequestToken(page.url())) {
       const totp = await generate({ secret: creds.totpSecret });
-      await fillAndSubmit(page, TOTP_SELECTORS, totp);
+      await fillAndSubmitTotp(page, totp);
     }
 
     await waitForLoginComplete(page);
@@ -174,8 +174,34 @@ async function fillFirst(page: Page, selectors: string[], value: string): Promis
 /** Enter on the filled field — avoids disabled processing submit buttons */
 async function fillAndSubmit(page: Page, selectors: string[], value: string): Promise<void> {
   const loc = await firstVisible(page, selectors);
+  await loc.click();
   await loc.fill(value);
-  await loc.press('Enter');
+  // ponytail: locator.press hangs on Kite React inputs — keyboard Enter targets focused field
+  await page.keyboard.press('Enter');
+}
+
+/** TOTP is type=number; fill+locator.press often stalls — type digits + keyboard/submit fallbacks */
+async function fillAndSubmitTotp(page: Page, totp: string): Promise<void> {
+  const loc = await firstVisible(page, TOTP_SELECTORS);
+  await loc.click();
+  await loc.clear();
+  await loc.pressSequentially(totp, { delay: 40 });
+  await page.keyboard.press('Enter');
+
+  if (await loginProgressed(page, 5_000)) return;
+
+  const submit = page.locator('button[type="submit"]:not([disabled])').first();
+  await submit.click({ timeout: 30_000 });
+}
+
+async function loginProgressed(page: Page, timeoutMs: number): Promise<boolean> {
+  return Promise.race([
+    page.waitForURL(/request_token=|auth\/callback/, { timeout: timeoutMs }).then(() => true),
+    page
+      .getByText('Kite token updated successfully')
+      .waitFor({ timeout: timeoutMs })
+      .then(() => true),
+  ]).catch(() => false);
 }
 
 async function waitForTotpOrRedirect(page: Page): Promise<void> {
