@@ -19,9 +19,8 @@
  */
 
 import { parseArgs } from 'node:util';
-
-import { closeDb, getDb, migrate } from '../src/db/index.js';
 import { getMomentumUniverseSymbols } from '../src/config/loaders.js';
+import { closeDb, getDb, migrate } from '../src/db/index.js';
 import { child } from '../src/logger.js';
 import { argvForCliParseArgs } from './argv-for-cli.js';
 
@@ -54,7 +53,8 @@ const { values } = parseArgs({
   },
 });
 
-const asOf = typeof values['as-of'] === 'string' ? values['as-of'] : new Date().toISOString().slice(0, 10);
+const asOf =
+  typeof values['as-of'] === 'string' ? values['as-of'] : new Date().toISOString().slice(0, 10);
 
 // ---------------------------------------------------------------------------
 // 1. Load momentum universe
@@ -97,9 +97,11 @@ const symbolsWith4Q = totalWith4Q[0]?.c ?? 0;
 const coverage = {
   universeSize: universe.length,
   symbolsWithEps,
-  coveragePct: universe.length > 0 ? Number(((symbolsWithEps / universe.length) * 100).toFixed(1)) : 0,
+  coveragePct:
+    universe.length > 0 ? Number(((symbolsWithEps / universe.length) * 100).toFixed(1)) : 0,
   symbolsWith4QorMore: symbolsWith4Q,
-  coverage4QPct: universe.length > 0 ? Number(((symbolsWith4Q / universe.length) * 100).toFixed(1)) : 0,
+  coverage4QPct:
+    universe.length > 0 ? Number(((symbolsWith4Q / universe.length) * 100).toFixed(1)) : 0,
 };
 
 // Distribution of available EPS quarters
@@ -194,19 +196,30 @@ for (const r of epsGrowthRows) {
   }
 }
 
-function statSummary(values: number[]): { n: number; mean: number | null; median: number | null; std: number | null; min: number; max: number } {
+function statSummary(values: number[]): {
+  n: number;
+  mean: number | null;
+  median: number | null;
+  std: number | null;
+  min: number;
+  max: number;
+} {
   if (values.length === 0) {
     return { n: 0, mean: null, median: null, std: null, min: 0, max: 0 };
   }
   const sorted = [...values].sort((a, b) => a - b);
   const n = sorted.length;
   const mean = sorted.reduce((s, v) => s + v, 0) / n;
+  // biome-ignore lint/style/noNonNullAssertion: guarded by values.length === 0 check above
   const midLo = sorted[Math.floor((n - 1) / 2)]!;
+  // biome-ignore lint/style/noNonNullAssertion: guarded by values.length === 0 check above
   const midHi = sorted[Math.floor(n / 2)]!;
   const median = (midLo + midHi) / 2;
   const variance = sorted.reduce((s, v) => s + (v - mean) ** 2, 0) / n;
   const std = Math.sqrt(variance);
+  // biome-ignore lint/style/noNonNullAssertion: guarded by values.length === 0 check above
   const first = sorted[0]!;
+  // biome-ignore lint/style/noNonNullAssertion: guarded by values.length === 0 check above
   const last = sorted[n - 1]!;
   return {
     n,
@@ -245,88 +258,88 @@ if (rebalDates.length < 2) {
   log.warn({ datesFound: rebalDates.length }, 'insufficient rebalance dates for WoW test');
 } else {
   for (const sym of universe) {
-  let pgyStable = 0;
-  let pgyChanges = 0;
-  let epsChanges = 0;
-  let epsComparable = 0;
+    let pgyStable = 0;
+    let pgyChanges = 0;
+    let epsChanges = 0;
+    let epsComparable = 0;
 
-  for (let i = 0; i < rebalDates.length - 1; i++) {
-    const d1 = rebalDates[i];
-    const d2 = rebalDates[i + 1];
-    if (!d1 || !d2) continue;
+    for (let i = 0; i < rebalDates.length - 1; i++) {
+      const d1 = rebalDates[i];
+      const d2 = rebalDates[i + 1];
+      if (!d1 || !d2) continue;
 
-    // profit_growth_yoy at each date
-    const p1 = db
-      .prepare(
-        `SELECT profit_growth_yoy FROM fundamentals
+      // profit_growth_yoy at each date
+      const p1 = db
+        .prepare(
+          `SELECT profit_growth_yoy FROM fundamentals
          WHERE symbol = ? AND source IN ('yahoo_snapshot', 'screener')
            AND as_of <= ?
          ORDER BY as_of DESC LIMIT 1`,
-      )
-      .get(sym, d1) as { profit_growth_yoy: number } | undefined;
+        )
+        .get(sym, d1) as { profit_growth_yoy: number } | undefined;
 
-    const p2 = db
-      .prepare(
-        `SELECT profit_growth_yoy FROM fundamentals
+      const p2 = db
+        .prepare(
+          `SELECT profit_growth_yoy FROM fundamentals
          WHERE symbol = ? AND source IN ('yahoo_snapshot', 'screener')
            AND as_of <= ?
          ORDER BY as_of DESC LIMIT 1`,
-      )
-      .get(sym, d2) as { profit_growth_yoy: number } | undefined;
+        )
+        .get(sym, d2) as { profit_growth_yoy: number } | undefined;
 
-    const v1 = p1?.profit_growth_yoy;
-    const v2 = p2?.profit_growth_yoy;
+      const v1 = p1?.profit_growth_yoy;
+      const v2 = p2?.profit_growth_yoy;
 
-    if (v1 != null && v2 != null) {
-      if (v1 === v2) {
-        pgyStable++;
-      } else {
-        pgyChanges++;
+      if (v1 != null && v2 != null) {
+        if (v1 === v2) {
+          pgyStable++;
+        } else {
+          pgyChanges++;
+        }
+      }
+
+      // Quarterly EPS-derived growth at each date
+      const eq1 = db
+        .prepare(
+          `SELECT eps FROM quarterly_fundamentals
+         WHERE symbol = ? AND eps IS NOT NULL AND quarter_end <= ?
+         ORDER BY quarter_end DESC LIMIT 1`,
+        )
+        .get(sym, d1) as { eps: number } | undefined;
+
+      const eq2 = db
+        .prepare(
+          `SELECT eps FROM quarterly_fundamentals
+         WHERE symbol = ? AND eps IS NOT NULL AND quarter_end <= ?
+         ORDER BY quarter_end DESC LIMIT 1`,
+        )
+        .get(sym, d2) as { eps: number } | undefined;
+
+      const ev1 = eq1?.eps;
+      const ev2 = eq2?.eps;
+
+      if (ev1 != null && ev2 != null) {
+        epsComparable++;
+        if (ev1 !== ev2) {
+          epsChanges++;
+        }
       }
     }
 
-    // Quarterly EPS-derived growth at each date
-    const eq1 = db
-      .prepare(
-        `SELECT eps FROM quarterly_fundamentals
-         WHERE symbol = ? AND eps IS NOT NULL AND quarter_end <= ?
-         ORDER BY quarter_end DESC LIMIT 1`,
-      )
-      .get(sym, d1) as { eps: number } | undefined;
+    const totalPgy = pgyStable + pgyChanges;
+    const totalEps = epsComparable;
 
-    const eq2 = db
-      .prepare(
-        `SELECT eps FROM quarterly_fundamentals
-         WHERE symbol = ? AND eps IS NOT NULL AND quarter_end <= ?
-         ORDER BY quarter_end DESC LIMIT 1`,
-      )
-      .get(sym, d2) as { eps: number } | undefined;
-
-    const ev1 = eq1?.eps;
-    const ev2 = eq2?.eps;
-
-    if (ev1 != null && ev2 != null) {
-      epsComparable++;
-      if (ev1 !== ev2) {
-        epsChanges++;
-      }
+    if (totalPgy > 0 || totalEps > 0) {
+      wowResults.push({
+        symbol: sym,
+        totalWeeks: Math.max(totalPgy, totalEps),
+        pgyStableWeeks: pgyStable,
+        pgyChangeWeeks: pgyChanges,
+        pgyStablePct: totalPgy > 0 ? Number(((pgyStable / totalPgy) * 100).toFixed(1)) : null,
+        epsChangeWeeks: totalEps > 0 ? epsChanges : null,
+        epsChangePct: totalEps > 0 ? Number(((epsChanges / totalEps) * 100).toFixed(1)) : null,
+      });
     }
-  }
-
-  const totalPgy = pgyStable + pgyChanges;
-  const totalEps = epsComparable;
-
-  if (totalPgy > 0 || totalEps > 0) {
-    wowResults.push({
-      symbol: sym,
-      totalWeeks: Math.max(totalPgy, totalEps),
-      pgyStableWeeks: pgyStable,
-      pgyChangeWeeks: pgyChanges,
-      pgyStablePct: totalPgy > 0 ? Number(((pgyStable / totalPgy) * 100).toFixed(1)) : null,
-      epsChangeWeeks: totalEps > 0 ? epsChanges : null,
-      epsChangePct: totalEps > 0 ? Number(((epsChanges / totalEps) * 100).toFixed(1)) : null,
-    });
-  }
   }
 }
 
@@ -356,8 +369,16 @@ const avgEpsChangePct =
 
 const pgyStableDistribution = [
   { label: '0-25%', count: wowResults.filter((r) => (r.pgyStablePct ?? 0) < 25).length },
-  { label: '25-50%', count: wowResults.filter((r) => (r.pgyStablePct ?? 0) >= 25 && (r.pgyStablePct ?? 0) < 50).length },
-  { label: '50-75%', count: wowResults.filter((r) => (r.pgyStablePct ?? 0) >= 50 && (r.pgyStablePct ?? 0) < 75).length },
+  {
+    label: '25-50%',
+    count: wowResults.filter((r) => (r.pgyStablePct ?? 0) >= 25 && (r.pgyStablePct ?? 0) < 50)
+      .length,
+  },
+  {
+    label: '50-75%',
+    count: wowResults.filter((r) => (r.pgyStablePct ?? 0) >= 50 && (r.pgyStablePct ?? 0) < 75)
+      .length,
+  },
   { label: '75-100%', count: wowResults.filter((r) => (r.pgyStablePct ?? 0) >= 75).length },
 ];
 
@@ -386,9 +407,8 @@ const stalenessNote = [
 // 6. Go/no-go gate
 // ---------------------------------------------------------------------------
 const coveragePass = coverage.coverage4QPct >= 50;
-const epsSigmaGtPgy = epsGrowthStats.std != null && pgyStats.std != null
-  ? epsGrowthStats.std > pgyStats.std
-  : false;
+const epsSigmaGtPgy =
+  epsGrowthStats.std != null && pgyStats.std != null ? epsGrowthStats.std > pgyStats.std : false;
 
 const gate = {
   coverageThreshold: 50,
@@ -448,6 +468,8 @@ log.info({ gate: gate.verdict }, 'EPS audit complete');
 closeDb();
 
 if (gate.verdict === 'HALT') {
-  console.error(`\nGATE: HALT — coverage=${coverage.coverage4QPct}% (threshold=50%), sigmaPass=${epsSigmaGtPgy}`);
+  console.error(
+    `\nGATE: HALT — coverage=${coverage.coverage4QPct}% (threshold=50%), sigmaPass=${epsSigmaGtPgy}`,
+  );
   process.exitCode = 1;
 }
