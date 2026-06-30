@@ -150,6 +150,7 @@ function loadLatestFundamentals(
 ): Map<string, FundamentalSnapshot> {
   const out = new Map<string, FundamentalSnapshot>();
   if (universe.length === 0) return out;
+
   const ph = universe.map(() => '?').join(',');
   const rows = db
     .prepare(

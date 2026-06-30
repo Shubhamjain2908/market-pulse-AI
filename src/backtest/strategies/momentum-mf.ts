@@ -12,6 +12,7 @@ import {
   loadSectorMap,
 } from '../../config/loaders.js';
 import { trailingStopSizingFromMomentumConfig } from '../../config/trailing-stop-sizing.js';
+
 import { isInEarningsBlackoutCalendarWindow } from '../../db/momentum-queries.js';
 import { getTodayRegime } from '../../db/regime-queries.js';
 import {
@@ -130,6 +131,7 @@ function loadFundamentalsMap(
 ): Map<string, { profitGrowthYoy: number | null; netProfitTtm: number | null }> {
   const out = new Map<string, { profitGrowthYoy: number | null; netProfitTtm: number | null }>();
   if (universe.length === 0) return out;
+
   const ph = universe.map(() => '?').join(',');
   const rows = db
     .prepare(

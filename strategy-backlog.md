@@ -38,17 +38,34 @@ Fail-open when <4 quarters of `quarterly_fundamentals.opm_pct` data.
 
 **Backlog:**
 
-### B-ENG-12: EPS momentum factor upgrade
-- Replace `profit_growth_yoy` proxy (Factor 2, 25% weight) in momentum ranker
-  with QoQ EPS growth from `quarterly_fundamentals.eps`
-- Current proxy is annual/snapshot — ~zero cross-sectional variation between
-  report cycles
-- quarterly_fundamentals.eps gives true quarterly cadence; QoQ growth is
-  computable as `(eps_t - eps_t-4) / abs(eps_t-4)` for YoY-on-quarterly basis
-- Prerequisite: EPS coverage audit (currently 63.3% of 188 symbols);
-  validate cross-sectional variation actually improves before swapping
-- Gate: backtest momentum_mf with new Factor 2 vs current; merge only if
-  profit factor >= current baseline
+### B-ENG-12: EPS momentum factor upgrade — REJECTED (2026-06-30)
+
+Backtest result: quarterly-derived EPS growth (PR #134 audit branch)
+underperformed the existing profit_growth_yoy annual proxy on momentum_mf.
+
+| Metric        | Baseline (annual) | Quarterly EPS | Delta   |
+|---------------|--------------------|--------------|---------|
+| Total trades  | 651                | 639          | -12     |
+| Hit rate      | 55.91%             | 56.34%       | +0.43pp |
+| Avg return    | 2.10%              | 2.07%        | -0.03pp |
+| Profit factor | 1.98               | 1.944        | -0.036  |
+
+Root cause: 5-consecutive-non-null-quarter requirement for QoQ YoY
+computation reduces effective coverage below the 63.3% headline EPS
+coverage figure. Symbols without 5 quarters fall back to null →
+z=0 neutral, diluting whatever genuine signal exists in the covered
+subset. The annual profit_growth_yoy proxy, despite its known
+staleness problem (Anomaly 6.2, original adversarial review),
+is not displaced by this implementation.
+
+Decision: keep profit_growth_yoy as Factor 2. Do not pursue further
+without either (a) a denser EPS data source with full quarterly
+coverage, or (b) a relaxed eligibility threshold (e.g. 3 quarters
+instead of 5) — flagged as a possible future retry, not scheduled.
+
+`getTrailingEpsGrowth` retained in src/db/queries.ts (unused) —
+may be reusable for Earnings Reversal Play once estimate-revision
+feed is available.
 
 ---
 

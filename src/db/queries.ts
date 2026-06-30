@@ -546,6 +546,42 @@ export function upsertQuarterlyFundamentals(
 }
 
 // ---------------------------------------------------------------------------
+// Trailing quarterly EPS growth — null if < 5 quarters (T vs T-4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns YoY EPS growth from quarterly_fundamentals: (eps_t - eps_t-4) / abs(eps_t-4)
+ * Returns null if fewer than 5 non-null EPS quarters are available up to asOf.
+ */
+export function getTrailingEpsGrowth(
+  symbol: string,
+  asOf: string,
+  db: DatabaseType = getDb(),
+): number | null {
+  const rows = db
+    .prepare(`
+      SELECT eps FROM quarterly_fundamentals
+      WHERE symbol = ? AND eps IS NOT NULL AND quarter_end <= ?
+      ORDER BY quarter_end DESC
+      LIMIT 5
+    `)
+    .all(symbol.toUpperCase(), asOf) as Array<{ eps: number }>;
+
+  if (rows.length < 5) return null;
+  const epsT = rows[0]?.eps;
+  const epsT4 = rows[4]?.eps;
+  if (
+    epsT == null ||
+    epsT4 == null ||
+    !Number.isFinite(epsT) ||
+    !Number.isFinite(epsT4) ||
+    epsT4 === 0
+  )
+    return null;
+  return ((epsT - epsT4) / Math.abs(epsT4)) * 100;
+}
+
+// ---------------------------------------------------------------------------
 // OPM stability — null if < quarters rows (fail-open)
 // ---------------------------------------------------------------------------
 
