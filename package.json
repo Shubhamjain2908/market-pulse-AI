@@ -33,6 +33,7 @@
     "cot:gold": "tsx scripts/cot-gold-fetch.ts",
     "fundamentals:refresh": "tsx scripts/refresh-fundamentals-v2.mts",
     "fundamentals:audit": "tsx scripts/audit-fundamentals-coverage.mts",
+    "eps:audit-coverage": "tsx scripts/audit-eps-coverage.mts",
     "momentum:backfill-universe": "tsx scripts/backfill-momentum-universe.mts",
     "backfill:quarterly": "tsx scripts/backfill-quarterly-fundamentals.mts",
     "momentum:refresh-earnings": "tsx scripts/refresh-earnings-calendar.mts",
