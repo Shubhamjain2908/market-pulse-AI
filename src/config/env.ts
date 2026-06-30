@@ -123,14 +123,6 @@ const EnvSchema = z.object({
 
   /** Yahoo quote fetch retries for symbols that failed (full retry rounds). */
   INGEST_QUOTES_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
-
-  /**
-   * Temporary: use quarterly_fundamentals.eps-derived growth for Factor 2
-   * instead of profit_growth_yoy. Set to 'quarterly' for backtest comparison
-   * (PR #132). Remove after the gate decision — either fully cut over or
-   * fully discard this code path.
-   */
-  BACKTEST_EPS_SOURCE: z.enum(['annual', 'quarterly']).default('annual'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
