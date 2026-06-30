@@ -117,6 +117,12 @@ export function runQualityGarpScreen(
       recordQualityGarpFunnelFailure(funnel, evaluation.failedGate);
     }
 
+    // Track OPM skips (null std-dev = fewer than 4 quarters of data).
+    // These symbols pass all non-OPM gates but were never evaluated on OPM.
+    if (opmStdDev == null && !evaluation.failedGate) {
+      funnel.opm_skipped++;
+    }
+
     evaluations.push({
       symbol,
       date,
