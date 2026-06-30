@@ -26,6 +26,7 @@
  *   mp ext-signal-smoke  Live ext-signal ingest + portfolio overlap report
  *   mp fundamental-screen-audit  quality/dividend screen bottleneck audit
  *   mp ext-signal-cross-ref  ext signals vs watchlist/momentum/portfolio overlap
+ *   mp stage-history     Query pipeline stage results for the trailing N days
  *   mp doctor            Print runtime/config diagnostics
  *   mp regime            Full regime agent (classify + LLM narrative → regime_daily)
  *   mp regime:gate-summary  Print allowed strategies for today's regime
@@ -55,6 +56,7 @@ import {
   listAllowedGatesForRegime,
   migrate,
 } from './db/index.js';
+import { getStageHistory } from './db/pipeline-queries.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
@@ -674,6 +676,19 @@ program
     } finally {
       closeDb();
     }
+  });
+
+program
+  .command('stage-history')
+  .description('query pipeline stage results for the trailing N days (default 7)')
+  .argument('<stage>', 'pipeline stage name (e.g. yahoo-snapshot)')
+  .option('-n, --days <n>', 'trailing days to inspect')
+  .action((stage: string, opts: { days?: string }) => {
+    ensureDb();
+    const rows = getStageHistory(stage, opts.days ? Number(opts.days) : undefined, getDb());
+    const effectiveDays = opts.days ? Number(opts.days) : 7;
+    console.log(JSON.stringify({ stage, days: effectiveDays, runs: rows.length, rows }, null, 2));
+    closeDb();
   });
 
 program

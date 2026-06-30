@@ -26,6 +26,14 @@ const INSERT_PIPELINE_STAGE_SQL = `
   )
 `;
 
+const STAGE_HISTORY_SQL = `
+  SELECT run_date AS runDate, status, error_msg AS errorMsg, metadata
+  FROM pipeline_runs
+  WHERE stage = ?
+    AND run_date >= date('now', '-' || ? || ' days')
+  ORDER BY run_date DESC, id DESC
+`;
+
 /** Latest row per required stage — retries must not leave stale failures. */
 const LATEST_REQUIRED_STAGE_STATUS_SQL = `
   SELECT stage, status FROM (
@@ -71,6 +79,38 @@ export function recordPipelineStage(
       { runDate: args.runDate, stage: args.stage, status: args.status },
       'pipeline stage recorded',
     );
+  }
+}
+
+export interface StageRun {
+  runDate: string;
+  status: PipelineStatus;
+  errorMsg: string | null;
+  metadata: object | null;
+}
+
+export function getStageHistory(
+  stage: string,
+  days: number = 7,
+  db: DatabaseType = getDb(),
+): StageRun[] {
+  const rows = db.prepare(STAGE_HISTORY_SQL).all(stage, days) as Array<{
+    runDate: string;
+    status: PipelineStatus;
+    errorMsg: string | null;
+    metadata: string | null;
+  }>;
+  return rows.map((r) => ({
+    ...r,
+    metadata: r.metadata ? safeParseJson<object>(r.metadata) : null,
+  }));
+}
+
+function safeParseJson<T>(raw: string): T | null {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
   }
 }
 

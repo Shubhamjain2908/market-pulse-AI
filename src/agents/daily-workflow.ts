@@ -258,6 +258,11 @@ export async function runDailyWorkflow(
       stage: 'yahoo-snapshot',
       policy: 'warn',
       work: () => ingestYahooSnapshots(db, { date }),
+      metadata: (result) => ({
+        attempted: result.attempted,
+        written: result.written,
+        failed: result.failed,
+      }),
     });
     if (yahooSnapshotStage.ok) {
       const snap = yahooSnapshotStage.result;
