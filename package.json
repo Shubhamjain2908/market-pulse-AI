@@ -14,7 +14,7 @@
     "mp": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "build": "rm -rf dist tsconfig.build.tsbuildinfo && tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "deploy": "pnpm build && pm2 reload deploy/ecosystem.config.cjs",
     "start": "node dist/cli.js",
     "cli": "tsx src/cli.ts",
