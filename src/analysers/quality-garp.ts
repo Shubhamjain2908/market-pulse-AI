@@ -114,6 +114,7 @@ export interface QualityGarpFunnelCounts {
   sma50: number;
   promoter: number;
   opm_stability: number;
+  opm_skipped: number;
   passed: number;
 }
 
@@ -149,6 +150,7 @@ export function createEmptyQualityGarpFunnel(): QualityGarpFunnelCounts {
     sma50: 0,
     promoter: 0,
     opm_stability: 0,
+    opm_skipped: 0,
     passed: 0,
   };
 }
@@ -206,11 +208,15 @@ export function formatQualityGarpFunnelSummary(
   const preRsi =
     funnel.valuation + funnel.roe_3yr + funnel.roce + funnel.debt + funnel.peg_null + funnel.peg;
   const scopeLabel = universeScope ? ` [${universeScope}, n=${funnel.universe}]` : '';
+  const opmSummary =
+    funnel.opm_skipped > 0
+      ? `OPM ${funnel.opm_stability} fail, ${funnel.opm_skipped} skipped`
+      : `OPM ${funnel.opm_stability}`;
   return [
     `Quality-GARP: 0 matches (${funnel.candidates_pe_pb} PE/PB candidates${scopeLabel}).`,
     `Pre-RSI eliminations: valuation ${funnel.valuation}, 3yr ROE ${funnel.roe_3yr},`,
     `ROCE ${funnel.roce}, D/E ${funnel.debt}, PEG null ${funnel.peg_null}, PEG fail ${funnel.peg}.`,
-    `Technical: RSI ${funnel.rsi}, SMA50 ${funnel.sma50}, promoter ${funnel.promoter}, OPM ${funnel.opm_stability}.`,
+    `Technical: RSI ${funnel.rsi}, SMA50 ${funnel.sma50}, promoter ${funnel.promoter}, ${opmSummary}.`,
     `Passed all gates: ${funnel.passed} (pre-RSI survivors: ${preRsi}).`,
   ].join(' ');
 }
