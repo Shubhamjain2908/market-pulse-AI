@@ -27,8 +27,7 @@ const INSERT_PIPELINE_STAGE_SQL = `
 `;
 
 const STAGE_HISTORY_SQL = `
-  SELECT run_date AS runDate, stage, status, finished_at AS finishedAt,
-         error_msg AS errorMsg, metadata
+  SELECT run_date AS runDate, status, error_msg AS errorMsg, metadata
   FROM pipeline_runs
   WHERE stage = ?
     AND run_date >= date('now', '-' || ? || ' days')
@@ -85,11 +84,9 @@ export function recordPipelineStage(
 
 export interface StageRun {
   runDate: string;
-  stage: string;
   status: PipelineStatus;
-  finishedAt: string | null;
   errorMsg: string | null;
-  metadata: string | null;
+  metadata: object | null;
 }
 
 export function getStageHistory(
@@ -97,7 +94,24 @@ export function getStageHistory(
   days: number = 7,
   db: DatabaseType = getDb(),
 ): StageRun[] {
-  return db.prepare(STAGE_HISTORY_SQL).all(stage, days) as StageRun[];
+  const rows = db.prepare(STAGE_HISTORY_SQL).all(stage, days) as Array<{
+    runDate: string;
+    status: PipelineStatus;
+    errorMsg: string | null;
+    metadata: string | null;
+  }>;
+  return rows.map((r) => ({
+    ...r,
+    metadata: r.metadata ? safeParseJson<object>(r.metadata) : null,
+  }));
+}
+
+function safeParseJson<T>(raw: string): T | null {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
 }
 
 export function getPipelineHealth(runDate: string, db: DatabaseType = getDb()): PipelineHealth {

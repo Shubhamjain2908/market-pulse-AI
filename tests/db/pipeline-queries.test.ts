@@ -9,7 +9,7 @@ import {
   recordPipelineStage,
 } from '../../src/db/pipeline-queries.js';
 
-describe('db/pipeline-queries required-stage failure', () => {
+describe('db/pipeline-queries', () => {
   let dbPath: string;
 
   beforeEach(() => {
@@ -62,35 +62,8 @@ describe('db/pipeline-queries required-stage failure', () => {
       canShowRegimeCard: true,
     });
   });
-});
 
-describe('db/pipeline-queries stage history', () => {
-  let dbPath: string;
-
-  beforeEach(() => {
-    dbPath = join(tmpdir(), `mp-sh-${Date.now()}-${Math.random()}.db`);
-    process.env.DATABASE_PATH = dbPath;
-  });
-
-  afterEach(() => {
-    closeDb();
-    try {
-      rmSync(dbPath);
-      rmSync(`${dbPath}-wal`);
-      rmSync(`${dbPath}-shm`);
-    } catch {
-      // ignore
-    }
-  });
-
-  it('returns empty array when no matching stage exists', () => {
-    const db = getDb({ path: dbPath });
-    migrate(db);
-    const rows = getStageHistory('yahoo-snapshot', 7, db);
-    expect(rows).toEqual([]);
-  });
-
-  it('returns runs for the requested stage ordered by date desc', () => {
+  it('getStageHistory returns runs for the requested stage ordered by date desc', () => {
     const db = getDb({ path: dbPath });
     migrate(db);
     recordPipelineStage(
@@ -128,11 +101,11 @@ describe('db/pipeline-queries stage history', () => {
     expect(rows[0]!.status).toBe('success');
     expect(rows[1]!.status).toBe('success');
 
-    const meta0 = JSON.parse(rows[0]!.metadata!);
-    expect(meta0).toEqual({ attempted: 250, written: 250, failed: 0 });
+    // metadata is already parsed from JSON by getStageHistory
+    expect(rows[0]!.metadata).toEqual({ attempted: 250, written: 250, failed: 0 });
   });
 
-  it('respects the days parameter', () => {
+  it('getStageHistory respects the days parameter', () => {
     const db = getDb({ path: dbPath });
     migrate(db);
     recordPipelineStage(
@@ -145,5 +118,13 @@ describe('db/pipeline-queries stage history', () => {
     // 2026-06-01 is beyond 1 day, so only 2026-07-01 should appear
     expect(oldRows).toHaveLength(1);
     expect(oldRows[0]!.runDate).toBe('2026-07-01');
+  });
+
+  it('getStageHistory returns empty for a non-existent stage', () => {
+    const db = getDb({ path: dbPath });
+    migrate(db);
+    recordPipelineStage({ runDate: '2026-07-01', stage: 'yahoo-snapshot', status: 'success' }, db);
+    const rows = getStageHistory('enrich', 7, db);
+    expect(rows).toEqual([]);
   });
 });

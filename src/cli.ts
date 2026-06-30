@@ -26,6 +26,7 @@
  *   mp ext-signal-smoke  Live ext-signal ingest + portfolio overlap report
  *   mp fundamental-screen-audit  quality/dividend screen bottleneck audit
  *   mp ext-signal-cross-ref  ext signals vs watchlist/momentum/portfolio overlap
+ *   mp stage-history     Query pipeline stage results for the trailing N days
  *   mp doctor            Print runtime/config diagnostics
  *   mp regime            Full regime agent (classify + LLM narrative → regime_daily)
  *   mp regime:gate-summary  Print allowed strategies for today's regime
@@ -678,48 +679,15 @@ program
   });
 
 program
-  .command('snapshot-health')
-  .description('query yahoo-snapshot pipeline stage results for the trailing N days (default 7)')
-  .option('-n, --days <n>', 'trailing days to inspect', '7')
-  .action(async (opts: { days?: string }) => {
+  .command('stage-history')
+  .description('query pipeline stage results for the trailing N days (default 7)')
+  .argument('<stage>', 'pipeline stage name (e.g. yahoo-snapshot)')
+  .option('-n, --days <n>', 'trailing days to inspect')
+  .action((stage: string, opts: { days?: string }) => {
     ensureDb();
-    const days = Number(opts.days) || 7;
-    const rows = getStageHistory('yahoo-snapshot', days, getDb());
-    if (rows.length === 0) {
-      console.log(
-        JSON.stringify({ days, runs: 0, message: 'no yahoo-snapshot runs found' }, null, 2),
-      );
-      closeDb();
-      return;
-    }
-    const runs = rows.map((r) => {
-      const meta = r.metadata ? JSON.parse(r.metadata) : {};
-      return {
-        date: r.runDate,
-        status: r.status,
-        attempted: meta.attempted ?? null,
-        written: meta.written ?? null,
-        failed: meta.failed ?? null,
-        errorMsg: r.errorMsg,
-      };
-    });
-    const summary = {
-      days,
-      runs: runs.length,
-      byStatus: Object.fromEntries(
-        Object.entries(
-          runs.reduce<Record<string, number>>((acc, r) => {
-            acc[r.status] = (acc[r.status] || 0) + 1;
-            return acc;
-          }, {}),
-        ).sort(),
-      ),
-      totalAttempted: runs.reduce((sum, r) => (r.attempted != null ? sum + r.attempted : sum), 0),
-      totalWritten: runs.reduce((sum, r) => (r.written != null ? sum + r.written : sum), 0),
-      totalFailed: runs.reduce((sum, r) => (r.failed != null ? sum + r.failed : sum), 0),
-      recent: runs.slice(0, 5),
-    };
-    console.log(JSON.stringify(summary, null, 2));
+    const rows = getStageHistory(stage, opts.days ? Number(opts.days) : undefined, getDb());
+    const effectiveDays = opts.days ? Number(opts.days) : 7;
+    console.log(JSON.stringify({ stage, days: effectiveDays, runs: rows.length, rows }, null, 2));
     closeDb();
   });
 
