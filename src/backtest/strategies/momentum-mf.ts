@@ -6,12 +6,14 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 
 import { classifySector } from '../../briefing/sector-classifier.js';
+import { config } from '../../config/env.js';
 import {
   getMomentumUniverseSymbols,
   loadMomentumConfig,
   loadSectorMap,
 } from '../../config/loaders.js';
 import { trailingStopSizingFromMomentumConfig } from '../../config/trailing-stop-sizing.js';
+import { getTrailingEpsGrowth } from '../../db/index.js';
 import { isInEarningsBlackoutCalendarWindow } from '../../db/momentum-queries.js';
 import { getTodayRegime } from '../../db/regime-queries.js';
 import {
@@ -130,6 +132,49 @@ function loadFundamentalsMap(
 ): Map<string, { profitGrowthYoy: number | null; netProfitTtm: number | null }> {
   const out = new Map<string, { profitGrowthYoy: number | null; netProfitTtm: number | null }>();
   if (universe.length === 0) return out;
+
+  // Temporary: BACKTEST_EPS_SOURCE=quarterly uses quarterly-derived EPS growth instead of profit_growth_yoy.
+  // Remove after PR #132 gate decision — either fully cut over or fully discard.
+  const useQuarterlyEps = config.BACKTEST_EPS_SOURCE === 'quarterly';
+
+  if (useQuarterlyEps) {
+    // Still query netProfitTtm from fundamentals (needed by isMomentumFalseFlag).
+    // Only override profitGrowthYoy with quarterly-derived growth.
+    const ph = universe.map(() => '?').join(',');
+    const netProfitRows = db
+      .prepare(
+        `SELECT f.symbol AS symbol,
+                f.net_profit_ttm AS net_profit_ttm
+         FROM fundamentals f
+         INNER JOIN (
+           SELECT symbol, MAX(as_of) AS mx
+           FROM fundamentals
+           WHERE as_of <= ?
+           GROUP BY symbol
+         ) t ON f.symbol = t.symbol AND f.as_of = t.mx
+         WHERE f.symbol IN (${ph})`,
+      )
+      .all(asOf, ...universe.map((s) => s.toUpperCase())) as Array<{
+      symbol: string;
+      net_profit_ttm: number | null;
+    }>;
+
+    const netProfitBySym = new Map(
+      netProfitRows.map((r) => [r.symbol.toUpperCase(), r.net_profit_ttm]),
+    );
+
+    for (const sym of universe) {
+      const key = sym.toUpperCase();
+      const epsGrowth = getTrailingEpsGrowth(sym, asOf, db);
+      const np = netProfitBySym.get(key);
+      out.set(key, {
+        profitGrowthYoy: epsGrowth != null && Number.isFinite(epsGrowth) ? epsGrowth : null,
+        netProfitTtm: np != null && Number.isFinite(np) ? np : null,
+      });
+    }
+    return out;
+  }
+
   const ph = universe.map(() => '?').join(',');
   const rows = db
     .prepare(
