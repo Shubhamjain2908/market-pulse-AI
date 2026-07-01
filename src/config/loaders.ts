@@ -72,6 +72,7 @@ const MomentumConfigSchema = z.object({
   /** Winsorised z1 threshold for false-flag top-quartile proxy (tunable without deploy). */
   false_flag_z_threshold: z.number(),
   max_per_sector: z.number(),
+  max_sector_aggregate: z.number().positive(),
   earnings_blackout_days: z.number(),
   position_sizing: z.object({
     risk_pct: z.number(),
