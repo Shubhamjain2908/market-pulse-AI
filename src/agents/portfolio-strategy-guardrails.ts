@@ -4,6 +4,7 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import {
+  PROMOTER_PLEDGE_MAX_PCT,
   QUALITY_GARP_DE_MAX,
   QUALITY_GARP_PEG_MAX,
   QUALITY_GARP_ROCE_MIN,
@@ -11,6 +12,8 @@ import {
 } from '../analysers/quality-garp.js';
 import { loadMomentumConfig } from '../config/loaders.js';
 import {
+  getLatestPromoterPledge,
+  getPromoterPledgeQoQDelta,
   getQualityGarpFundamentals,
   type PaperTradeSignalType,
   type QualityGarpFundamentalRow,
@@ -251,9 +254,20 @@ export function applyMomentumPortfolioGuardrails(
 function qualityGarpDeteriorationFlags(
   fundamentals: QualityGarpFundamentalRow | undefined,
   profitGrowth: number | null,
+  symbol: string,
+  date: string,
+  db: DatabaseType,
 ): string[] {
-  if (!fundamentals) return [];
   const flags: string[] = [];
+  const pledgeDelta = getPromoterPledgeQoQDelta(symbol, date, db);
+  if (pledgeDelta != null && pledgeDelta.delta > 0) {
+    flags.push('promoter pledge rise');
+  }
+  const pledge = getLatestPromoterPledge(symbol, date, db);
+  if (pledge?.pctSharesPledged != null && pledge.pctSharesPledged > PROMOTER_PLEDGE_MAX_PCT) {
+    flags.push('high promoter pledge');
+  }
+  if (!fundamentals) return flags;
   if (fundamentals.promoterHoldingChangeQoQ != null && fundamentals.promoterHoldingChangeQoQ < 0) {
     flags.push('promoter selling');
   }
@@ -284,6 +298,9 @@ export function getQualityGarpDeteriorationFlagsForSymbol(
   return qualityGarpDeteriorationFlags(
     qualityGarpRow(symbol, date, db),
     profitGrowthYoy(symbol, date, db),
+    symbol,
+    date,
+    db,
   );
 }
 
