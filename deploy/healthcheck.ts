@@ -174,6 +174,36 @@ function formatGttPostFixTranche(rows: GttPostFixTrancheRow[]): string {
   return `gtt_post_fix_tranche: ${parts.join('; ')}`;
 }
 
+function queryGttPostFixTrancheWeighted(db: ReturnType<typeof getDb>): GttPostFixTrancheRow[] {
+  return db
+    .prepare(
+      `
+      SELECT
+        signal_type,
+        COUNT(*) AS closed_count,
+        ROUND(SUM(pnl_pct * position_weight_pct) / SUM(position_weight_pct), 2) AS avg_pnl_net,
+        ROUND(SUM(CASE WHEN pnl_pct > 0 THEN 1.0 ELSE 0.0 END) / COUNT(*) * 100, 1) AS hit_rate
+      FROM paper_trades
+      WHERE status IN ('CLOSED_WIN', 'CLOSED_LOSS', 'CLOSED_TIME')
+        AND source_date >= '2026-05-14'
+        AND position_weight_pct IS NOT NULL
+      GROUP BY signal_type
+    `,
+    )
+    .all() as GttPostFixTrancheRow[];
+}
+
+function formatGttPostFixTrancheWeighted(rows: GttPostFixTrancheRow[]): string {
+  if (rows.length === 0) {
+    return 'gtt_post_fix_tranche_weighted: empty (no sized closed trades with source_date >= 2026-05-14)';
+  }
+  const parts = rows.map(
+    (r) =>
+      `${r.signal_type}:n=${r.closed_count},avg_pnl_w=${r.avg_pnl_net ?? 'null'}%,hit_rate=${r.hit_rate ?? 'null'}%`,
+  );
+  return `gtt_post_fix_tranche_weighted: ${parts.join('; ')}`;
+}
+
 async function sendAlert(reasons: string[], gttTrancheDetail: string): Promise<void> {
   const to = (process.env.HEALTHCHECK_ALERT_TO ?? config.SMTP_TO ?? '').trim();
   if (!to) {
@@ -234,6 +264,7 @@ async function main(): Promise<void> {
     const gttRows = queryGttPostFixTranche(db);
     gttTrancheDetail = formatGttPostFixTranche(gttRows);
     console.log(gttTrancheDetail);
+    console.log(formatGttPostFixTrancheWeighted(queryGttPostFixTrancheWeighted(db)));
 
     //     const corrupt = db.prepare(`
     //   SELECT COUNT(*) AS cnt FROM paper_trades pt
