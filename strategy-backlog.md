@@ -73,8 +73,9 @@ feed is available.
 
 **Shipped (interpretability, no new ingest):** Weinstein stage/structure signals in technical enrich; portfolio cards + `trigger_reason` distinguish structural quality from ADD timing; held names without `mom_*` use stage signals as fallback context. Momentum sleeve cold-start rules unchanged.
 
+**Shipped (2026-07-02):** Promoter pledge % ingest (`pledge` pipeline stage, NSE API → `promoter_pledge`); quality_garp gate 12 at 15% (**shadow** until `QUALITY_GARP_PLEDGE_GATE=1`); portfolio pledge flags gated same env (funnel `pledge_shadow` until boundary).
+
 **Deferred (data coverage):**
-- Promoter pledge % ingest + guardrail
 - Concall / transcript ingest for management-tone enrichment
 - Quarterly estimate-revision history for earnings-momentum logic (quarterly EPS now ingested via `quarterly_fundamentals.eps` — estimate-revision feed still needed)
 - Sector-relative valuation aggregates

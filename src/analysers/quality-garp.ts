@@ -65,7 +65,8 @@ export function resolveQualityGarpWatchlistSymbols(): QualityGarpSymbolResolutio
 /** Shared Quality-GARP v2 gate thresholds (screener + audit). */
 
 export const QUALITY_GARP_SCREEN = 'quality_garp';
-export const QUALITY_GARP_TOTAL_GATES = 11;
+export const QUALITY_GARP_TOTAL_GATES = 12;
+export const PROMOTER_PLEDGE_MAX_PCT = 15;
 export const QUALITY_GARP_PE_MAX = 35;
 export const QUALITY_GARP_PB_MAX = 6;
 export const QUALITY_GARP_ROCE_MIN = 0.2;
@@ -95,6 +96,7 @@ export type QualityGarpFailGate =
   | 'rsi'
   | 'sma50'
   | 'promoter'
+  | 'pledge'
   | 'opm_stability';
 
 /** Per-gate elimination counts (one bucket per symbol). */
@@ -113,6 +115,9 @@ export interface QualityGarpFunnelCounts {
   rsi: number;
   sma50: number;
   promoter: number;
+  pledge: number;
+  pledge_shadow: number;
+  pledge_skipped: number;
   opm_stability: number;
   opm_skipped: number;
   passed: number;
@@ -149,6 +154,9 @@ export function createEmptyQualityGarpFunnel(): QualityGarpFunnelCounts {
     rsi: 0,
     sma50: 0,
     promoter: 0,
+    pledge: 0,
+    pledge_shadow: 0,
+    pledge_skipped: 0,
     opm_stability: 0,
     opm_skipped: 0,
     passed: 0,
@@ -216,7 +224,7 @@ export function formatQualityGarpFunnelSummary(
     `Quality-GARP: 0 matches (${funnel.candidates_pe_pb} PE/PB candidates${scopeLabel}).`,
     `Pre-RSI eliminations: valuation ${funnel.valuation}, 3yr ROE ${funnel.roe_3yr},`,
     `ROCE ${funnel.roce}, D/E ${funnel.debt}, PEG null ${funnel.peg_null}, PEG fail ${funnel.peg}.`,
-    `Technical: RSI ${funnel.rsi}, SMA50 ${funnel.sma50}, promoter ${funnel.promoter}, ${opmSummary}.`,
+    `Technical: RSI ${funnel.rsi}, SMA50 ${funnel.sma50}, promoter ${funnel.promoter}, pledge ${funnel.pledge} (${funnel.pledge_shadow} shadow), ${opmSummary}.`,
     `Passed all gates: ${funnel.passed} (pre-RSI survivors: ${preRsi}).`,
   ].join(' ');
 }

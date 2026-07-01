@@ -827,6 +827,81 @@ export function upsertSymbolMetadata(
 }
 
 // ---------------------------------------------------------------------------
+// Promoter pledge (NSE shareholding pattern)
+// ---------------------------------------------------------------------------
+
+export interface PromoterPledgeRow {
+  symbol: string;
+  shpDate: string;
+  pctSharesPledged: number | null;
+  pctPromoterHolding: number | null;
+  numSharesPledged: number | null;
+  source?: string;
+}
+
+export function upsertPromoterPledgeRows(
+  rows: PromoterPledgeRow[],
+  db: DatabaseType = getDb(),
+): number {
+  if (rows.length === 0) return 0;
+  const stmt = db.prepare(`
+    INSERT INTO promoter_pledge (
+      symbol, shp_date, pct_shares_pledged, pct_promoter_holding,
+      num_shares_pledged, source
+    ) VALUES (
+      @symbol, @shpDate, @pctSharesPledged, @pctPromoterHolding,
+      @numSharesPledged, @source
+    )
+    ON CONFLICT(symbol, shp_date) DO UPDATE SET
+      pct_shares_pledged   = excluded.pct_shares_pledged,
+      pct_promoter_holding = excluded.pct_promoter_holding,
+      num_shares_pledged   = excluded.num_shares_pledged,
+      source               = excluded.source,
+      ingested_at          = CURRENT_TIMESTAMP
+  `);
+  const tx = db.transaction((batch: PromoterPledgeRow[]) => {
+    for (const r of batch) {
+      stmt.run({
+        symbol: r.symbol.toUpperCase(),
+        shpDate: r.shpDate,
+        pctSharesPledged: r.pctSharesPledged ?? null,
+        pctPromoterHolding: r.pctPromoterHolding ?? null,
+        numSharesPledged: r.numSharesPledged ?? null,
+        source: r.source ?? 'nse',
+      });
+    }
+  });
+  tx(rows);
+  return rows.length;
+}
+
+export function getPromoterPledgeSnapshot(
+  symbol: string,
+  asOf: string,
+  db: DatabaseType = getDb(),
+): { latest: PromoterPledgeRow | null; qoqDelta: number | null } {
+  const rows = db
+    .prepare(
+      `
+    SELECT symbol, shp_date AS shpDate,
+           pct_shares_pledged AS pctSharesPledged,
+           pct_promoter_holding AS pctPromoterHolding,
+           num_shares_pledged AS numSharesPledged
+    FROM promoter_pledge
+    WHERE symbol = ? AND shp_date <= ?
+    ORDER BY shp_date DESC
+    LIMIT 2
+  `,
+    )
+    .all(symbol.toUpperCase(), asOf) as PromoterPledgeRow[];
+  const latest = rows[0] ?? null;
+  const cur = rows[0]?.pctSharesPledged;
+  const prev = rows[1]?.pctSharesPledged;
+  const qoqDelta = cur != null && prev != null && rows.length >= 2 ? cur - prev : null;
+  return { latest, qoqDelta };
+}
+
+// ---------------------------------------------------------------------------
 // Paper trades (forward-testing ledger)
 // ---------------------------------------------------------------------------
 

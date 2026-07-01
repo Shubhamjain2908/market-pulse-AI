@@ -123,6 +123,12 @@ const EnvSchema = z.object({
 
   /** Yahoo quote fetch retries for symbols that failed (full retry rounds). */
   INGEST_QUOTES_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
+
+  /**
+   * `'1'` — quality_garp gate 12 blocks entries when promoter pledge % > 15.
+   * `'0'` (default) — shadow-only (`pledge_shadow` funnel counter).
+   */
+  QUALITY_GARP_PLEDGE_GATE: z.enum(['0', '1']).default('0'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

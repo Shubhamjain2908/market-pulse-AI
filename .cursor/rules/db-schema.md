@@ -80,6 +80,17 @@ CREATE TABLE inav_snapshots (
   PRIMARY KEY (symbol, date)
 );
 CREATE INDEX idx_inav_snapshots_date ON inav_snapshots(date);
+CREATE TABLE promoter_pledge (
+  symbol               TEXT NOT NULL,
+  shp_date             TEXT NOT NULL, -- shareholding-pattern filing date (YYYY-MM-DD)
+  pct_shares_pledged   REAL,
+  pct_promoter_holding REAL,
+  num_shares_pledged   REAL,
+  source               TEXT NOT NULL DEFAULT 'nse',
+  ingested_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (symbol, shp_date)
+);
+CREATE INDEX idx_promoter_pledge_symbol ON promoter_pledge(symbol);
 CREATE TABLE quarterly_fundamentals (
   symbol                 TEXT NOT NULL,
   quarter_end            TEXT NOT NULL, -- YYYY-MM-DD, last day of the quarter (e.g. 2026-03-31)
@@ -141,7 +152,7 @@ CREATE TABLE screens (
 );
 CREATE INDEX idx_screens_date_screen ON screens(date, screen_name);
 -- Custom screen dispatchers store rich JSON in screens.matched_criteria (not DSL criteria arrays):
--- quality_garp: latest/prev/third ROE, latest ROCE, pe/pb/peg, debt_to_equity, promoter fields, rsi/sma50/close, optional __regime_meta
+-- quality_garp: latest/prev/third ROE, latest ROCE, pe/pb/peg, debt_to_equity, promoter fields, pledge_pct, rsi/sma50/close, optional __regime_meta
 -- catalyst_entry: earnings date, days_to_earnings, atr_14, news/sentiment fields, optional __regime_meta
 CREATE TABLE portfolio (
   symbol     TEXT    NOT NULL,

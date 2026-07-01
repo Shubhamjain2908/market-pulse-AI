@@ -1,6 +1,8 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
+import { config } from '../config/env.js';
 import { getSizeMultiplier, isStrategyAllowed } from '../db/index.js';
 import {
+  getPromoterPledgeSnapshot,
   getQualityGarpFundamentals,
   getTrailingOpmStdDev,
   upsertScreenResults,
@@ -11,6 +13,7 @@ import type { ScreenEngineResult } from './engine.js';
 import {
   createEmptyQualityGarpFunnel,
   OPM_STD_DEV_MAX_PCT,
+  PROMOTER_PLEDGE_MAX_PCT,
   persistQualityGarpFunnel,
   QUALITY_GARP_DE_MAX,
   QUALITY_GARP_PB_MAX,
@@ -48,6 +51,7 @@ interface QualityGarpMatchedCriteria {
   close: number;
   pct_from_sma50: number;
   opm_std_dev: number | null;
+  pledge_pct: number | null;
 }
 
 interface QualityGarpEvaluation {
@@ -56,6 +60,8 @@ interface QualityGarpEvaluation {
   matchedCount: number;
   failedGate?: QualityGarpFailGate;
   matchedCriteria?: QualityGarpMatchedCriteria;
+  pledgeGateSkipped?: boolean;
+  pledgeShadowHit?: boolean;
 }
 
 export function runQualityGarpScreen(
@@ -108,6 +114,7 @@ export function runQualityGarpScreen(
       provider,
       etfExclusions,
       opmStdDev,
+      db,
     );
     const totalCriteria = QUALITY_GARP_TOTAL_GATES;
 
@@ -121,6 +128,12 @@ export function runQualityGarpScreen(
     // These symbols pass all non-OPM gates but were never evaluated on OPM.
     if (opmStdDev == null && !evaluation.failedGate) {
       funnel.opm_skipped++;
+    }
+    if (evaluation.pledgeGateSkipped && !evaluation.failedGate) {
+      funnel.pledge_skipped++;
+    }
+    if (evaluation.pledgeShadowHit) {
+      funnel.pledge_shadow++;
     }
 
     evaluations.push({
@@ -192,6 +205,7 @@ function evaluateQualityGarpSymbol(
   provider: SignalProvider,
   etfExclusions: Set<string>,
   opmStdDev: number | null,
+  db: DatabaseType,
 ): QualityGarpEvaluation {
   let matchedCount = 0;
 
@@ -331,6 +345,27 @@ function evaluateQualityGarpSymbol(
   }
   matchedCount++;
 
+  const pledgePct = getPromoterPledgeSnapshot(symbol, date, db).latest?.pctSharesPledged ?? null;
+  let pledgeGateSkipped = false;
+  let pledgeShadowHit = false;
+
+  if (pledgePct != null) {
+    if (pledgePct > PROMOTER_PLEDGE_MAX_PCT) {
+      if (config.QUALITY_GARP_PLEDGE_GATE === '1') {
+        return {
+          passed: false,
+          score: gateScore(matchedCount),
+          matchedCount,
+          failedGate: 'pledge',
+        };
+      }
+      pledgeShadowHit = true;
+    }
+    matchedCount++;
+  } else {
+    pledgeGateSkipped = true;
+  }
+
   if (opmStdDev !== null) {
     if (opmStdDev > OPM_STD_DEV_MAX_PCT) {
       return {
@@ -347,6 +382,8 @@ function evaluateQualityGarpSymbol(
     passed: true,
     score: gateScore(matchedCount),
     matchedCount,
+    pledgeGateSkipped,
+    pledgeShadowHit,
     matchedCriteria: {
       latest_roe: fundamentals.latestRoe,
       prev_roe: fundamentals.prevRoe,
@@ -365,6 +402,7 @@ function evaluateQualityGarpSymbol(
       close,
       pct_from_sma50: pctFromSma50,
       opm_std_dev: opmStdDev,
+      pledge_pct: pledgePct,
     },
   };
 }
