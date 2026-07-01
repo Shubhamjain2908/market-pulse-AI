@@ -107,4 +107,46 @@ describe('paper_trades stats', () => {
     expect(stats3.winRate).toBeCloseTo(3 / 5, 6);
     expect(stats3.expectancyPct).toBeCloseTo((20 - 10 + 20 + 20 - 10) / 5, 6);
   });
+
+  it('computes weighted expectancy when position_weight_pct is set', () => {
+    insertPaperTradeIfAbsent(
+      {
+        symbol: 'W1',
+        signalType: 'AI_PICK',
+        sourceDate: '2026-05-01',
+        entryPrice: 100,
+        stopLoss: 90,
+        target: 120,
+        timeHorizon: 'medium',
+        maxHoldDays: 90,
+        positionWeightPct: 2,
+      },
+      db,
+    );
+    insertPaperTradeIfAbsent(
+      {
+        symbol: 'W2',
+        signalType: 'AI_PICK',
+        sourceDate: '2026-05-02',
+        entryPrice: 100,
+        stopLoss: 90,
+        target: 120,
+        timeHorizon: 'medium',
+        maxHoldDays: 90,
+        positionWeightPct: 4,
+      },
+      db,
+    );
+    const w1 = (
+      db.prepare(`SELECT id FROM paper_trades WHERE symbol = 'W1'`).get() as { id: number }
+    ).id;
+    const w2 = (
+      db.prepare(`SELECT id FROM paper_trades WHERE symbol = 'W2'`).get() as { id: number }
+    ).id;
+    closePaperTrade(w1, 'CLOSED_WIN', '2026-05-10', 110, 10, db);
+    closePaperTrade(w2, 'CLOSED_LOSS', '2026-05-11', 90, -10, db);
+
+    const stats = getPaperTradeStats({ days: 30, asOf: '2026-05-15' }, db);
+    expect(stats.weightedExpectancyPct).toBeCloseTo((10 * 2 + -10 * 4) / 6, 6);
+  });
 });

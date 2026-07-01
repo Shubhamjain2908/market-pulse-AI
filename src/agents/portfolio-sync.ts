@@ -13,7 +13,12 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { config } from '../config/env.js';
 import { loadPortfolio } from '../config/loaders.js';
-import { getDb, type PortfolioHoldingRow, upsertHoldings } from '../db/index.js';
+import {
+  getDb,
+  type PortfolioHoldingRow,
+  sumHoldingsBookValueInr,
+  upsertHoldings,
+} from '../db/index.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { KiteApiError, KiteClient } from '../ingestors/kite/client.js';
 import { child } from '../logger.js';
@@ -43,7 +48,7 @@ export async function runPortfolioSync(opts: { date?: string } = {}): Promise<Po
 
   upsertHoldings(rows, db);
 
-  const totalValue = rows.reduce((s, r) => s + r.qty * (r.lastPrice ?? r.avgPrice), 0);
+  const totalValue = sumHoldingsBookValueInr(rows);
   const totalPnl = rows.reduce((s, r) => s + (r.pnl ?? 0), 0);
   const totalCost = rows.reduce((s, r) => s + r.qty * r.avgPrice, 0);
   const totalPnlPct = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0;

@@ -28,6 +28,7 @@
   "false_flag_eps_threshold_pct": -5,
   "false_flag_z_threshold": 0.674,
   "max_per_sector": 3,
+  "max_sector_aggregate": 5,
   "earnings_blackout_days": 3,
   "position_sizing": {
     "risk_pct": 1,

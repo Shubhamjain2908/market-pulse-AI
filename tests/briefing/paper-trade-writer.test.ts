@@ -33,7 +33,7 @@ vi.mock('../../src/config/env.js', async (importOriginal) => {
 
 import { recordPaperTrades } from '../../src/briefing/paper-trade-writer.js';
 import type { PortfolioSummary, ThesisCard } from '../../src/briefing/template.js';
-import { closeDb, getDb, migrate } from '../../src/db/index.js';
+import { closeDb, getDb, migrate, upsertHoldings } from '../../src/db/index.js';
 import { getOpenPaperTrades, insertPaperTradeIfAbsent } from '../../src/db/queries.js';
 
 describe('recordPaperTrades', () => {
@@ -92,6 +92,98 @@ describe('recordPaperTrades', () => {
     expect(open).toHaveLength(1);
     expect(open[0]?.signalType).toBe('AI_PICK');
     expect(open[0]?.maxHoldDays).toBe(30);
+    expect(open[0]?.positionWeightPct).toBeNull();
+  });
+
+  it('stamps position_weight_pct when book value is available', () => {
+    upsertHoldings(
+      [
+        {
+          symbol: 'LIQUID',
+          exchange: 'NSE',
+          asOf: '2026-05-01',
+          qty: 100,
+          avgPrice: 1000,
+          lastPrice: 1000,
+          source: 'kite',
+        },
+      ],
+      db,
+    );
+    seedPathAScreen('SIZED', '2026-05-01');
+    const r = recordPaperTrades(
+      '2026-05-01',
+      [
+        {
+          symbol: 'SIZED',
+          thesis: 'x',
+          bullCase: ['a'],
+          bearCase: ['b'],
+          entryZone: '₹100',
+          stopLoss: '₹92',
+          target: '₹120',
+          timeHorizon: 'short',
+          confidence: 7,
+          triggerReason: 'test',
+        },
+      ],
+      undefined,
+      db,
+    );
+    expect(r.insertedAiPick).toBe(1);
+    const w = getOpenPaperTrades(db)[0]?.positionWeightPct;
+    expect(w).not.toBeNull();
+    expect(w).toBeLessThanOrEqual(5);
+  });
+
+  it('logs aggregate sector cap exceeded but still inserts (shadow)', () => {
+    for (let i = 1; i <= 5; i++) {
+      const sym = `CAP${i}`;
+      db.prepare(`INSERT INTO symbols (symbol, exchange, sector) VALUES (?, 'NSE', 'Banks')`).run(
+        sym,
+      );
+      insertPaperTradeIfAbsent(
+        {
+          symbol: sym,
+          signalType: 'momentum_mf',
+          sourceDate: '2026-04-01',
+          entryPrice: 100,
+          stopLoss: 90,
+          target: 120,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+          positionWeightPct: 2,
+        },
+        db,
+      );
+    }
+    const sym = 'BANKNEW';
+    db.prepare(`INSERT INTO symbols (symbol, exchange, sector) VALUES (?, 'NSE', 'Banks')`).run(
+      sym,
+    );
+    seedPathAScreen(sym, '2026-05-01');
+    const r = recordPaperTrades(
+      '2026-05-01',
+      [
+        {
+          symbol: sym,
+          thesis: 'x',
+          bullCase: ['a'],
+          bearCase: ['b'],
+          entryZone: '₹100',
+          stopLoss: '₹92',
+          target: '₹120',
+          timeHorizon: 'short',
+          confidence: 7,
+          triggerReason: 'test',
+        },
+      ],
+      undefined,
+      db,
+    );
+    expect(r.insertedAiPick).toBe(1);
+    expect(r.sectorCapExceeded).toBe(1);
+    expect(getOpenPaperTrades(db).some((t) => t.symbol === sym)).toBe(true);
   });
 
   it('inserts PORTFOLIO_ADD when action is ADD and levels are numeric and flag enabled', () => {
