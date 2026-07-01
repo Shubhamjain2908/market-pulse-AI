@@ -4,7 +4,7 @@
 ## 1. Core Stack & Philosophy
 **Runtime:** Node.js 22 + TypeScript (ESM), `better-sqlite3`, `croner`, PM2 for process management
 
-**Broker:** Zerodha Kite Connect API — portfolio sync, GTT orders (manual trigger only). Daily OAuth token expires ~6 AM IST. **Auto-refresh:** Playwright + TOTP at **08:30 IST Mon–Fri** on the Oracle VM (`src/auth/kite-auto-login/`, PM2 `kite-auto-login`) when redirect URL is colocated with `kite-auth`. **Manual fallback:** `pnpm kite-login` or `https://[duckdns]/auth/kite` before the **08:45** pipeline if auto-login fails.
+**Broker:** Zerodha Kite Connect API — portfolio sync, GTT orders (manual trigger only). Daily OAuth token expires ~6 AM IST. **Auto-refresh:** Playwright + TOTP at **08:30 IST Mon–Fri** on the Oracle VM (PM2 `kite-auth` cron) when redirect URL is colocated with the auth server. **Manual fallback:** `pnpm kite-login` or `https://[duckdns]/auth/kite` before the **08:45** pipeline if auto-login fails.
 
 **LLM:** Currently DeepSeek-V3 via OpenAI-compatible SDK (`baseURL: https://api.deepseek.com`). Provider abstraction in `src/llm/provider.ts` — switchable via `LLM_PROVIDER` env var (`anthropic` | `deepseek` | `gemini` | `openai`). All LLM calls go through `generateJson()` with Zod schema validation + 1 retry on parse failure.
 
@@ -13,7 +13,7 @@
 **Deployment:** Oracle Cloud Always Free VM (`VM.Standard.E2.1.Micro`, 1 OCPU, ap-hyderabad-1). SQLite file on persistent disk. Nginx reverse proxy for Kite auth endpoint. DuckDNS free subdomain for HTTPS.
 
 **Pipeline schedule:**
-- `8:30 AM IST Mon–Fri` — Kite OAuth auto-login (PM2 `kite-auto-login`; fail-open — logs only, pipeline still runs at 08:45)
+- `8:30 AM IST Mon–Fri` — Kite OAuth auto-login (PM2 `kite-auth`; fail-open — logs only, pipeline still runs at 08:45)
 - `8:45 AM IST Mon–Fri` — full daily pipeline (PM2 `market-pulse` / `cli schedule`)
 - `8:00 AM IST Sunday` — momentum rebalance job
 - `10:15 AM IST Mon–Fri` — healthcheck cron (email alert on failure)
@@ -312,15 +312,14 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 
 **VM:** Oracle Cloud Always Free, `VM.Standard.E2.1.Micro`, Ubuntu 22.04, `ap-hyderabad-1`. 1 OCPU, 1GB RAM, 50GB disk.
 
-**Process manager:** PM2 — **three** app processes (see `deploy/ecosystem.config.cjs`):
+**Process manager:** PM2 — **two** app processes (see `deploy/ecosystem.config.cjs`):
 
 | PM2 name | Entry | Role |
 |---|---|---|
 | `market-pulse` | `dist/cli.js schedule` | Main croner: 08:45 / 16:30 weekdays, Sat 08:00, Sun jobs |
-| `kite-auth` | `dist/auth/kite-auth-server.js` | Express OAuth callback (`/auth/kite`, `/auth/callback`, port 3001) |
-| `kite-auto-login` | `dist/auth/kite-auto-login/index.js` | Thin croner daemon: fires `runKiteAutoLogin()` at **08:30 IST Mon–Fri** only |
+| `kite-auth` | `dist/auth/kite-auth-server.js` | OAuth callback (`/auth/kite`, `/auth/callback`) + **08:30** auto-login cron |
 
-`kite-auto-login` stays idle (~tens of MB) between triggers; Playwright/Chromium spin up only during the login job (~30s), then close. Low-memory Chromium flags in `login.ts` for 1GB VM.
+Kite auto-login cron lives in `kite-auth-server.ts` (Playwright dynamic-import at trigger). `PLAYWRIGHT_BROWSERS_PATH=0` on `kite-auth` in ecosystem config.
 
 **Kite token flow:**
 1. **08:30 (automated):** `runKiteAutoLogin()` → Kite Connect login URL → userid/password/TOTP → redirect to `KITE_REDIRECT_URL` (duckdns `/auth/callback`) → `kite-auth` exchanges `request_token` → writes `KITE_ACCESS_TOKEN` to `.env` + SQLite `config.kite_access_token`. Auto-login polls for a **refreshed** row in local sqlite (new token value or new `updated_at`; same host as `kite-auth` only — do not run auto-login on a laptop when redirect points at Oracle).
@@ -335,7 +334,7 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
 
 **Cron (reference — most jobs use PM2 croner, not raw cron):**
 ```
-30 8 * * 1-5   kite auto-login (PM2 kite-auto-login)
+30 8 * * 1-5   kite auto-login (PM2 kite-auth)
 45 8 * * 1-5   full daily pipeline (PM2 market-pulse schedule)
 0  8 * * 0     momentum rebalance (PM2 market-pulse schedule)
 15 10 * * 1-5  healthcheck → email alert on failure

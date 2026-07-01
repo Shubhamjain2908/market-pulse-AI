@@ -402,10 +402,11 @@ To enable it:
    Saturdays (IST), using your configured delivery channel.
 
    **Kite token auto-login (Oracle VM only):** when your Kite redirect URL
-   points at the same host as `kite-auth` (e.g. duckdns), run
-   `pnpm kite-auto-login:schedule` or the PM2 `kite-auto-login` app at
-   08:30 IST Mon–Fri — 15 minutes before the pipeline. Requires
-   `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`, and
+   points at the same host as `kite-auth` (e.g. duckdns), the PM2 `kite-auth`
+   process runs auto-login at 08:30 IST Mon–Fri — 15 minutes before the
+   pipeline. One-shot test: `pnpm kite-auto-login`. Logs: `deploy/logs/pm2-auth.log`
+   (look for `autoLoginCron: true` on startup and `weekday-0830` at trigger).
+   Requires `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`, and
    `KITE_REDIRECT_URL` in `.env`. Failures are logged only; the main
    scheduler keeps running. Fall back to `pnpm kite-login` manually if
    auto-login fails before 08:45.

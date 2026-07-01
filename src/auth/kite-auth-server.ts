@@ -1,6 +1,8 @@
+import { Cron } from 'croner';
 import express from 'express';
 import { config } from '../config/env.js';
 import { PROJECT_DOTENV_PATH } from '../config/project-paths.js';
+import { MARKET_TIMEZONE } from '../constants.js';
 import { closeDb, getDb, migrate } from '../db/index.js';
 import { upsertEnvVar } from '../ingestors/kite/auth.js';
 import { KiteClient } from '../ingestors/kite/client.js';
@@ -279,12 +281,14 @@ function escapeHtml(input: string): string {
 function main(): void {
   migrate();
   const port = readKiteAuthPort();
+  const autoLoginCron = startKiteAutoLoginCron();
   const server = app.listen(port, () => {
     log.info(
       {
         port,
         databasePath: config.DATABASE_PATH,
         callbackPath: '/auth/callback',
+        autoLoginCron: autoLoginCron != null,
       },
       'kite auth server started',
     );
@@ -292,6 +296,7 @@ function main(): void {
 
   const shutdown = (signal: 'SIGINT' | 'SIGTERM') => {
     log.info({ signal }, 'shutting down kite auth server');
+    autoLoginCron?.stop();
     server.close(() => {
       closeDb();
       process.exit(0);
@@ -300,6 +305,51 @@ function main(): void {
 
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
+
+function kiteAutoLoginConfigured(): boolean {
+  return Boolean(
+    config.KITE_USER_ID?.trim() &&
+      config.KITE_PASSWORD?.trim() &&
+      config.KITE_TOTP_SECRET?.trim() &&
+      config.KITE_API_KEY?.trim() &&
+      config.KITE_API_SECRET?.trim(),
+  );
+}
+
+function startKiteAutoLoginCron(): Cron | undefined {
+  if (!kiteAutoLoginConfigured()) {
+    log.info('kite auto-login cron not armed — missing KITE_USER_ID/PASSWORD/TOTP_SECRET');
+    return undefined;
+  }
+  const job = new Cron(
+    '30 8 * * 1-5',
+    { timezone: MARKET_TIMEZONE, protect: true },
+    () => void runScheduledKiteAutoLogin(),
+  );
+  log.info({ timezone: MARKET_TIMEZONE, schedule: '30 8 * * 1-5' }, 'kite auto-login cron armed');
+  return job;
+}
+
+async function runScheduledKiteAutoLogin(): Promise<void> {
+  const t0 = Date.now();
+  log.info({ tag: 'weekday-0830', health: 'started' }, 'kite auto-login started');
+  try {
+    // Playwright loads only at trigger, not Express boot
+    const { runKiteAutoLogin } = await import('./kite-auto-login.js');
+    const result = await runKiteAutoLogin();
+    log.info(
+      { tag: 'weekday-0830', health: 'ok', durationMs: Date.now() - t0, userId: result.userId },
+      'kite auto-login finished',
+    );
+  } catch (err) {
+    log.error(
+      { tag: 'weekday-0830', health: 'error', durationMs: Date.now() - t0, err },
+      'kite auto-login failed',
+    );
+  } finally {
+    closeDb();
+  }
 }
 
 function readKiteAuthPort(): number {

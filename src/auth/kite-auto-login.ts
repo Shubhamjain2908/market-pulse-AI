@@ -1,21 +1,17 @@
 /**
  * Headless Kite Connect OAuth login via Playwright + TOTP.
- * Run once: `pnpm kite-auto-login`  |  scheduled: `pnpm kite-auto-login:schedule`
+ * Run once: `pnpm kite-auto-login`  |  scheduled: PM2 `kite-auth` at 08:30 IST
  */
 
 import { mkdirSync } from 'node:fs';
 import { generate } from 'otplib';
 import { type Browser, type BrowserContext, chromium, type Locator, type Page } from 'playwright';
-import { config } from '../../config/env.js';
-import { PROJECT_DOTENV_PATH } from '../../config/project-paths.js';
-import { closeDb, getDb, migrate } from '../../db/index.js';
-import {
-  assertEnvFileHasKey,
-  extractRequestToken,
-  upsertEnvVar,
-} from '../../ingestors/kite/auth.js';
-import { KiteClient } from '../../ingestors/kite/client.js';
-import { child } from '../../logger.js';
+import { config } from '../config/env.js';
+import { PROJECT_DOTENV_PATH } from '../config/project-paths.js';
+import { closeDb, getDb, migrate } from '../db/index.js';
+import { assertEnvFileHasKey, extractRequestToken, upsertEnvVar } from '../ingestors/kite/auth.js';
+import { KiteClient } from '../ingestors/kite/client.js';
+import { child } from '../logger.js';
 
 const log = child({ component: 'kite-auto-login' });
 
@@ -176,7 +172,7 @@ async function fillAndSubmit(page: Page, selectors: string[], value: string): Pr
   const loc = await firstVisible(page, selectors);
   await loc.click();
   await loc.fill(value);
-  // ponytail: locator.press hangs on Kite React inputs — keyboard Enter targets focused field
+  // locator.press hangs on Kite React inputs — keyboard Enter targets focused field
   await page.keyboard.press('Enter');
 }
 
@@ -436,7 +432,7 @@ function istNow(): string {
 }
 
 const isMain =
-  process.argv[1]?.endsWith('login.ts') ||
+  process.argv[1]?.endsWith('kite-auto-login.ts') ||
   process.argv[1]?.endsWith('login.js') ||
   process.argv[1]?.includes('kite-auto-login/login');
 

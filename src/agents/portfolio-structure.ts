@@ -159,7 +159,7 @@ export function enrichActionWithStructureContext<T extends PortfolioActionLike>(
   if (!ctx) return action;
 
   const structureLine = formatStageStructureLine(ctx, action.action);
-  // ponytail: structure lives on position-tech; thesis stays LLM prose only.
+  // structure lives on position-tech; thesis stays LLM prose only.
 
   let triggerReason = action.triggerReason;
   if (

@@ -22,7 +22,7 @@ export interface WeinsteinStageResult {
   sma200Slope30dPct: number | null;
 }
 
-/** Rolling mean; uses all available bars when history < period (ponytail: same as skill script). */
+/** Rolling mean; uses all available bars when history < period (same as skill script). */
 function rollingMa(closes: number[], period: number): number {
   const n = closes.length;
   const window = n < period ? closes : closes.slice(-period);
