@@ -28,7 +28,6 @@
     "playwright:install": "PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium",
     "playwright:install-deps": "playwright install-deps chromium",
     "kite-auto-login": "pnpm playwright:install && PLAYWRIGHT_BROWSERS_PATH=0 tsx src/auth/kite-auto-login/login.ts",
-    "kite-auto-login:schedule": "PLAYWRIGHT_BROWSERS_PATH=0 tsx src/auth/kite-auto-login/index.ts",
     "backtest:option-a": "tsx src/backtest/runner.ts",
     "cot:gold": "tsx scripts/cot-gold-fetch.ts",
     "fundamentals:refresh": "tsx scripts/refresh-fundamentals-v2.mts",
