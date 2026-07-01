@@ -335,8 +335,8 @@ async function runScheduledKiteAutoLogin(): Promise<void> {
   const t0 = Date.now();
   log.info({ tag: 'weekday-0830', health: 'started' }, 'kite auto-login started');
   try {
-    // ponytail: Playwright loads only at trigger, not Express boot
-    const { runKiteAutoLogin } = await import('./kite-auto-login/login.js');
+    // Playwright loads only at trigger, not Express boot
+    const { runKiteAutoLogin } = await import('./kite-auto-login.js');
     const result = await runKiteAutoLogin();
     log.info(
       { tag: 'weekday-0830', health: 'ok', durationMs: Date.now() - t0, userId: result.userId },

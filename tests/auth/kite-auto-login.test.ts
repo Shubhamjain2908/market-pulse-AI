@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { kiteAccessTokenRefreshed } from '../../src/auth/kite-auto-login/login.js';
+import { kiteAccessTokenRefreshed } from '../../src/auth/kite-auto-login.js';
 
 describe('kiteAccessTokenRefreshed', () => {
   const prior = { token: 'abc123', updatedAt: '2026-06-27 08:00:00' };
