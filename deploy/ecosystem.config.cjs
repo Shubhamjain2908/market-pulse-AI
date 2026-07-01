@@ -34,24 +34,6 @@ module.exports = {
       time: true,
     },
     {
-      name: 'kite-auto-login',
-      cwd: root,
-      script: 'dist/auth/kite-auto-login/index.js',
-      interpreter: 'node',
-      instances: 1,
-      autorestart: true,
-      max_restarts: 20,
-      min_uptime: '10s',
-      env: {
-        NODE_ENV: 'production',
-      },
-      merge_logs: true,
-      combine_logs: true,
-      out_file: path.join(logDir, 'pm2-kite-auto-login.log'),
-      error_file: path.join(logDir, 'pm2-kite-auto-login.log'),
-      time: true,
-    },
-    {
       name: 'kite-auth',
       cwd: root,
       script: 'dist/auth/kite-auth-server.js',
@@ -62,6 +44,7 @@ module.exports = {
       min_uptime: '10s',
       env: {
         NODE_ENV: 'production',
+        PLAYWRIGHT_BROWSERS_PATH: '0',
       },
       merge_logs: true,
       combine_logs: true,
