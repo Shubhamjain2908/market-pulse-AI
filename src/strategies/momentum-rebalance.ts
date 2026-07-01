@@ -10,8 +10,8 @@ import { buildStockContext, THESIS_JSON_SYSTEM_PROMPT } from '../agents/thesis-g
 import type { MomentumRebalanceSummary } from '../briefing/momentum-card.js';
 import { parseInrPriceMidpoint } from '../briefing/paper-trade-parsers.js';
 import { classifySector } from '../briefing/sector-classifier.js';
-import { loadMomentumConfig, loadPortfolio, loadSectorMap } from '../config/loaders.js';
-import { getDb } from '../db/index.js';
+import { loadMomentumConfig, loadSectorMap } from '../config/loaders.js';
+import { getDb, resolveBookValueInr } from '../db/index.js';
 import {
   closePaperTrade,
   getNseCloseOnOrBefore,
@@ -343,7 +343,19 @@ export async function runMomentumRebalance(
   const db = opts.db ?? getDb();
   const cfg = loadMomentumConfig();
   const llm = opts.skipThesis ? undefined : (opts.llm ?? getLlmProvider());
-  const portfolioValue = loadPortfolio().totalCapital;
+  const book = resolveBookValueInr(db);
+  const portfolioValue = book.bookValueInr;
+  if (book.source === 'config_fallback') {
+    log.warn(
+      { bookValueInr: portfolioValue, holdingCount: book.holdingCount },
+      'book value from portfolio.json totalCapital — no holdings snapshot',
+    );
+  } else if (portfolioValue <= 0) {
+    log.warn(
+      { holdingsAsOf: book.holdingsAsOf, holdingCount: book.holdingCount },
+      'book value is zero — position sizing will cap at max_single_stock_pct',
+    );
+  }
   const calendarDate = opts.calendarDate;
   const sessionDate = lastOpenOnOrBefore(calendarDate);
   if (!sessionDate) {
