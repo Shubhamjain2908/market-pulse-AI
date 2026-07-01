@@ -9,7 +9,6 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import { buildStockContext, THESIS_JSON_SYSTEM_PROMPT } from '../agents/thesis-generator.js';
 import type { MomentumRebalanceSummary } from '../briefing/momentum-card.js';
 import { parseInrPriceMidpoint } from '../briefing/paper-trade-parsers.js';
-import { classifySector } from '../briefing/sector-classifier.js';
 import { loadMomentumConfig, loadSectorMap } from '../config/loaders.js';
 import { getDb, resolveBookValueInr } from '../db/index.js';
 import {
@@ -32,6 +31,12 @@ import { lastOpenOnOrBefore } from '../market/trading-days.js';
 import { runMomentumRanker } from '../rankers/momentum-ranker.js';
 import { type Thesis, ThesisSchema } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
+import {
+  aggregateSectorCapBlocks,
+  computePositionWeightPct,
+  openSectorCounts,
+  resolveSymbolSector,
+} from './position-sizer.js';
 
 const log = child({ component: 'momentum-rebalance' });
 
@@ -145,17 +150,6 @@ function loadRankedSymbolsOrdered(sessionDate: string, db: DatabaseType): string
   return rows.map((r) => r.symbol.toUpperCase());
 }
 
-function resolveSector(
-  symbol: string,
-  db: DatabaseType,
-  sectorMap: Record<string, string>,
-): string {
-  const row = db.prepare('SELECT sector FROM symbols WHERE symbol = ?').get(symbol) as
-    | { sector: string | null }
-    | undefined;
-  return classifySector(symbol, sectorMap, row?.sector ?? null);
-}
-
 export interface MomentumRebalanceOptions {
   calendarDate: string;
   db?: DatabaseType;
@@ -263,26 +257,6 @@ function loadMomentumEntryContext(
     rsBa: m.get('mom_relative_strength_ba') ?? null,
     breakout: m.get('mom_volume_breakout_flag') ?? null,
   };
-}
-
-function computeSuggestedSizePct(
-  entryPrice: number,
-  stopLoss: number,
-  portfolioValue: number,
-  riskPct: number,
-  maxSingleStockPct: number,
-): number {
-  if (!Number.isFinite(entryPrice) || !Number.isFinite(stopLoss) || entryPrice <= stopLoss) {
-    return Math.max(0, maxSingleStockPct);
-  }
-  const riskAmount = portfolioValue * (riskPct / 100);
-  const perShareRisk = entryPrice - stopLoss;
-  if (perShareRisk <= 0 || !Number.isFinite(perShareRisk)) return Math.max(0, maxSingleStockPct);
-  const shares = riskAmount / perShareRisk;
-  const positionValue = shares * entryPrice;
-  if (!Number.isFinite(positionValue) || portfolioValue <= 0) return Math.max(0, maxSingleStockPct);
-  const pct = (positionValue / portfolioValue) * 100;
-  return Math.max(0, Math.min(maxSingleStockPct, pct));
 }
 
 const MOMENTUM_ENTRY_THESIS_ADDENDUM = `MOMENTUM SLEEVE ENTRY (same JSON schema as above):
@@ -451,11 +425,12 @@ export async function runMomentumRebalance(
 
   const sectorCounts = new Map<string, number>();
   for (const t of openTrades) {
-    const sec = resolveSector(t.symbol.toUpperCase(), db, sectorMap);
+    const sec = resolveSymbolSector(t.symbol.toUpperCase(), db, sectorMap);
     if (sec !== 'Unknown') {
       sectorCounts.set(sec, (sectorCounts.get(sec) ?? 0) + 1);
     }
   }
+  const aggregateSectorCounts = openSectorCounts(db, sectorMap);
 
   const slotsTarget = cfg.portfolio_slots;
   let entriesInserted = 0;
@@ -532,7 +507,13 @@ export async function runMomentumRebalance(
       continue;
     }
 
-    const sec = resolveSector(sym, db, sectorMap);
+    const sec = resolveSymbolSector(sym, db, sectorMap);
+    if (
+      aggregateSectorCapBlocks(sym, aggregateSectorCounts, sectorMap, db, cfg.max_sector_aggregate)
+    ) {
+      sectorCapBlocked++;
+      continue;
+    }
     if (sec !== 'Unknown') {
       const c = sectorCounts.get(sec) ?? 0;
       if (c >= cfg.max_per_sector) {
@@ -612,7 +593,7 @@ export async function runMomentumRebalance(
       continue;
     }
 
-    const suggestedSizePct = computeSuggestedSizePct(
+    const positionWeightPct = computePositionWeightPct(
       entry,
       stopLoss,
       portfolioValue,
@@ -622,7 +603,6 @@ export async function runMomentumRebalance(
     const notes = JSON.stringify({
       rank: entryCtx.rank,
       composite_score: entryCtx.composite,
-      suggested_position_size_pct: suggestedSizePct,
       false_flag: entryCtx.falseFlag,
       earnings_blackout_checked: true,
       atr14: atr14,
@@ -640,6 +620,7 @@ export async function runMomentumRebalance(
         timeHorizon: 'medium',
         maxHoldDays: 90,
         notes,
+        positionWeightPct,
       },
       db,
     );
@@ -647,6 +628,7 @@ export async function runMomentumRebalance(
       held.add(sym);
       if (sec !== 'Unknown') {
         sectorCounts.set(sec, (sectorCounts.get(sec) ?? 0) + 1);
+        aggregateSectorCounts.set(sec, (aggregateSectorCounts.get(sec) ?? 0) + 1);
       }
       entriesInserted++;
       needed--;

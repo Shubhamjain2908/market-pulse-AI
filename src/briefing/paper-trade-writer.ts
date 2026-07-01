@@ -4,13 +4,22 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { config } from '../config/env.js';
+import { loadMomentumConfig, loadSectorMap } from '../config/loaders.js';
+import { resolveBookValueInr } from '../db/index.js';
 import {
   hasOpenPaperTradeForSymbol,
   insertPaperTradeIfAbsent,
   type PaperTradeHorizon,
+  type PaperTradeInsertRow,
   type PaperTradeSignalType,
 } from '../db/queries.js';
 import { child } from '../logger.js';
+import {
+  aggregateSectorCapBlocks,
+  computePositionWeightPct,
+  openSectorCounts,
+  resolveSymbolSector,
+} from '../strategies/position-sizer.js';
 import { evaluateAiPickEligibility } from './ai-pick-gate.js';
 import { getAtr14AtEntry, resolveAiPickStop } from './ai-pick-stop.js';
 import { parseInrPriceMidpoint } from './paper-trade-parsers.js';
@@ -72,6 +81,7 @@ export interface PaperTradeRecordResult {
   insertedPortfolioAdd: number;
   insertedCatalystEntry: number;
   crossStrategyBlocked: number;
+  sectorCapBlocked: number;
   blockedAiPick: number;
   blockedPortfolioAdd: number;
 }
@@ -89,6 +99,42 @@ function blockIfOpenPaperTradeExists(
   return true;
 }
 
+function insertSizedPaperTrade(
+  row: PaperTradeInsertRow,
+  entry: number,
+  stop: number,
+  bookValueInr: number,
+  riskPct: number,
+  maxSingleStockPct: number,
+  sectorCounts: Map<string, number>,
+  sectorMap: Record<string, string>,
+  maxSectorAggregate: number,
+  db: DatabaseType,
+): boolean {
+  if (aggregateSectorCapBlocks(row.symbol, sectorCounts, sectorMap, db, maxSectorAggregate)) {
+    log.info(
+      { symbol: row.symbol, signalType: row.signalType, blockReason: 'aggregate_sector_cap' },
+      'paper trade blocked — cross-sleeve sector cap',
+    );
+    return false;
+  }
+  const positionWeightPct = computePositionWeightPct(
+    entry,
+    stop,
+    bookValueInr,
+    riskPct,
+    maxSingleStockPct,
+  );
+  const ok = insertPaperTradeIfAbsent({ ...row, positionWeightPct }, db);
+  if (ok) {
+    const sec = resolveSymbolSector(row.symbol, db, sectorMap);
+    if (sec !== 'Unknown') {
+      sectorCounts.set(sec, (sectorCounts.get(sec) ?? 0) + 1);
+    }
+  }
+  return ok;
+}
+
 /**
  * Idempotent: one row per (symbol, signal_type, source_date). Safe to call on every brief run.
  */
@@ -102,8 +148,15 @@ export function recordPaperTrades(
   let insertedPortfolioAdd = 0;
   let insertedCatalystEntry = 0;
   let crossStrategyBlocked = 0;
+  let sectorCapBlocked = 0;
   let blockedAiPick = 0;
   let blockedPortfolioAdd = 0;
+
+  const momentumCfg = loadMomentumConfig();
+  const sizing = momentumCfg.position_sizing;
+  const sectorMap = loadSectorMap();
+  const sectorCounts = openSectorCounts(db, sectorMap);
+  const bookValueInr = resolveBookValueInr(db).bookValueInr;
 
   for (const t of theses) {
     const entry = parseInrPriceMidpoint(t.entryZone);
@@ -127,7 +180,7 @@ export function recordPaperTrades(
         crossStrategyBlocked++;
         continue;
       }
-      const ok = insertPaperTradeIfAbsent(
+      const ok = insertSizedPaperTrade(
         {
           symbol: t.symbol,
           signalType: 'catalyst_entry',
@@ -141,9 +194,18 @@ export function recordPaperTrades(
           trailingMultiplier: 0,
           atr14AtEntry: catalystCriteria.atr_14,
         },
+        entry,
+        entry * 0.96,
+        bookValueInr,
+        sizing.risk_pct,
+        sizing.max_single_stock_pct,
+        sectorCounts,
+        sectorMap,
+        momentumCfg.max_sector_aggregate,
         db,
       );
       if (ok) insertedCatalystEntry++;
+      else sectorCapBlocked++;
       continue;
     }
 
@@ -227,7 +289,7 @@ export function recordPaperTrades(
       crossStrategyBlocked++;
       continue;
     }
-    const ok = insertPaperTradeIfAbsent(
+    const ok = insertSizedPaperTrade(
       {
         symbol: t.symbol,
         signalType: 'AI_PICK',
@@ -239,9 +301,18 @@ export function recordPaperTrades(
         maxHoldDays,
         atr14AtEntry: stopResult.atr14AtEntry,
       },
+      entry,
+      stopResult.effectiveStop,
+      bookValueInr,
+      sizing.risk_pct,
+      sizing.max_single_stock_pct,
+      sectorCounts,
+      sectorMap,
+      momentumCfg.max_sector_aggregate,
       db,
     );
     if (ok) insertedAiPick++;
+    else sectorCapBlocked++;
   }
 
   if (portfolio?.positions?.length) {
@@ -273,7 +344,7 @@ export function recordPaperTrades(
         crossStrategyBlocked++;
         continue;
       }
-      const ok = insertPaperTradeIfAbsent(
+      const ok = insertSizedPaperTrade(
         {
           symbol: p.symbol,
           signalType: 'PORTFOLIO_ADD',
@@ -284,9 +355,18 @@ export function recordPaperTrades(
           timeHorizon: 'medium',
           maxHoldDays: 90,
         },
+        entry,
+        stop,
+        bookValueInr,
+        sizing.risk_pct,
+        sizing.max_single_stock_pct,
+        sectorCounts,
+        sectorMap,
+        momentumCfg.max_sector_aggregate,
         db,
       );
       if (ok) insertedPortfolioAdd++;
+      else sectorCapBlocked++;
     }
   }
 
@@ -295,6 +375,7 @@ export function recordPaperTrades(
     insertedPortfolioAdd,
     insertedCatalystEntry,
     crossStrategyBlocked,
+    sectorCapBlocked,
     blockedAiPick,
     blockedPortfolioAdd,
   };
