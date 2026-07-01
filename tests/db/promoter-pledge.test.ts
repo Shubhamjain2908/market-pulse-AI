@@ -5,10 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   closeDb,
   getDb,
-  getLatestPromoterPledge,
-  getPromoterPledgeQoQDelta,
+  getPromoterPledgeSnapshot,
   migrate,
-  normalizeCompanyName,
   upsertPromoterPledgeRows,
 } from '../../src/db/index.js';
 
@@ -55,11 +53,11 @@ describe('promoter_pledge queries', () => {
       ],
       db,
     );
-    const latest = getLatestPromoterPledge('RELIANCE', '2026-07-01', db);
+    const latest = getPromoterPledgeSnapshot('RELIANCE', '2026-07-01', db).latest;
     expect(latest?.shpDate).toBe('2026-06-30');
     expect(latest?.pctSharesPledged).toBe(12.5);
 
-    const older = getLatestPromoterPledge('RELIANCE', '2026-04-01', db);
+    const older = getPromoterPledgeSnapshot('RELIANCE', '2026-04-01', db).latest;
     expect(older?.shpDate).toBe('2026-03-31');
   });
 
@@ -83,12 +81,6 @@ describe('promoter_pledge queries', () => {
       ],
       db,
     );
-    const qoq = getPromoterPledgeQoQDelta('TCS', '2026-07-01', db);
-    expect(qoq).toEqual({ latest: 18, prior: 5, delta: 13 });
-  });
-
-  it('normalizes company names for matching', () => {
-    expect(normalizeCompanyName('Reliance Industries Limited')).toBe('relianceindustries');
-    expect(normalizeCompanyName('Tata Consultancy Services Ltd.')).toBe('tataconsultancyservices');
+    expect(getPromoterPledgeSnapshot('TCS', '2026-07-01', db).qoqDelta).toBe(13);
   });
 });

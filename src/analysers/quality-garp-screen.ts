@@ -2,7 +2,7 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import { config } from '../config/env.js';
 import { getSizeMultiplier, isStrategyAllowed } from '../db/index.js';
 import {
-  getLatestPromoterPledge,
+  getPromoterPledgeSnapshot,
   getQualityGarpFundamentals,
   getTrailingOpmStdDev,
   upsertScreenResults,
@@ -198,17 +198,6 @@ function gateScore(matchedCount: number): number {
   return matchedCount / QUALITY_GARP_TOTAL_GATES;
 }
 
-/** Count skipped optional gates as passed for score only (pass/fail unchanged). */
-function normalizedGateScore(
-  matchedCount: number,
-  opts: { pledgeGateSkipped: boolean; opmSkipped: boolean },
-): number {
-  let n = matchedCount;
-  if (opts.pledgeGateSkipped) n++;
-  if (opts.opmSkipped) n++;
-  return n / QUALITY_GARP_TOTAL_GATES;
-}
-
 function evaluateQualityGarpSymbol(
   symbol: string,
   date: string,
@@ -356,8 +345,7 @@ function evaluateQualityGarpSymbol(
   }
   matchedCount++;
 
-  const pledge = getLatestPromoterPledge(symbol, date, db);
-  const pledgePct = pledge?.pctSharesPledged ?? null;
+  const pledgePct = getPromoterPledgeSnapshot(symbol, date, db).latest?.pctSharesPledged ?? null;
   let pledgeGateSkipped = false;
   let pledgeShadowHit = false;
 
@@ -392,10 +380,7 @@ function evaluateQualityGarpSymbol(
 
   return {
     passed: true,
-    score: normalizedGateScore(matchedCount, {
-      pledgeGateSkipped,
-      opmSkipped: opmStdDev === null,
-    }),
+    score: gateScore(matchedCount),
     matchedCount,
     pledgeGateSkipped,
     pledgeShadowHit,

@@ -13,8 +13,7 @@ import {
 import { config } from '../config/env.js';
 import { loadMomentumConfig } from '../config/loaders.js';
 import {
-  getLatestPromoterPledge,
-  getPromoterPledgeQoQDelta,
+  getPromoterPledgeSnapshot,
   getQualityGarpFundamentals,
   type PaperTradeSignalType,
   type QualityGarpFundamentalRow,
@@ -252,40 +251,13 @@ export function applyMomentumPortfolioGuardrails(
   return action;
 }
 
-const PLEDGE_FLAG_RISE = 'promoter pledge rise';
-const PLEDGE_FLAG_HIGH = 'high promoter pledge';
-
-/** Pledge deterioration signals from DB (independent of gate env). */
 function collectPledgeDeteriorationFlags(symbol: string, date: string, db: DatabaseType): string[] {
+  const { latest, qoqDelta } = getPromoterPledgeSnapshot(symbol, date, db);
   const flags: string[] = [];
-  const pledgeDelta = getPromoterPledgeQoQDelta(symbol, date, db);
-  if (pledgeDelta != null && pledgeDelta.delta > 0) {
-    flags.push(PLEDGE_FLAG_RISE);
-  }
-  const pledge = getLatestPromoterPledge(symbol, date, db);
-  if (pledge?.pctSharesPledged != null && pledge.pctSharesPledged > PROMOTER_PLEDGE_MAX_PCT) {
-    flags.push(PLEDGE_FLAG_HIGH);
-  }
+  if (qoqDelta != null && qoqDelta > 0) flags.push('promoter pledge rise');
+  const pct = latest?.pctSharesPledged;
+  if (pct != null && pct > PROMOTER_PLEDGE_MAX_PCT) flags.push('high promoter pledge');
   return flags;
-}
-
-/** Shadow-only pledge flags when QUALITY_GARP_PLEDGE_GATE=0 (no TRIM/EXIT escalation). */
-export function getPledgeShadowFlagsForSymbol(
-  symbol: string,
-  date: string,
-  db: DatabaseType,
-): string[] {
-  if (config.QUALITY_GARP_PLEDGE_GATE === '1') return [];
-  return collectPledgeDeteriorationFlags(symbol, date, db);
-}
-
-function annotatePledgeShadow(action: PortfolioAction, shadowPledge: string[]): PortfolioAction {
-  if (shadowPledge.length === 0) return action;
-  const note = `[pledge shadow: ${shadowPledge.join(', ')}]`;
-  return {
-    ...action,
-    triggerReason: prependTriggerReason(note, action.triggerReason),
-  };
 }
 
 function qualityGarpDeteriorationFlags(
@@ -343,11 +315,8 @@ function applyQualityGarpPortfolioGuardrails(
   const applies = ctx.entrySource === 'quality_garp' || ctx.entrySource === 'unknown';
   if (!applies) return action;
 
-  const shadowPledge = getPledgeShadowFlagsForSymbol(ctx.symbol, ctx.date, ctx.db);
   const flags = getQualityGarpDeteriorationFlagsForSymbol(ctx.symbol, ctx.date, ctx.db);
-  if (flags.length === 0) {
-    return annotatePledgeShadow(action, shadowPledge);
-  }
+  if (flags.length === 0) return action;
 
   const strategyKey = ctx.entrySource === 'quality_garp' ? 'quality_garp' : 'universal_qg';
   const severe = flags.includes('promoter selling') && flags.includes('profit decline');
@@ -355,18 +324,16 @@ function applyQualityGarpPortfolioGuardrails(
   if (ctx.entrySource === 'quality_garp' && (severe || flags.length >= 4)) {
     const prefix = `GUARDRAIL_OVERRIDE[strategy=${strategyKey},flags=${flags.length}]`;
     const detail = `[Quality-GARP: severe deterioration (${flags.join(', ')}) — EXIT.]`;
-    return annotatePledgeShadow(escalate(action, 'EXIT', prefix, detail, 0.65), shadowPledge);
+    return escalate(action, 'EXIT', prefix, detail, 0.65);
   }
-  if (flags.length < 2) {
-    return annotatePledgeShadow(action, shadowPledge);
-  }
+  if (flags.length < 2) return action;
 
   const prefix = `GUARDRAIL_OVERRIDE[strategy=${strategyKey},flags=${flags.length}]`;
   const detail =
     ctx.entrySource === 'quality_garp'
       ? `[Quality-GARP: fundamental deterioration (${flags.join(', ')}) — TRIM.]`
       : `[Universal QG deterioration (${flags.join(', ')}) — TRIM review; no EXIT from QG alone.]`;
-  return annotatePledgeShadow(escalate(action, 'TRIM', prefix, detail, 0.58), shadowPledge);
+  return escalate(action, 'TRIM', prefix, detail, 0.58);
 }
 
 function applyTechnicalTrimEscalation(

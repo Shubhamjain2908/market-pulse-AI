@@ -33,7 +33,6 @@ import {
 } from './portfolio-context.js';
 import {
   applyStrategyPortfolioGuardrails,
-  getPledgeShadowFlagsForSymbol,
   getQualityGarpDeteriorationFlagsForSymbol,
   type PortfolioEntrySource,
   resolveHoldingEntrySource,
@@ -636,15 +635,9 @@ function buildPositionContext(
   }
 
   const qgFlags = getQualityGarpDeteriorationFlagsForSymbol(symbol, date, db);
-  const pledgeShadow = getPledgeShadowFlagsForSymbol(symbol, date, db);
   if (qgFlags.length > 0) {
     lines.push(
       `\nQuality deterioration flags (${qgFlags.length}): ${qgFlags.join(', ')} — review TRIM; EXIT only when entry source is quality_garp and severe.`,
-    );
-  }
-  if (pledgeShadow.length > 0) {
-    lines.push(
-      `Pledge shadow (would-flag when QUALITY_GARP_PLEDGE_GATE=1): ${pledgeShadow.join(', ')}.`,
     );
   }
 

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeCompanyName } from '../../src/db/queries.js';
 import {
   mapNsePledgeRows,
   type NsePledgeRowInput,
+  normalizeCompanyName,
   parseNsePledgeApiResponse,
   parseNseShpDate,
 } from '../../src/ingestors/nse/pledge-fetcher.js';
@@ -53,5 +53,10 @@ describe('pledge-fetcher', () => {
     const { mapped, unmatched } = mapNsePledgeRows(rows, new Map());
     expect(mapped).toHaveLength(0);
     expect(unmatched).toEqual(['Unknown Corp']);
+  });
+
+  it('normalizes company names for matching', () => {
+    expect(normalizeCompanyName('Reliance Industries Limited')).toBe('relianceindustries');
+    expect(normalizeCompanyName('Tata Consultancy Services Ltd.')).toBe('tataconsultancyservices');
   });
 });

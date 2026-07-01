@@ -8,12 +8,7 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 import { z } from 'zod';
 import { RATE_LIMITS } from '../../constants.js';
 import { getDb } from '../../db/connection.js';
-import {
-  buildNameToSymbolMap,
-  normalizeCompanyName,
-  type PromoterPledgeRow,
-  upsertPromoterPledgeRows,
-} from '../../db/queries.js';
+import { type PromoterPledgeRow, upsertPromoterPledgeRows } from '../../db/queries.js';
 import { child } from '../../logger.js';
 import { isoDateIst } from '../base/dates.js';
 import { createHttpClient, type HttpClient } from '../base/http-client.js';
@@ -50,14 +45,30 @@ export type NsePledgeRowInput = {
 };
 
 function parsePaddedNumber(v: unknown): number | null {
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
-  if (typeof v === 'string') {
-    const t = v.trim();
-    if (!t) return null;
-    const n = Number.parseFloat(t);
-    return Number.isFinite(n) ? n : null;
+  if (typeof v === 'string' && !v.trim()) return null;
+  const n = toFiniteNumber(typeof v === 'string' ? v.trim() : v);
+  return n ?? null;
+}
+
+/** ponytail: strip legal suffixes; upgrade to alias table if coverage < 95% */
+export function normalizeCompanyName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\b(limited|ltd|inc|corporation|corp|company|co)\b\.?/g, '')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+}
+
+function buildNameToSymbolMap(db: DatabaseType): Map<string, string> {
+  const rows = db
+    .prepare(`SELECT symbol, name FROM symbols WHERE name IS NOT NULL AND TRIM(name) != ''`)
+    .all() as Array<{ symbol: string; name: string }>;
+  const m = new Map<string, string>();
+  for (const r of rows) {
+    const key = normalizeCompanyName(r.name);
+    if (key) m.set(key, r.symbol.toUpperCase());
   }
-  return toFiniteNumber(v);
+  return m;
 }
 
 /** NSE sends dates like `30-Jun-2026` or ISO; normalize to YYYY-MM-DD. */

@@ -875,12 +875,12 @@ export function upsertPromoterPledgeRows(
   return rows.length;
 }
 
-export function getLatestPromoterPledge(
+export function getPromoterPledgeSnapshot(
   symbol: string,
   asOf: string,
   db: DatabaseType = getDb(),
-): PromoterPledgeRow | null {
-  const row = db
+): { latest: PromoterPledgeRow | null; qoqDelta: number | null } {
+  const rows = db
     .prepare(
       `
     SELECT symbol, shp_date AS shpDate,
@@ -890,56 +890,15 @@ export function getLatestPromoterPledge(
     FROM promoter_pledge
     WHERE symbol = ? AND shp_date <= ?
     ORDER BY shp_date DESC
-    LIMIT 1
-  `,
-    )
-    .get(symbol.toUpperCase(), asOf) as PromoterPledgeRow | undefined;
-  return row ?? null;
-}
-
-/** Latest pledge % minus prior filing; null when fewer than two rows on or before asOf. */
-export function getPromoterPledgeQoQDelta(
-  symbol: string,
-  asOf: string,
-  db: DatabaseType = getDb(),
-): { latest: number; prior: number; delta: number } | null {
-  const rows = db
-    .prepare(
-      `
-    SELECT pct_shares_pledged AS pctSharesPledged
-    FROM promoter_pledge
-    WHERE symbol = ? AND shp_date <= ? AND pct_shares_pledged IS NOT NULL
-    ORDER BY shp_date DESC
     LIMIT 2
   `,
     )
-    .all(symbol.toUpperCase(), asOf) as Array<{ pctSharesPledged: number }>;
-  if (rows.length < 2) return null;
-  const latest = rows[0]?.pctSharesPledged;
-  const prior = rows[1]?.pctSharesPledged;
-  if (latest == null || prior == null) return null;
-  return { latest, prior, delta: latest - prior };
-}
-
-export function buildNameToSymbolMap(db: DatabaseType = getDb()): Map<string, string> {
-  const rows = db
-    .prepare(`SELECT symbol, name FROM symbols WHERE name IS NOT NULL AND TRIM(name) != ''`)
-    .all() as Array<{ symbol: string; name: string }>;
-  const m = new Map<string, string>();
-  for (const r of rows) {
-    const key = normalizeCompanyName(r.name);
-    if (key) m.set(key, r.symbol.toUpperCase());
-  }
-  return m;
-}
-
-/** ponytail: strip legal suffixes; upgrade to alias table if coverage < 95% */
-export function normalizeCompanyName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/\b(limited|ltd|inc|corporation|corp|company|co)\b\.?/g, '')
-    .replace(/[^a-z0-9]/g, '')
-    .trim();
+    .all(symbol.toUpperCase(), asOf) as PromoterPledgeRow[];
+  const latest = rows[0] ?? null;
+  const cur = rows[0]?.pctSharesPledged;
+  const prev = rows[1]?.pctSharesPledged;
+  const qoqDelta = cur != null && prev != null && rows.length >= 2 ? cur - prev : null;
+  return { latest, qoqDelta };
 }
 
 // ---------------------------------------------------------------------------

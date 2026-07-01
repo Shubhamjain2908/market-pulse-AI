@@ -2,7 +2,6 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   applyStrategyPortfolioGuardrails,
-  getPledgeShadowFlagsForSymbol,
   getQualityGarpDeteriorationFlagsForSymbol,
 } from '../../src/agents/portfolio-strategy-guardrails.js';
 import { migrate } from '../../src/db/migrate.js';
@@ -44,21 +43,17 @@ describe('portfolio pledge deterioration flags', () => {
     vi.resetModules();
   });
 
-  it('shadow mode exposes pledge flags without escalation flags', async () => {
+  it('excludes pledge flags from escalation when gate is off', () => {
     const db = new Database(':memory:');
     migrate(db);
     seedPledgeRows(db);
 
-    const shadow = getPledgeShadowFlagsForSymbol('RISE', '2026-05-28', db);
-    expect(shadow).toContain('promoter pledge rise');
-    expect(shadow).toContain('high promoter pledge');
-
-    const live = getQualityGarpDeteriorationFlagsForSymbol('RISE', '2026-05-28', db);
-    expect(live).not.toContain('promoter pledge rise');
-    expect(live).not.toContain('high promoter pledge');
+    const flags = getQualityGarpDeteriorationFlagsForSymbol('RISE', '2026-05-28', db);
+    expect(flags).not.toContain('promoter pledge rise');
+    expect(flags).not.toContain('high promoter pledge');
   });
 
-  it('does not escalate ADD to TRIM on pledge alone when gate is off', async () => {
+  it('does not escalate ADD to TRIM on pledge alone when gate is off', () => {
     const db = new Database(':memory:');
     migrate(db);
     seedPledgeRows(db);
@@ -80,7 +75,6 @@ describe('portfolio pledge deterioration flags', () => {
     );
 
     expect(out.action).toBe('ADD');
-    expect(out.triggerReason).toContain('pledge shadow');
     expect(out.triggerReason).not.toContain('GUARDRAIL_OVERRIDE');
   });
 
