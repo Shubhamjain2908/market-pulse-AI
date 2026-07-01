@@ -92,7 +92,7 @@ describe('recordPaperTrades', () => {
     expect(open).toHaveLength(1);
     expect(open[0]?.signalType).toBe('AI_PICK');
     expect(open[0]?.maxHoldDays).toBe(30);
-    expect(open[0]?.positionWeightPct).toBe(5);
+    expect(open[0]?.positionWeightPct).toBeNull();
   });
 
   it('stamps position_weight_pct when book value is available', () => {
@@ -136,7 +136,7 @@ describe('recordPaperTrades', () => {
     expect(w).toBeLessThanOrEqual(5);
   });
 
-  it('blocks insert when cross-sleeve sector cap is full', () => {
+  it('logs aggregate sector cap exceeded but still inserts (shadow)', () => {
     for (let i = 1; i <= 5; i++) {
       const sym = `CAP${i}`;
       db.prepare(`INSERT INTO symbols (symbol, exchange, sector) VALUES (?, 'NSE', 'Banks')`).run(
@@ -181,8 +181,9 @@ describe('recordPaperTrades', () => {
       undefined,
       db,
     );
-    expect(r.insertedAiPick).toBe(0);
-    expect(r.sectorCapBlocked).toBe(1);
+    expect(r.insertedAiPick).toBe(1);
+    expect(r.sectorCapExceeded).toBe(1);
+    expect(getOpenPaperTrades(db).some((t) => t.symbol === sym)).toBe(true);
   });
 
   it('inserts PORTFOLIO_ADD when action is ADD and levels are numeric and flag enabled', () => {

@@ -32,7 +32,7 @@ import { runMomentumRanker } from '../rankers/momentum-ranker.js';
 import { type Thesis, ThesisSchema } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
 import {
-  aggregateSectorCapBlocks,
+  aggregateSectorCapExceeded,
   computePositionWeightPct,
   openSectorCounts,
   resolveSymbolSector,
@@ -508,11 +508,18 @@ export async function runMomentumRebalance(
     }
 
     const sec = resolveSymbolSector(sym, db, sectorMap);
-    if (
-      aggregateSectorCapBlocks(sym, aggregateSectorCounts, sectorMap, db, cfg.max_sector_aggregate)
-    ) {
-      sectorCapBlocked++;
-      continue;
+    const aggregateSectorExceeded = aggregateSectorCapExceeded(
+      sym,
+      aggregateSectorCounts,
+      sectorMap,
+      db,
+      cfg.max_sector_aggregate,
+    );
+    if (aggregateSectorExceeded) {
+      log.info(
+        { symbol: sym, signalType: 'momentum_mf', shadowOnly: true },
+        'aggregate sector cap exceeded — insert proceeds (shadow until cohort boundary)',
+      );
     }
     if (sec !== 'Unknown') {
       const c = sectorCounts.get(sec) ?? 0;
@@ -620,7 +627,7 @@ export async function runMomentumRebalance(
         timeHorizon: 'medium',
         maxHoldDays: 90,
         notes,
-        positionWeightPct,
+        positionWeightPct: positionWeightPct ?? undefined,
       },
       db,
     );

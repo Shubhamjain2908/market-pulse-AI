@@ -15,7 +15,7 @@ import {
 } from '../db/queries.js';
 import { child } from '../logger.js';
 import {
-  aggregateSectorCapBlocks,
+  aggregateSectorCapExceeded,
   computePositionWeightPct,
   openSectorCounts,
   resolveSymbolSector,
@@ -81,7 +81,8 @@ export interface PaperTradeRecordResult {
   insertedPortfolioAdd: number;
   insertedCatalystEntry: number;
   crossStrategyBlocked: number;
-  sectorCapBlocked: number;
+  /** Shadow: aggregate sector cap would block at next cohort boundary; insert still proceeds. */
+  sectorCapExceeded: number;
   blockedAiPick: number;
   blockedPortfolioAdd: number;
 }
@@ -99,6 +100,11 @@ function blockIfOpenPaperTradeExists(
   return true;
 }
 
+export interface SizedPaperTradeInsertResult {
+  inserted: boolean;
+  sectorCapExceeded: boolean;
+}
+
 function insertSizedPaperTrade(
   row: PaperTradeInsertRow,
   entry: number,
@@ -110,13 +116,24 @@ function insertSizedPaperTrade(
   sectorMap: Record<string, string>,
   maxSectorAggregate: number,
   db: DatabaseType,
-): boolean {
-  if (aggregateSectorCapBlocks(row.symbol, sectorCounts, sectorMap, db, maxSectorAggregate)) {
+): SizedPaperTradeInsertResult {
+  const sectorCapExceeded = aggregateSectorCapExceeded(
+    row.symbol,
+    sectorCounts,
+    sectorMap,
+    db,
+    maxSectorAggregate,
+  );
+  if (sectorCapExceeded) {
     log.info(
-      { symbol: row.symbol, signalType: row.signalType, blockReason: 'aggregate_sector_cap' },
-      'paper trade blocked — cross-sleeve sector cap',
+      {
+        symbol: row.symbol,
+        signalType: row.signalType,
+        blockReason: 'aggregate_sector_cap',
+        shadowOnly: true,
+      },
+      'aggregate sector cap exceeded — insert proceeds (shadow until cohort boundary)',
     );
-    return false;
   }
   const positionWeightPct = computePositionWeightPct(
     entry,
@@ -125,14 +142,17 @@ function insertSizedPaperTrade(
     riskPct,
     maxSingleStockPct,
   );
-  const ok = insertPaperTradeIfAbsent({ ...row, positionWeightPct }, db);
-  if (ok) {
+  const inserted = insertPaperTradeIfAbsent(
+    { ...row, positionWeightPct: positionWeightPct ?? undefined },
+    db,
+  );
+  if (inserted) {
     const sec = resolveSymbolSector(row.symbol, db, sectorMap);
     if (sec !== 'Unknown') {
       sectorCounts.set(sec, (sectorCounts.get(sec) ?? 0) + 1);
     }
   }
-  return ok;
+  return { inserted, sectorCapExceeded };
 }
 
 /**
@@ -148,7 +168,7 @@ export function recordPaperTrades(
   let insertedPortfolioAdd = 0;
   let insertedCatalystEntry = 0;
   let crossStrategyBlocked = 0;
-  let sectorCapBlocked = 0;
+  let sectorCapExceeded = 0;
   let blockedAiPick = 0;
   let blockedPortfolioAdd = 0;
 
@@ -180,7 +200,7 @@ export function recordPaperTrades(
         crossStrategyBlocked++;
         continue;
       }
-      const ok = insertSizedPaperTrade(
+      const catalystInsert = insertSizedPaperTrade(
         {
           symbol: t.symbol,
           signalType: 'catalyst_entry',
@@ -204,8 +224,8 @@ export function recordPaperTrades(
         momentumCfg.max_sector_aggregate,
         db,
       );
-      if (ok) insertedCatalystEntry++;
-      else sectorCapBlocked++;
+      if (catalystInsert.inserted) insertedCatalystEntry++;
+      if (catalystInsert.sectorCapExceeded) sectorCapExceeded++;
       continue;
     }
 
@@ -289,7 +309,7 @@ export function recordPaperTrades(
       crossStrategyBlocked++;
       continue;
     }
-    const ok = insertSizedPaperTrade(
+    const aiPickInsert = insertSizedPaperTrade(
       {
         symbol: t.symbol,
         signalType: 'AI_PICK',
@@ -311,8 +331,8 @@ export function recordPaperTrades(
       momentumCfg.max_sector_aggregate,
       db,
     );
-    if (ok) insertedAiPick++;
-    else sectorCapBlocked++;
+    if (aiPickInsert.inserted) insertedAiPick++;
+    if (aiPickInsert.sectorCapExceeded) sectorCapExceeded++;
   }
 
   if (portfolio?.positions?.length) {
@@ -344,7 +364,7 @@ export function recordPaperTrades(
         crossStrategyBlocked++;
         continue;
       }
-      const ok = insertSizedPaperTrade(
+      const addInsert = insertSizedPaperTrade(
         {
           symbol: p.symbol,
           signalType: 'PORTFOLIO_ADD',
@@ -365,8 +385,8 @@ export function recordPaperTrades(
         momentumCfg.max_sector_aggregate,
         db,
       );
-      if (ok) insertedPortfolioAdd++;
-      else sectorCapBlocked++;
+      if (addInsert.inserted) insertedPortfolioAdd++;
+      if (addInsert.sectorCapExceeded) sectorCapExceeded++;
     }
   }
 
@@ -375,7 +395,7 @@ export function recordPaperTrades(
     insertedPortfolioAdd,
     insertedCatalystEntry,
     crossStrategyBlocked,
-    sectorCapBlocked,
+    sectorCapExceeded,
     blockedAiPick,
     blockedPortfolioAdd,
   };

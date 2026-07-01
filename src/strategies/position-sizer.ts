@@ -7,24 +7,39 @@ import { classifySector } from '../briefing/sector-classifier.js';
 import { getOpenPaperTrades } from '../db/queries.js';
 
 // ponytail: vol_target_v1 only; add sizing_model column when a second model ships
+/** Null when inputs are degenerate — row may still insert; excluded from weighted expectancy. */
 export function computePositionWeightPct(
   entryPrice: number,
   stopLoss: number,
   bookValueInr: number,
   riskPct: number,
   maxSingleStockPct: number,
-): number {
+): number | null {
   if (!Number.isFinite(entryPrice) || !Number.isFinite(stopLoss) || entryPrice <= stopLoss) {
-    return Math.max(0, maxSingleStockPct);
+    return null;
   }
   const riskAmount = bookValueInr * (riskPct / 100);
   const perShareRisk = entryPrice - stopLoss;
-  if (perShareRisk <= 0 || !Number.isFinite(perShareRisk)) return Math.max(0, maxSingleStockPct);
+  if (perShareRisk <= 0 || !Number.isFinite(perShareRisk)) return null;
   const shares = riskAmount / perShareRisk;
   const positionValue = shares * entryPrice;
-  if (!Number.isFinite(positionValue) || bookValueInr <= 0) return Math.max(0, maxSingleStockPct);
+  if (!Number.isFinite(positionValue) || bookValueInr <= 0) return null;
   const pct = (positionValue / bookValueInr) * 100;
   return Math.max(0, Math.min(maxSingleStockPct, pct));
+}
+
+/** Shadow metric only — callers must not skip inserts until the next GTT cohort boundary. */
+export function aggregateSectorCapExceeded(
+  symbol: string,
+  sectorCounts: Map<string, number>,
+  sectorMap: Record<string, string>,
+  db: DatabaseType,
+  maxAggregate: number,
+): boolean {
+  if (maxAggregate <= 0) return false;
+  const sec = resolveSymbolSector(symbol, db, sectorMap);
+  if (sec === 'Unknown') return false;
+  return (sectorCounts.get(sec) ?? 0) >= maxAggregate;
 }
 
 export function resolveSymbolSector(
@@ -50,17 +65,4 @@ export function openSectorCounts(
     counts.set(sec, (counts.get(sec) ?? 0) + 1);
   }
   return counts;
-}
-
-export function aggregateSectorCapBlocks(
-  symbol: string,
-  sectorCounts: Map<string, number>,
-  sectorMap: Record<string, string>,
-  db: DatabaseType,
-  maxAggregate: number,
-): boolean {
-  if (maxAggregate <= 0) return false;
-  const sec = resolveSymbolSector(symbol, db, sectorMap);
-  if (sec === 'Unknown') return false;
-  return (sectorCounts.get(sec) ?? 0) >= maxAggregate;
 }

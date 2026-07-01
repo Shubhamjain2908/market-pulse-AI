@@ -13,7 +13,11 @@ describe('position-sizer', () => {
     expect(w).toBe(5);
   });
 
-  it('returns max cap when book is zero', () => {
-    expect(computePositionWeightPct(100, 90, 0, 1, 5)).toBe(5);
+  it('returns null when book is zero', () => {
+    expect(computePositionWeightPct(100, 90, 0, 1, 5)).toBeNull();
+  });
+
+  it('returns null when stop is not below entry', () => {
+    expect(computePositionWeightPct(100, 100, 1_000_000, 1, 5)).toBeNull();
   });
 });
