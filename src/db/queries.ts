@@ -827,6 +827,122 @@ export function upsertSymbolMetadata(
 }
 
 // ---------------------------------------------------------------------------
+// Promoter pledge (NSE shareholding pattern)
+// ---------------------------------------------------------------------------
+
+export interface PromoterPledgeRow {
+  symbol: string;
+  shpDate: string;
+  pctSharesPledged: number | null;
+  pctPromoterHolding: number | null;
+  numSharesPledged: number | null;
+  source?: string;
+}
+
+export function upsertPromoterPledgeRows(
+  rows: PromoterPledgeRow[],
+  db: DatabaseType = getDb(),
+): number {
+  if (rows.length === 0) return 0;
+  const stmt = db.prepare(`
+    INSERT INTO promoter_pledge (
+      symbol, shp_date, pct_shares_pledged, pct_promoter_holding,
+      num_shares_pledged, source
+    ) VALUES (
+      @symbol, @shpDate, @pctSharesPledged, @pctPromoterHolding,
+      @numSharesPledged, @source
+    )
+    ON CONFLICT(symbol, shp_date) DO UPDATE SET
+      pct_shares_pledged   = excluded.pct_shares_pledged,
+      pct_promoter_holding = excluded.pct_promoter_holding,
+      num_shares_pledged   = excluded.num_shares_pledged,
+      source               = excluded.source,
+      ingested_at          = CURRENT_TIMESTAMP
+  `);
+  const tx = db.transaction((batch: PromoterPledgeRow[]) => {
+    for (const r of batch) {
+      stmt.run({
+        symbol: r.symbol.toUpperCase(),
+        shpDate: r.shpDate,
+        pctSharesPledged: r.pctSharesPledged ?? null,
+        pctPromoterHolding: r.pctPromoterHolding ?? null,
+        numSharesPledged: r.numSharesPledged ?? null,
+        source: r.source ?? 'nse',
+      });
+    }
+  });
+  tx(rows);
+  return rows.length;
+}
+
+export function getLatestPromoterPledge(
+  symbol: string,
+  asOf: string,
+  db: DatabaseType = getDb(),
+): PromoterPledgeRow | null {
+  const row = db
+    .prepare(
+      `
+    SELECT symbol, shp_date AS shpDate,
+           pct_shares_pledged AS pctSharesPledged,
+           pct_promoter_holding AS pctPromoterHolding,
+           num_shares_pledged AS numSharesPledged
+    FROM promoter_pledge
+    WHERE symbol = ? AND shp_date <= ?
+    ORDER BY shp_date DESC
+    LIMIT 1
+  `,
+    )
+    .get(symbol.toUpperCase(), asOf) as PromoterPledgeRow | undefined;
+  return row ?? null;
+}
+
+/** Latest pledge % minus prior filing; null when fewer than two rows on or before asOf. */
+export function getPromoterPledgeQoQDelta(
+  symbol: string,
+  asOf: string,
+  db: DatabaseType = getDb(),
+): { latest: number; prior: number; delta: number } | null {
+  const rows = db
+    .prepare(
+      `
+    SELECT pct_shares_pledged AS pctSharesPledged
+    FROM promoter_pledge
+    WHERE symbol = ? AND shp_date <= ? AND pct_shares_pledged IS NOT NULL
+    ORDER BY shp_date DESC
+    LIMIT 2
+  `,
+    )
+    .all(symbol.toUpperCase(), asOf) as Array<{ pctSharesPledged: number }>;
+  if (rows.length < 2) return null;
+  const latest = rows[0]?.pctSharesPledged;
+  const prior = rows[1]?.pctSharesPledged;
+  if (latest == null || prior == null) return null;
+  return { latest, prior, delta: latest - prior };
+}
+
+export function buildNameToSymbolMap(db: DatabaseType = getDb()): Map<string, string> {
+  const rows = db
+    .prepare(`SELECT symbol, name FROM symbols WHERE name IS NOT NULL AND TRIM(name) != ''`)
+    .all() as Array<{ symbol: string; name: string }>;
+  const m = new Map<string, string>();
+  for (const r of rows) {
+    const key = normalizeCompanyName(r.name);
+    if (key) m.set(key, r.symbol.toUpperCase());
+  }
+  return m;
+}
+
+/** ponytail: strip legal suffixes; upgrade to alias table if coverage < 95% */
+export function normalizeCompanyName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\b(limited|ltd|inc|corporation|corp|company|co)\b\.?/g, '')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+}
+
+// ---------------------------------------------------------------------------
 // Paper trades (forward-testing ledger)
 // ---------------------------------------------------------------------------
 
