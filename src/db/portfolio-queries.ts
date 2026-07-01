@@ -7,6 +7,7 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+import { loadPortfolio } from '../config/loaders.js';
 import { getDb } from './connection.js';
 
 // -----------------------------------------------------------------------
@@ -87,6 +88,48 @@ export function getLatestHoldings(db: DatabaseType = getDb()): PortfolioHoldingR
       ORDER BY symbol
     `)
     .all() as PortfolioHoldingRow[];
+}
+
+/** Mark-to-market INR for one holding row (Kite LTP when present). */
+export function holdingMarketValueInr(h: PortfolioHoldingRow): number {
+  return h.qty * (h.lastPrice ?? h.avgPrice);
+}
+
+/** Sum of positive-qty holdings — same total as portfolio-sync `totalValue`. */
+export function sumHoldingsBookValueInr(holdings: PortfolioHoldingRow[]): number {
+  return holdings.filter((h) => h.qty > 0).reduce((s, h) => s + holdingMarketValueInr(h), 0);
+}
+
+export type BookValueSource = 'holdings' | 'config_fallback';
+
+export interface BookValueResolution {
+  bookValueInr: number;
+  source: BookValueSource;
+  holdingsAsOf: string | null;
+  holdingCount: number;
+}
+
+/**
+ * Book value for position sizing: latest `portfolio_holdings` mark-to-market sum.
+ * ponytail: `portfolio.json` totalCapital only when no holdings snapshot exists yet.
+ */
+export function resolveBookValueInr(db: DatabaseType = getDb()): BookValueResolution {
+  const holdings = getLatestHoldings(db).filter((h) => h.qty > 0);
+  const bookValueInr = sumHoldingsBookValueInr(holdings);
+  if (bookValueInr > 0) {
+    return {
+      bookValueInr,
+      source: 'holdings',
+      holdingsAsOf: holdings[0]?.asOf ?? null,
+      holdingCount: holdings.length,
+    };
+  }
+  return {
+    bookValueInr: loadPortfolio().totalCapital,
+    source: 'config_fallback',
+    holdingsAsOf: null,
+    holdingCount: 0,
+  };
 }
 
 // -----------------------------------------------------------------------
