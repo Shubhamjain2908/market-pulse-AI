@@ -16,6 +16,7 @@ import { isoDateIst } from '../ingestors/base/dates.js';
 import { applyCorporateActionsFromYahooSplits } from '../ingestors/corporate-actions.js';
 import { runExtSignalHoldingsIngestor } from '../ingestors/ext-signal-holdings-ingestor.js';
 import { fetchInavSnapshots } from '../ingestors/inav-fetcher.js';
+import { fetchPromoterPledge } from '../ingestors/nse/pledge-fetcher.js';
 import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { ingestYahooSnapshots } from '../ingestors/yahoo-snapshot-ingestor.js';
 import { clearRunBudget, LlmBudgetExceededError, startRunBudget } from '../llm/index.js';
@@ -241,6 +242,26 @@ export async function runDailyWorkflow(
         'corporate actions from Yahoo splits failed; continuing workflow',
       );
       warnings.push({ category: 'Corporate actions', message: corporateActionsStage.message });
+    }
+
+    const pledgeStage = await runStage({
+      db,
+      runDate,
+      stage: 'pledge',
+      policy: 'warn',
+      work: () => fetchPromoterPledge({ date, db }),
+    });
+    if (pledgeStage.ok) {
+      const pledge = pledgeStage.result;
+      if (pledge.failed) {
+        log.warn({ date }, 'promoter pledge ingest skipped after NSE failure');
+      }
+    } else {
+      warnings.push({
+        category: 'Pledge',
+        message: `Promoter pledge fetch failed: ${pledgeStage.message}`,
+      });
+      log.warn({ err: pledgeStage.error }, 'pledge: fetch failed — pledge gate will fail-open');
     }
 
     await runStage({
