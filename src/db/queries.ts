@@ -848,6 +848,7 @@ export interface PaperTradeInsertRow {
   trailingMultiplier?: number;
   atr14AtEntry?: number | null;
   notes?: string | null;
+  positionWeightPct?: number | null;
 }
 
 export interface PaperTradeRow {
@@ -872,6 +873,7 @@ export interface PaperTradeRow {
   stopType: PaperTradeStopType;
   stopRaisedToday: number | null;
   exitReason: ExitReason | null;
+  positionWeightPct: number | null;
 }
 
 /** Insert if no row exists for (symbol, signal_type, source_date). Returns true when inserted. */
@@ -883,10 +885,12 @@ export function insertPaperTradeIfAbsent(
     .prepare(`
     INSERT OR IGNORE INTO paper_trades (
       symbol, signal_type, source_date, entry_price, stop_loss, target,
-      time_horizon, max_hold_days, stop_type, trailing_multiplier, atr14_at_entry, status, notes
+      time_horizon, max_hold_days, stop_type, trailing_multiplier, atr14_at_entry,
+      status, notes, position_weight_pct
     ) VALUES (
       @symbol, @signalType, @sourceDate, @entryPrice, @stopLoss, @target,
-      @timeHorizon, @maxHoldDays, @stopType, @trailingMultiplier, @atr14AtEntry, 'OPEN', @notes
+      @timeHorizon, @maxHoldDays, @stopType, @trailingMultiplier, @atr14AtEntry,
+      'OPEN', @notes, @positionWeightPct
     )
   `)
     .run({
@@ -902,6 +906,7 @@ export function insertPaperTradeIfAbsent(
       trailingMultiplier: row.trailingMultiplier ?? 2.5,
       atr14AtEntry: row.atr14AtEntry ?? null,
       notes: row.notes ?? null,
+      positionWeightPct: row.positionWeightPct ?? null,
     });
   return result.changes > 0;
 }
@@ -920,7 +925,8 @@ export function getOpenPaperTrades(db: DatabaseType = getDb()): PaperTradeRow[] 
            trailing_multiplier AS trailingMultiplier,
            stop_type AS stopType,
            stop_raised_today AS stopRaisedToday,
-           exit_reason AS exitReason
+           exit_reason AS exitReason,
+           position_weight_pct AS positionWeightPct
     FROM paper_trades
     WHERE status = 'OPEN'
     ORDER BY source_date ASC, id ASC
@@ -948,6 +954,7 @@ export function getOpenPaperTrades(db: DatabaseType = getDb()): PaperTradeRow[] 
     stopType: PaperTradeStopType;
     stopRaisedToday: number | null;
     exitReason: ExitReason | null;
+    positionWeightPct: number | null;
   }>;
 
   return rows;
@@ -1000,7 +1007,8 @@ export function getOpenPaperTradesForSignal(
            trailing_multiplier AS trailingMultiplier,
            stop_type AS stopType,
            stop_raised_today AS stopRaisedToday,
-           exit_reason AS exitReason
+           exit_reason AS exitReason,
+           position_weight_pct AS positionWeightPct
     FROM paper_trades
     WHERE status = 'OPEN' AND signal_type = ?
     ORDER BY source_date ASC, id ASC
@@ -1028,6 +1036,7 @@ export function getOpenPaperTradesForSignal(
     stopType: PaperTradeStopType;
     stopRaisedToday: number | null;
     exitReason: ExitReason | null;
+    positionWeightPct: number | null;
   }>;
 
   return rows;
@@ -1078,6 +1087,7 @@ export interface PaperTradeStats {
   avgWinnerPct: number | null;
   avgLoserPct: number | null;
   expectancyPct: number | null;
+  weightedExpectancyPct: number | null;
   minSampleMet: boolean;
 }
 
@@ -1153,6 +1163,26 @@ export function getPaperTradeStats(
     loserPnls.length > 0 ? loserPnls.reduce((a, b) => a + b, 0) / loserPnls.length : null;
   const expectancyPct = closedCount > 0 ? sumPnl / closedCount : null;
 
+  const weightedRow = db
+    .prepare(
+      `
+    SELECT
+      SUM(pnl_pct * position_weight_pct) AS wSum,
+      SUM(position_weight_pct) AS wDenom
+    FROM paper_trades
+    WHERE status != 'OPEN'
+      AND outcome_date IS NOT NULL
+      AND outcome_date >= ?
+      AND outcome_date <= ?
+      AND position_weight_pct IS NOT NULL
+  `,
+    )
+    .get(windowStart.d, asOf) as { wSum: number | null; wDenom: number | null };
+  const weightedExpectancyPct =
+    weightedRow.wDenom != null && weightedRow.wDenom > 0 && weightedRow.wSum != null
+      ? weightedRow.wSum / weightedRow.wDenom
+      : null;
+
   return {
     windowDays: days,
     asOf,
@@ -1165,6 +1195,7 @@ export function getPaperTradeStats(
     avgWinnerPct,
     avgLoserPct,
     expectancyPct,
+    weightedExpectancyPct,
     minSampleMet,
   };
 }
