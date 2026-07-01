@@ -141,6 +141,8 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 
 **Cross-strategy entry dedup:** `hasOpenPaperTradeForSymbol` blocks new inserts (all active signal types + momentum rebalance) when any OPEN row exists for the symbol, regardless of `signal_type`. CLOSED rows do not block.
 
+**Position sizing (v1, 2026-07-02):** Every new insert stamps `position_weight_pct` via vol-target sizing (`src/strategies/position-sizer.ts`): book = `resolveBookValueInr()` (latest `portfolio_holdings` mark-to-market sum), `risk_pct` and `max_single_stock_pct` from `momentum-config.json` → `position_sizing`. Cross-sleeve sector cap: `max_sector_aggregate` (default 5). `getPaperTradeStats` exposes `weightedExpectancyPct`; healthcheck logs weighted GTT tranche in shadow — **GTT gate still uses unweighted** `AVG(pnl_pct)` until next cohort boundary.
+
 **Unique constraint:** `UNIQUE INDEX uq_paper_trades_signal_day ON paper_trades(symbol, signal_type, source_date)`
 
 **Current performance (May 14, deduplicated baseline, 65 closed trades):**

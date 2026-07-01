@@ -167,8 +167,7 @@ High alpha potential, medium data engineering effort.
 
 **AI role:** Daily flag any position where size has drifted above 5% due to price appreciation. Suggest trim qty.
 
-**Notes:** Prerequisite: GTT Execution Module must be active first. GTT gate is currently closed (expectancy negative).
-This is the natural next build *after* GTT activates. All data dependencies already present.
+**Notes:** Initial vol-target sizing **shipped** (2026-07-02): `position_weight_pct` on insert, book from Kite holdings, cross-sleeve sector cap. Add-tranche/trim lifecycle and GTT wiring remain deferred.
 
 ---
 
@@ -179,7 +178,7 @@ This is the natural next build *after* GTT activates. All data dependencies alre
 | 1        | Quality-GARP v2 (OPM gate)                 | **Shipped v3**  | —                                           |
 | 2        | Catalyst-Driven Entry (v2: session hold) | **Shipped v1**     | Calendar-day hold → trading-session count   |
 | 3        | yahoo_snapshot daily refresh monitoring | Operational        | Watch 429 rate first week                   |
-| 4        | Dynamic Position Sizer                  | Waiting            | GTT gate must be active first               |
+| 4        | Dynamic Position Sizer                  | **In build**       | Weights stamped on insert; GTT reads unweighted until cohort flip |
 | 5        | Concall Intelligence Engine             | Blocked            | BSE/Screener PDF scraper needed             |
 | 6        | Earnings Reversal Play                  | Blocked            | Quarterly EPS data + concall engine         |
 | 7        | Sector Rotation                         | Blocked            | Sector-level FII flow data source           |
