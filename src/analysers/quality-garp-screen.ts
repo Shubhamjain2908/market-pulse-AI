@@ -198,6 +198,17 @@ function gateScore(matchedCount: number): number {
   return matchedCount / QUALITY_GARP_TOTAL_GATES;
 }
 
+/** Count skipped optional gates as passed for score only (pass/fail unchanged). */
+function normalizedGateScore(
+  matchedCount: number,
+  opts: { pledgeGateSkipped: boolean; opmSkipped: boolean },
+): number {
+  let n = matchedCount;
+  if (opts.pledgeGateSkipped) n++;
+  if (opts.opmSkipped) n++;
+  return n / QUALITY_GARP_TOTAL_GATES;
+}
+
 function evaluateQualityGarpSymbol(
   symbol: string,
   date: string,
@@ -381,7 +392,10 @@ function evaluateQualityGarpSymbol(
 
   return {
     passed: true,
-    score: gateScore(matchedCount),
+    score: normalizedGateScore(matchedCount, {
+      pledgeGateSkipped,
+      opmSkipped: opmStdDev === null,
+    }),
     matchedCount,
     pledgeGateSkipped,
     pledgeShadowHit,

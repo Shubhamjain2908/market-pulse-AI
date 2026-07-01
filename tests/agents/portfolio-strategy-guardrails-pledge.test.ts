@@ -1,43 +1,101 @@
 import Database from 'better-sqlite3';
-import { describe, expect, it } from 'vitest';
-import { getQualityGarpDeteriorationFlagsForSymbol } from '../../src/agents/portfolio-strategy-guardrails.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  applyStrategyPortfolioGuardrails,
+  getPledgeShadowFlagsForSymbol,
+  getQualityGarpDeteriorationFlagsForSymbol,
+} from '../../src/agents/portfolio-strategy-guardrails.js';
 import { migrate } from '../../src/db/migrate.js';
 import { upsertPromoterPledgeRows } from '../../src/db/queries.js';
 
+const prevGate = process.env.QUALITY_GARP_PLEDGE_GATE;
+
+function seedPledgeRows(db: Database.Database) {
+  upsertPromoterPledgeRows(
+    [
+      {
+        symbol: 'RISE',
+        shpDate: '2025-12-31',
+        pctSharesPledged: 10,
+        pctPromoterHolding: 55,
+        numSharesPledged: 100,
+      },
+      {
+        symbol: 'RISE',
+        shpDate: '2026-03-31',
+        pctSharesPledged: 18,
+        pctPromoterHolding: 55,
+        numSharesPledged: 200,
+      },
+    ],
+    db,
+  );
+}
+
 describe('portfolio pledge deterioration flags', () => {
-  it('flags QoQ pledge rise and high pledge level', () => {
+  beforeEach(() => {
+    process.env.QUALITY_GARP_PLEDGE_GATE = '0';
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (prevGate === undefined) delete process.env.QUALITY_GARP_PLEDGE_GATE;
+    else process.env.QUALITY_GARP_PLEDGE_GATE = prevGate;
+    vi.resetModules();
+  });
+
+  it('shadow mode exposes pledge flags without escalation flags', async () => {
     const db = new Database(':memory:');
     migrate(db);
+    seedPledgeRows(db);
 
-    db.prepare(
-      `
-      INSERT INTO fundamentals (
-        symbol, as_of, roe, roce, pe, pb, peg, debt_to_equity, source
-      ) VALUES ('RISE', '2026-05-28', 0.2, 0.22, 20, 3, 1, 0.1, 'yahoo_snapshot')
-    `,
-    ).run();
+    const shadow = getPledgeShadowFlagsForSymbol('RISE', '2026-05-28', db);
+    expect(shadow).toContain('promoter pledge rise');
+    expect(shadow).toContain('high promoter pledge');
 
-    upsertPromoterPledgeRows(
-      [
-        {
-          symbol: 'RISE',
-          shpDate: '2025-12-31',
-          pctSharesPledged: 10,
-          pctPromoterHolding: 55,
-          numSharesPledged: 100,
-        },
-        {
-          symbol: 'RISE',
-          shpDate: '2026-03-31',
-          pctSharesPledged: 18,
-          pctPromoterHolding: 55,
-          numSharesPledged: 200,
-        },
-      ],
-      db,
+    const live = getQualityGarpDeteriorationFlagsForSymbol('RISE', '2026-05-28', db);
+    expect(live).not.toContain('promoter pledge rise');
+    expect(live).not.toContain('high promoter pledge');
+  });
+
+  it('does not escalate ADD to TRIM on pledge alone when gate is off', async () => {
+    const db = new Database(':memory:');
+    migrate(db);
+    seedPledgeRows(db);
+
+    const out = applyStrategyPortfolioGuardrails(
+      {
+        symbol: 'RISE',
+        action: 'ADD',
+        conviction: 0.7,
+        thesis: 'Add on dip.',
+        bullPoints: ['Quality'],
+        bearPoints: ['Pledge risk'],
+        triggerReason: 'LLM ADD thesis',
+        suggestedStop: 90,
+        suggestedTarget: 120,
+      },
+      {},
+      { entrySource: 'unknown', symbol: 'RISE', date: '2026-05-28', db },
     );
 
-    const flags = getQualityGarpDeteriorationFlagsForSymbol('RISE', '2026-05-28', db);
+    expect(out.action).toBe('ADD');
+    expect(out.triggerReason).toContain('pledge shadow');
+    expect(out.triggerReason).not.toContain('GUARDRAIL_OVERRIDE');
+  });
+
+  it('includes pledge in live flags when QUALITY_GARP_PLEDGE_GATE=1', async () => {
+    process.env.QUALITY_GARP_PLEDGE_GATE = '1';
+    vi.resetModules();
+
+    const db = new Database(':memory:');
+    migrate(db);
+    seedPledgeRows(db);
+
+    const { getQualityGarpDeteriorationFlagsForSymbol: liveFlags } = await import(
+      '../../src/agents/portfolio-strategy-guardrails.js'
+    );
+    const flags = liveFlags('RISE', '2026-05-28', db);
     expect(flags).toContain('promoter pledge rise');
     expect(flags).toContain('high promoter pledge');
   });
