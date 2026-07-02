@@ -61,11 +61,27 @@ export function parseScreenerHtml(html: string, opts: ParseScreenerOptions): Fun
     promoterHoldingPct = parseFloatLoose(get(ratios, 'promoter holding'));
   }
 
+  // Screener.in shows "Book Value" (₹/share) and "Current Price" (₹/share) but
+  // NOT "Price to Book Value" directly. Compute PB = Current Price / Book Value
+  // when the ratio isn't present. Both are always available in the company-ratios.
+  const currentPrice = parseFloatLoose(get(ratios, 'current price'));
+  const bookValue = parseFloatLoose(get(ratios, 'book value'));
+  const pbDirect = parseFloatLoose(get(ratios, 'price to book value', 'p/b'));
+  const pb =
+    pbDirect ??
+    (currentPrice != null && bookValue != null && bookValue > 0
+      ? Math.round((currentPrice / bookValue) * 100) / 100
+      : undefined);
+
   let debtToEquity: number | undefined;
   try {
     debtToEquity =
       parseFloatLoose(get(ratios, 'debt / equity', 'debt to equity', 'd/e')) ??
-      parseDebtToEquityFromDataTables($);
+      parseDebtToEquityFromDataTables($) ??
+      // Screener.in balance sheet shows "Borrowings" as total debt and
+      // "Equity Capital" + "Reserves" as total equity. Compute ratio when
+      // direct labels are missing (common for most NSE listings).
+      computeDebtToEquityFromBalanceSheet($);
   } catch (err) {
     log.debug({ symbol: opts.symbol, err }, 'screener debt/equity parse failed');
     debtToEquity = parseFloatLoose(get(ratios, 'debt / equity', 'debt to equity', 'd/e'));
@@ -76,7 +92,7 @@ export function parseScreenerHtml(html: string, opts: ParseScreenerOptions): Fun
     asOf: opts.asOf ?? isoDateIst(),
     marketCap: parseRupeeCrore(get(ratios, 'market cap')),
     pe: parseFloatLoose(get(ratios, 'stock p/e', 'p/e')),
-    pb: parseFloatLoose(get(ratios, 'price to book value', 'p/b')),
+    pb,
     peg: parseFloatLoose(get(ratios, 'peg ratio', 'peg')),
     roe: parseFloatLoose(get(ratios, 'roe', 'return on equity')),
     roce: parseFloatLoose(get(ratios, 'roce', 'return on capital employed')),
@@ -259,6 +275,59 @@ function parseDebtToEquityFromDataTables($: CheerioAPI): number | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * Compute debt-to-equity from balance sheet line items when no direct label
+ * exists. Screener.in shows "Borrowings" as total debt (often under a
+ * collapsible row with "+" suffix) and "Equity Capital" + "Reserves" as
+ * equity components. We skip child rows (indented or collapsible children).
+ */
+function computeDebtToEquityFromBalanceSheet($: CheerioAPI): number | undefined {
+  const $sec = $('#balance-sheet');
+  if ($sec.length === 0) return undefined;
+
+  const $rows = $sec.find('table.data-table tbody tr');
+  let borrowings: number | undefined;
+  let equityCapital: number | undefined;
+  let reserves: number | undefined;
+
+  for (let i = 0; i < $rows.length; i++) {
+    const $r = $($rows[i]);
+    const label = normalizeLabel($r.find('td').first().text());
+    if (!label) continue;
+
+    const $cells = $r.find('td');
+    if ($cells.length < 2) continue;
+    const val = parseRupeeCrore($cells.last().text());
+    if (val === undefined) continue;
+
+    // "Borrowings" is the total debt line (often has "+" for expandable sub-rows).
+    // Sub-rows appear after the total, so first match is always the aggregate.
+    if (
+      label === 'borrowings' ||
+      label === 'borrowing' ||
+      label.startsWith('borrowings') ||
+      label.startsWith('borrowing')
+    ) {
+      // Only capture the top-level row (the sum), not expanded sub-rows
+      if (borrowings === undefined) borrowings = val;
+    } else if (label === 'equity capital') {
+      // "Equity Capital" — first column is always the main number
+      equityCapital = val;
+    } else if (label === 'reserves') {
+      reserves = val;
+    }
+  }
+
+  if (borrowings === undefined || equityCapital === undefined || reserves === undefined)
+    return undefined;
+
+  const totalEquity = equityCapital + reserves;
+  if (totalEquity <= 0) return undefined;
+
+  const ratio = borrowings / totalEquity;
+  return Number.isFinite(ratio) && ratio >= 0 ? Math.round(ratio * 100) / 100 : undefined;
 }
 
 // ---------------------------------------------------------------------------
