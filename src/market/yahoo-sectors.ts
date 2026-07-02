@@ -44,8 +44,8 @@ export async function syncSymbolSectorsFromYahoo(
   let skipped = 0;
 
   const seen = new Set<string>();
-  const stmt = db.prepare('SELECT sector FROM symbols WHERE symbol = ?') as {
-    get: (sym: string) => { sector?: string | null } | undefined;
+  const stmt = db.prepare('SELECT sector, name FROM symbols WHERE symbol = ?') as {
+    get: (sym: string) => { sector?: string | null; name?: string | null } | undefined;
   };
 
   for (const raw of symbols) {
@@ -64,8 +64,11 @@ export async function syncSymbolSectorsFromYahoo(
 
     if (!opts.force) {
       const row = stmt.get(sym);
-      const existing = row?.sector?.trim();
-      if (existing) {
+      const existingSector = row?.sector?.trim();
+      const existingName = row?.name?.trim();
+      // Skip only when both sector AND name are already populated.
+      // We need name for the pledge-fetcher name→symbol resolution.
+      if (existingSector && existingName) {
         skipped++;
         continue;
       }
@@ -74,17 +77,22 @@ export async function syncSymbolSectorsFromYahoo(
     const yTicker = toYahooFinanceTicker(sym);
     try {
       const r = await client.quoteSummary(yTicker, {
-        modules: ['assetProfile', 'summaryProfile'],
+        modules: ['assetProfile', 'summaryProfile', 'price'],
       });
       const ap = r.assetProfile;
       const sp = r.summaryProfile;
+      const pr = r.price;
       const sector =
         pickOptionalString(ap?.sector) ??
         pickOptionalString(ap?.sectorDisp) ??
         pickOptionalString(sp?.sector) ??
         pickOptionalString(sp?.industryDisp);
       const industry = pickOptionalString(ap?.industry) ?? pickOptionalString(sp?.industry);
+      // assetProfile/summaryProfile do not carry longName — that's in the
+      // price module. Fall back to shortName, then the profile fields.
       const name =
+        pickOptionalString(pr?.longName) ??
+        pickOptionalString(pr?.shortName) ??
         pickOptionalString(ap?.longName) ??
         pickOptionalString(ap?.name) ??
         pickOptionalString(sp?.longName) ??
@@ -92,6 +100,11 @@ export async function syncSymbolSectorsFromYahoo(
 
       if (sector) {
         upsertSymbolMetadata([{ symbol: sym, sector, industry, name }], db);
+        written++;
+      } else if (name) {
+        // Write name even without sector — the pledge fetcher and
+        // other name-based resolvers depend on symbols.name.
+        upsertSymbolMetadata([{ symbol: sym, name }], db);
         written++;
       } else {
         skipped++;

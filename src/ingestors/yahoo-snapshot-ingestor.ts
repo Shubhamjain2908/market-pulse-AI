@@ -142,7 +142,11 @@ export function mapQuoteSummaryToSnapshot(
       dividendYield?: unknown;
       netIncomeToCommon?: unknown;
     };
-    defaultKeyStatistics?: { priceToBook?: unknown; trailingPegRatio?: unknown };
+    defaultKeyStatistics?: {
+      priceToBook?: unknown;
+      trailingPegRatio?: unknown;
+      netIncomeToCommon?: unknown;
+    };
     financialData?: {
       returnOnEquity?: unknown;
       debtToEquity?: unknown;
@@ -165,6 +169,7 @@ export function mapQuoteSummaryToSnapshot(
   const debtToEquity = normalizeDebtToEquity(summary.financialData?.debtToEquity);
   const netProfitTtm =
     netIncomeToCrores(summary.summaryDetail?.netIncomeToCommon) ??
+    netIncomeToCrores(summary.defaultKeyStatistics?.netIncomeToCommon) ??
     netIncomeToCrores(summary.financialData?.netIncomeToCommon);
 
   const values = [pe, pb, peg, marketCap, dividendYield, roe, debtToEquity, netProfitTtm];
