@@ -134,7 +134,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 ### 3.3 Paper Trades Ledger
 
 **Signal types currently active:**
-- `AI_PICK` — from thesis generator on screened candidates. **Admission gate** ([`ai-pick-gate.ts`](src/briefing/ai-pick-gate.ts)): deterministic eligibility before `paper_trades` insert (`confidence ≥ 6`, fresh false-momentum flag is not set, confirmation path). Stale false-flag values are logged as facts and do not overblock Path A/B; rank-dependent `golden_cross` tiers still fail closed on stale/missing rank or false-flag data. **Stop distance** ([`ai-pick-stop.ts`](src/briefing/ai-pick-stop.ts)): normalize-then-kill — widen stops tighter than `max(2%, 1×ATR)`; block when that minimum exceeds 8% risk; emit `ai_pick_stop_floor_applied` when the final 8% floor changes an overly wide thesis stop. Thesis cards still appear in briefing when blocked. Reject when `stopLoss ≥ entryPrice` (`log.error`).
+- `AI_PICK` — from thesis generator on screened candidates. **Admission gate** ([`ai-pick-gate.ts`](src/briefing/ai-pick-gate.ts)): deterministic eligibility before `paper_trades` insert (`confidence ≥ 6`, or `rubricTotal ≥ AI_PICK_RUBRIC_MIN` when `AI_PICK_RUBRIC_GATE=1`; fresh false-momentum flag is not set, confirmation path). The rubric is a composite 0–90 score combining deterministic anchors (earnings trajectory, balance sheet, Weinstein stage) with LLM-scored qualitative dimensions (moat, sector tailwind, competitive position, news catalyst). Stale false-flag values are logged as facts and do not overblock Path A/B; rank-dependent `golden_cross` tiers still fail closed on stale/missing rank or false-flag data. **Stop distance** ([`ai-pick-stop.ts`](src/briefing/ai-pick-stop.ts)): normalize-then-kill — widen stops tighter than `max(2%, 1×ATR)`; block when that minimum exceeds 8% risk; emit `ai_pick_stop_floor_applied` when the final 8% floor changes an overly wide thesis stop. Thesis cards still appear in briefing when blocked. Reject when `stopLoss ≥ entryPrice` (`log.error`).
 - `PORTFOLIO_ADD` — from portfolio analyser ADD recommendations
 - `momentum_mf` — from Sunday momentum rebalance (**requires `atr_14` at entry**; no 2% proxy)
 - `catalyst_entry` — from catalyst-driven screen hits (fixed stop)
@@ -260,7 +260,8 @@ Status: **v2 shipped (2026-06-06)** — `pnpm fundamentals:refresh` orchestrates
   `thesis_json` populated after AI pass.
 - **`theses`** — `(symbol, date)` PK. Full thesis store: `bull_case, bear_case, 
   entry_zone, stop_loss, target, time_horizon, confidence (1–10), trigger_reason, 
-  model, raw_response`.
+  model, raw_response, rubric_json (JSON: {anchors, llm, total} — Task A),
+  context_refs (JSON: data provenance — Task C)`.
 - **`portfolio_analysis`** — `(symbol, date)` PK. Per-holding LLM output:
   `action (HOLD|ADD|TRIM|EXIT), conviction (0..1), thesis, bull_points JSON, 
   bear_points JSON, trigger_reason, suggested_stop, suggested_target, pnl_pct, model`.
