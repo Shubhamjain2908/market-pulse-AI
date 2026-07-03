@@ -284,6 +284,37 @@ export const RubricJsonSchema = z.object({
 export type RubricJson = z.infer<typeof RubricJsonSchema>;
 
 // ---------------------------------------------------------------------------
+// Concall Intelligence (Task B)
+// ---------------------------------------------------------------------------
+
+export const ConcallIntelSchema = z.object({
+  symbol: z.string(),
+  announcedAt: z.string(),
+  quarterLabel: z.string().optional(),
+  sentiment: z.enum(['positive', 'cautiously_positive', 'neutral', 'cautious', 'negative']),
+  credibilityStars: z.coerce.number().int().min(1).max(5),
+  guidance: z.array(
+    z.object({
+      metric: z.string(),
+      value: z.string(),
+      horizon: z.string(),
+      verbatim: z.string(),
+    }),
+  ),
+  delivery: z
+    .array(
+      z.object({
+        priorGuidance: z.string(),
+        outcome: z.enum(['beat', 'met', 'missed', 'unverifiable']),
+      }),
+    )
+    .optional(),
+  deflections: z.array(z.string()).optional(),
+  summary: z.string().max(600), // <=120 words ≈ 600 chars max
+});
+export type ConcallIntel = z.infer<typeof ConcallIntelSchema>;
+
+// ---------------------------------------------------------------------------
 // Portfolio
 // ---------------------------------------------------------------------------
 

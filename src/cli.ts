@@ -44,6 +44,8 @@ import { runRegimeAgent } from './agents/regime-agent.js';
 import { runSignalEnricher } from './agents/signal-enricher.js';
 import { runStockScreener } from './agents/stock-screener.js';
 import { generateTheses } from './agents/thesis-generator.js';
+import { analyseConcallTranscripts } from './agents/concall-analyser.js';
+import { fetchConcallTranscripts } from './ingestors/nse/announcements-fetcher.js';
 import { runBacktest } from './backtest/harness.js';
 import { deliverBriefing } from './briefing/dispatch.js';
 import { config } from './config/env.js';
@@ -403,6 +405,32 @@ program
         verbose: Boolean(opts.verbose),
         regimeSource,
       });
+    },
+  );
+
+program
+  .command('concall')
+  .description('fetch and analyse NSE concall transcripts for holdings/watchlist')
+  .option('--symbol <symbol>', 'restrict to a single symbol')
+  .option('--reanalyse', 're-run LLM analysis on already-analysed transcripts')
+  .option('--skip-fetch', 'skip PDF download, only run LLM analysis on existing transcripts')
+  .action(
+    async (opts: { symbol?: string; reanalyse?: boolean; skipFetch?: boolean }) => {
+      ensureDb();
+      const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+      const db = getDb();
+
+      if (!opts.skipFetch) {
+        const symbols = opts.symbol ? [opts.symbol.toUpperCase()] : undefined;
+        const fetchResult = await fetchConcallTranscripts({ date, db, symbols });
+        logger.info(fetchResult, 'concall fetch complete');
+        console.log(JSON.stringify(fetchResult, null, 2));
+      }
+
+      const analysisResult = await analyseConcallTranscripts({}, db);
+      logger.info(analysisResult, 'concall analysis complete');
+      console.log(JSON.stringify(analysisResult, null, 2));
+      closeDb();
     },
   );
 

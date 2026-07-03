@@ -16,6 +16,8 @@ import { isoDateIst } from '../ingestors/base/dates.js';
 import { applyCorporateActionsFromYahooSplits } from '../ingestors/corporate-actions.js';
 import { runExtSignalHoldingsIngestor } from '../ingestors/ext-signal-holdings-ingestor.js';
 import { fetchInavSnapshots } from '../ingestors/inav-fetcher.js';
+import { analyseConcallTranscripts } from './concall-analyser.js';
+import { fetchConcallTranscripts } from '../ingestors/nse/announcements-fetcher.js';
 import { fetchPromoterPledge } from '../ingestors/nse/pledge-fetcher.js';
 import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { ingestYahooSnapshots } from '../ingestors/yahoo-snapshot-ingestor.js';
@@ -264,6 +266,28 @@ export async function runDailyWorkflow(
       log.warn({ err: pledgeStage.error }, 'pledge: fetch failed — pledge gate will fail-open');
     }
 
+    if (config.CONCALL_ANALYSIS_ENABLED === '1') {
+      const concallFetchStage = await runStage({
+        db,
+        runDate,
+        stage: 'concall-fetch',
+        policy: 'warn',
+        work: () => fetchConcallTranscripts({ date, db }),
+      });
+      if (concallFetchStage.ok) {
+        const r = concallFetchStage.result;
+        if (r.transcriptsFound > 0) {
+          log.info({ transcriptsFound: r.transcriptsFound, extracted: r.extracted }, 'concall transcript ingest complete');
+        }
+      } else {
+        warnings.push({
+          category: 'Concall',
+          message: `Concall transcript fetch failed: ${concallFetchStage.message}`,
+        });
+        log.warn({ err: concallFetchStage.error }, 'concall: fetch failed — transcripts unavailable');
+      }
+    }
+
     await runStage({
       db,
       runDate,
@@ -449,6 +473,42 @@ export async function runDailyWorkflow(
             db,
           );
           throw err;
+        }
+      }
+
+      if (!opts.skipAi && config.CONCALL_ANALYSIS_ENABLED === '1') {
+        recordPipelineStage({ runDate, stage: 'concall-analysis', status: 'started' }, db);
+        try {
+          const concallResult = await analyseConcallTranscripts({}, db);
+          recordPipelineStage(
+            {
+              runDate,
+              stage: 'concall-analysis',
+              status: 'success',
+              metadata: { analysed: concallResult.analysed, failed: concallResult.failed },
+            },
+            db,
+          );
+          log.info(concallResult, 'concall analysis done');
+        } catch (err) {
+          if (err instanceof LlmBudgetExceededError) {
+            recordPipelineStage(
+              { runDate, stage: 'concall-analysis', status: 'skipped', errorMsg: err.message },
+              db,
+            );
+            log.warn({ err, spent: err.spent, cap: err.cap }, 'concall analysis skipped: LLM budget exceeded');
+          } else {
+            recordPipelineStage(
+              {
+                runDate,
+                stage: 'concall-analysis',
+                status: 'failed',
+                errorMsg: (err as Error).message,
+              },
+              db,
+            );
+            log.warn({ err: (err as Error).message }, 'concall analysis failed; continuing workflow');
+          }
         }
       }
 
