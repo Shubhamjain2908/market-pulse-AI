@@ -39,6 +39,21 @@ export const RegimeRowSchema = z.object({
 });
 export type RegimeRow = z.infer<typeof RegimeRowSchema>;
 
+/** One row in `strategy_gate_audit` (migration 0029 — Task D). */
+export const StrategyGateAuditSchema = z.object({
+  id: z.number().int().positive().optional(),
+  date: z.string(),
+  strategyId: z.string(),
+  gateName: z.string(),
+  allowed: z.boolean(),
+  regime: z.string().nullable(),
+  sizeMultiplier: z.number(),
+  reason: z.string(),
+  symbol: z.string().nullable(),
+  createdAt: z.string().optional(),
+});
+export type StrategyGateAudit = z.infer<typeof StrategyGateAuditSchema>;
+
 /** Seed / gate row for `regime_strategy_gate`. */
 export const StrategyGateRowSchema = z.object({
   strategyId: z.string().min(1),

@@ -5,7 +5,7 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { child } from '../logger.js';
 import { lastOpenOnOrBefore } from '../market/trading-days.js';
-import type { Regime, RegimeRow, StrategyGateRow } from '../types/regime.js';
+import type { Regime, RegimeRow, StrategyGateAudit, StrategyGateRow } from '../types/regime.js';
 import { RegimeSchema } from '../types/regime.js';
 import { getDb } from './connection.js';
 
@@ -214,6 +214,203 @@ export function countGatesForRegime(regime: string, db: DatabaseType = getDb()):
     .prepare('SELECT COUNT(*) as c FROM regime_strategy_gate WHERE regime = ?')
     .get(regime) as { c: number } | undefined;
   return row?.c ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Strategy Gate Audit Trail (Task D)
+// ---------------------------------------------------------------------------
+
+/** Record a single gate decision in the audit trail. */
+export function insertGateAudit(
+  row: {
+    date: string;
+    strategyId: string;
+    gateName: string;
+    allowed: boolean;
+    regime: string | null;
+    sizeMultiplier: number;
+    reason: string;
+    symbol?: string | null;
+  },
+  db: DatabaseType = getDb(),
+): void {
+  db.prepare(
+    `
+    INSERT INTO strategy_gate_audit (
+      date, strategy_id, gate_name, allowed, regime, size_multiplier, reason, symbol
+    ) VALUES (
+      @date, @strategyId, @gateName, @allowed, @regime, @sizeMultiplier, @reason, @symbol
+    )
+  `,
+  ).run({
+    date: row.date,
+    strategyId: row.strategyId,
+    gateName: row.gateName,
+    allowed: row.allowed ? 1 : 0,
+    regime: row.regime ?? null,
+    sizeMultiplier: row.sizeMultiplier,
+    reason: row.reason,
+    symbol: row.symbol ?? null,
+  });
+}
+
+/** Batch gate audit insert (transactional). */
+export function insertGateAuditBatch(
+  rows: Array<{
+    date: string;
+    strategyId: string;
+    gateName: string;
+    allowed: boolean;
+    regime: string | null;
+    sizeMultiplier: number;
+    reason: string;
+    symbol?: string | null;
+  }>,
+  db: DatabaseType = getDb(),
+): number {
+  if (rows.length === 0) return 0;
+  const stmt = db.prepare(
+    `
+    INSERT INTO strategy_gate_audit (
+      date, strategy_id, gate_name, allowed, regime, size_multiplier, reason, symbol
+    ) VALUES (
+      @date, @strategyId, @gateName, @allowed, @regime, @sizeMultiplier, @reason, @symbol
+    )
+  `,
+  );
+  const tx = db.transaction((batch: typeof rows) => {
+    for (const r of batch) {
+      stmt.run({
+        date: r.date,
+        strategyId: r.strategyId,
+        gateName: r.gateName,
+        allowed: r.allowed ? 1 : 0,
+        regime: r.regime ?? null,
+        sizeMultiplier: r.sizeMultiplier,
+        reason: r.reason,
+        symbol: r.symbol ?? null,
+      });
+    }
+  });
+  tx(rows);
+  return rows.length;
+}
+
+/** Query gate audit trail for a date range and optional strategy/symbol filter. */
+export function queryGateAudit(
+  opts: {
+    date?: string;
+    fromDate?: string;
+    toDate?: string;
+    strategyId?: string;
+    symbol?: string;
+    limit?: number;
+  },
+  db: DatabaseType = getDb(),
+): StrategyGateAudit[] {
+  const conditions: string[] = [];
+  const params: Array<string | number> = [];
+
+  if (opts.date) {
+    conditions.push('date = ?');
+    params.push(opts.date);
+  } else {
+    if (opts.fromDate) {
+      conditions.push('date >= ?');
+      params.push(opts.fromDate);
+    }
+    if (opts.toDate) {
+      conditions.push('date <= ?');
+      params.push(opts.toDate);
+    }
+  }
+  if (opts.strategyId) {
+    conditions.push('strategy_id = ?');
+    params.push(opts.strategyId);
+  }
+  if (opts.symbol) {
+    conditions.push('symbol = ?');
+    params.push(opts.symbol.toUpperCase());
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limitClause = opts.limit ?? 50;
+
+  const rows = db
+    .prepare(
+      `
+    SELECT id, date, strategy_id AS strategyId, gate_name AS gateName,
+           allowed, regime, size_multiplier AS sizeMultiplier,
+           reason, symbol, created_at AS createdAt
+    FROM strategy_gate_audit
+    ${where}
+    ORDER BY id DESC
+    LIMIT ?
+  `,
+    )
+    .all(...params, limitClause) as Array<{
+    id: number;
+    date: string;
+    strategyId: string;
+    gateName: string;
+    allowed: number;
+    regime: string | null;
+    sizeMultiplier: number;
+    reason: string;
+    symbol: string | null;
+    createdAt: string;
+  }>;
+
+  return rows.map((r) => ({
+    id: r.id,
+    date: r.date,
+    strategyId: r.strategyId,
+    gateName: r.gateName,
+    allowed: r.allowed === 1,
+    regime: r.regime,
+    sizeMultiplier: r.sizeMultiplier,
+    reason: r.reason,
+    symbol: r.symbol,
+    createdAt: r.createdAt,
+  }));
+}
+
+/** Summary: blocked vs allowed counts per strategy for a date. */
+export function getGateAuditSummary(
+  date: string,
+  db: DatabaseType = getDb(),
+): Array<{
+  strategyId: string;
+  allowedCount: number;
+  blockedCount: number;
+  gates: string[];
+}> {
+  const rows = db
+    .prepare(
+      `
+    SELECT strategy_id AS strategyId,
+           SUM(CASE WHEN allowed = 1 THEN 1 ELSE 0 END) AS allowedCount,
+           SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS blockedCount,
+           GROUP_CONCAT(DISTINCT gate_name) AS gates
+    FROM strategy_gate_audit
+    WHERE date = ?
+    GROUP BY strategy_id
+    ORDER BY strategy_id
+  `,
+    )
+    .all(date) as Array<{
+    strategyId: string;
+    allowedCount: number;
+    blockedCount: number;
+    gates: string;
+  }>;
+
+  return rows.map((r) => ({
+    strategyId: r.strategyId,
+    allowedCount: r.allowedCount,
+    blockedCount: r.blockedCount,
+    gates: r.gates.split(','),
+  }));
 }
 
 export function seedStrategyGates(rows: StrategyGateRow[], db: DatabaseType = getDb()): number {
