@@ -241,8 +241,47 @@ export const ThesisSchema = z.object({
   timeHorizon: thesisTimeHorizon(),
   confidenceScore: z.coerce.number().int().min(1).max(10),
   triggerScreen: z.string(),
+  /**
+   * LLM-scored qualitative rubric dimensions (0–10 each).
+   * Added by Task A rubric. Score ONLY from the provided context;
+   * if no evidence, score 4 (neutral) and say so.
+   */
+  rubric: z
+    .object({
+      moat: z.coerce.number().int().min(0).max(10),
+      sectorTailwind: z.coerce.number().int().min(0).max(10),
+      competitivePosition: z.coerce.number().int().min(0).max(10),
+      newsCatalyst: z.coerce.number().int().min(0).max(10),
+    })
+    .optional(),
 });
 export type Thesis = z.infer<typeof ThesisSchema>;
+
+// ---------------------------------------------------------------------------
+// Thesis rubric JSON (stored in theses.rubric_json)
+// ---------------------------------------------------------------------------
+
+/** Schema for the full rubric JSON persisted to `theses.rubric_json`. */
+export const RubricJsonSchema = z.object({
+  /** Deterministic anchors computed from DB data. */
+  anchors: z.object({
+    earningsTrajectory: z.number().nullable(),
+    balanceSheet: z.number().nullable(),
+    technicalStage: z.number().nullable(),
+  }),
+  /** LLM-scored qualitative dimensions. */
+  llm: z
+    .object({
+      moat: z.number(),
+      sectorTailwind: z.number(),
+      competitivePosition: z.number(),
+      newsCatalyst: z.number(),
+    })
+    .nullable(),
+  /** Composite total on 0–90 scale. */
+  total: z.number(),
+});
+export type RubricJson = z.infer<typeof RubricJsonSchema>;
 
 // ---------------------------------------------------------------------------
 // Portfolio
