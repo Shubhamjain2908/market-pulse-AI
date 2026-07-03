@@ -85,6 +85,10 @@ export function renderRegimeCard(
 ): string {
   const pal = REGIME_PALETTE[row.regime];
   const narrative = row.narrative?.trim() || 'No narrative stored for this session.';
+  const dataRecency =
+    row.date
+      ? `<div class="regime-data-recency muted">Data as of ${esc(row.date)}</div>`
+      : '';
   const active = gateSummary.active.length;
   const total = gateSummary.totalRows;
   const gateLine =
@@ -132,6 +136,7 @@ export function renderRegimeCard(
     <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout regime-tiles-table" style="margin-bottom:12px;"><tr>${tiles}</tr></table>
     ${flowAttribution ? renderFlowAttributionBlock(flowAttribution) : ''}
     ${cotGoldMacroLine ?? ''}
+    ${dataRecency}
     <p class="regime-narrative">${esc(narrative)}</p>
     <p class="regime-gate-summary muted">${esc(gateLine)}</p>
   </section>`;

@@ -75,6 +75,8 @@ export interface ThesisCard {
   rank?: number;
   /** Short signal summary from ranking (for “why #N”). */
   rankBlurb?: string;
+  /** Optional data-provenance JSON string (data-as-of timestamps for each context source). */
+  contextRefs?: string | null;
 }
 
 export interface PortfolioPositionCard {
@@ -792,6 +794,7 @@ function renderAiPicks(theses: ThesisCard[] | undefined, status: AiPicksSectionS
             <ul class="thesis-list">${bearItems}</ul>
           </td>
         </tr></table>
+        ${renderThesisProvenance(t)}
       </div>`;
     })
     .join('');
@@ -870,6 +873,39 @@ function renderWarnings(warnings?: WarningEntry[]): string {
       <div class="warnings-header">⚠\ufe0f Pipeline Warnings</div>
       ${items}
     </section>`;
+}
+
+/**
+ * Renders a small data-provenance line under each thesis card showing
+ * data-as-of timestamps for key context sources.
+ */
+function renderThesisProvenance(t: ThesisCard): string {
+  if (!t.contextRefs) return '';
+  try {
+    const refs = JSON.parse(t.contextRefs) as {
+      quotes?: { from: string; to: string; bars: number; source: string };
+      fundamentals?: { asOf: string; source: string } | null;
+      signals?: { count: number; latestDate: string };
+      concall?: { announcedAt: string } | null;
+    };
+    const parts: string[] = [];
+    if (refs.quotes?.bars && refs.quotes.bars > 0) {
+      parts.push(`Quotes: ${refs.quotes.from} – ${refs.quotes.to}`);
+    }
+    if (refs.fundamentals?.asOf) {
+      parts.push(`Fundamentals: ${refs.fundamentals.asOf}`);
+    }
+    if (refs.signals?.latestDate) {
+      parts.push(`Signals: ${refs.signals.latestDate}`);
+    }
+    if (refs.concall?.announcedAt) {
+      parts.push(`Concall: ${refs.concall.announcedAt}`);
+    }
+    if (parts.length === 0) return '';
+    return `<div class="thesis-provenance muted">${esc(parts.join(' · '))}</div>`;
+  } catch {
+    return '';
+  }
 }
 
 function renderFooter(): string {
@@ -1053,6 +1089,7 @@ function baseStyles(): string {
     .regime-flow-narrative { margin: 0; font-size: 12px; line-height: 1.45; }
     .regime-narrative { margin: 0 0 8px; font-size: 14px; line-height: 1.55; }
     .regime-gate-summary { margin: 0; font-size: 12px; }
+    .regime-data-recency { margin: 2px 0 6px; font-size: 11px; }
     .muted { color: ${c.muted}; font-size: 13px; }
     .section-lede { margin: 0 0 12px; max-width: 42rem; line-height: 1.45; }
     .news { list-style: none; padding: 0; margin: 0; }
@@ -1081,6 +1118,7 @@ function baseStyles(): string {
     .thesis-symbol { font-size: 18px; font-weight: 700; color: ${c.accent}; }
     .thesis-horizon { font-size: 11px; }
     .thesis-body { margin: 0 0 10px; font-size: 14px; line-height: 1.5; }
+    .thesis-provenance { font-size: 11px; color: ${c.muted}; margin-top: 8px; padding-top: 6px; border-top: 1px solid ${c.border}; line-height: 1.4; }
     .level.positive { color: ${c.positive}; }
     .level.negative { color: ${c.negative}; }
     .level.accent { color: ${c.accent}; }
