@@ -10,7 +10,7 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { loadScreens, loadWatchlist } from '../config/loaders.js';
-import { getDb, getSizeMultiplier, isStrategyAllowed } from '../db/index.js';
+import { getDb, getSizeMultiplier, insertGateAudit, isStrategyAllowed } from '../db/index.js';
 import { upsertScreenResults } from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
@@ -105,6 +105,18 @@ export function runScreenEngine(
       log.info(
         { screen: screen.name, regime: opts.regime },
         '[GATED] screen skipped by regime_strategy_gate',
+      );
+      insertGateAudit(
+        {
+          date,
+          strategyId: screen.name,
+          gateName: 'regime',
+          allowed: false,
+          regime: opts.regime,
+          sizeMultiplier: 0,
+          reason: `Screen disallowed by regime_strategy_gate: ${opts.regime} → size_multiplier=0`,
+        },
+        db,
       );
       matchesByScreen[screen.name] = 0;
       partialByScreen[screen.name] = 0;

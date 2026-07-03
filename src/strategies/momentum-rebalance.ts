@@ -22,7 +22,7 @@ import {
   upsertMomentumRebalanceBriefing,
   upsertThesis,
 } from '../db/queries.js';
-import { getRegimeForCalendarDate, isStrategyAllowed } from '../db/regime-queries.js';
+import { getRegimeForCalendarDate, insertGateAudit, isStrategyAllowed } from '../db/regime-queries.js';
 import { getAtr14 } from '../db/trailing-stop-queries.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
@@ -353,6 +353,18 @@ export async function runMomentumRebalance(
 
   if (regime == null) {
     log.warn({ calendarDate, sessionDate }, 'momentum rebalance aborted: missing regime_daily row');
+    insertGateAudit(
+      {
+        date: calendarDate,
+        strategyId: cfg.strategy_id,
+        gateName: 'regime',
+        allowed: false,
+        regime: null,
+        sizeMultiplier: 0,
+        reason: `Momentum rebalance skipped: no regime_daily row for ${sessionDate}`,
+      },
+      db,
+    );
     return finishMomentumRebalance(db, {
       calendarDate,
       sessionDate,
@@ -378,6 +390,18 @@ export async function runMomentumRebalance(
 
   if (!regimeAllowed) {
     log.info({ calendarDate, sessionDate, regime }, 'momentum-rebalance gated by regime');
+    insertGateAudit(
+      {
+        date: calendarDate,
+        strategyId: cfg.strategy_id,
+        gateName: 'regime',
+        allowed: false,
+        regime,
+        sizeMultiplier: 0,
+        reason: `Momentum rebalance gated: ${regime} disallowed for ${cfg.strategy_id}`,
+      },
+      db,
+    );
     return finishMomentumRebalance(db, {
       calendarDate,
       sessionDate,

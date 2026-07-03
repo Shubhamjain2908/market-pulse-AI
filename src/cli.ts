@@ -59,6 +59,7 @@ import {
   migrate,
 } from './db/index.js';
 import { getStageHistory } from './db/pipeline-queries.js';
+import { queryGateAudit, getGateAuditSummary } from './db/index.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
@@ -704,6 +705,40 @@ program
     } finally {
       closeDb();
     }
+  });
+
+program
+  .command('gate-audit')
+  .description('query strategy gate audit trail (why screens/strategies were allowed/blocked)')
+  .option('--date <YYYY-MM-DD>', 'restrict to a specific date')
+  .option('--from <YYYY-MM-DD>', 'inclusive start date')
+  .option('--to <YYYY-MM-DD>', 'inclusive end date')
+  .option('--strategy <id>', 'filter by strategy id (e.g. quality_garp, momentum_mf)')
+  .option('--symbol <symbol>', 'filter by symbol')
+  .option('-n, --limit <n>', 'max rows (default 50)', '50')
+  .option('--summary', 'show aggregate summary per strategy instead of raw rows')
+  .action(async (opts: { date?: string; from?: string; to?: string; strategy?: string; symbol?: string; limit?: string; summary?: boolean }) => {
+    ensureDb();
+    const db = getDb();
+    if (opts.summary) {
+      const date = opts.date ?? optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+      const summary = getGateAuditSummary(date, db);
+      console.log(JSON.stringify({ date, summary }, null, 2));
+    } else {
+      const rows = queryGateAudit(
+        {
+          date: opts.date,
+          fromDate: opts.from,
+          toDate: opts.to,
+          strategyId: opts.strategy,
+          symbol: opts.symbol,
+          limit: Number(opts.limit) || 50,
+        },
+        db,
+      );
+      console.log(JSON.stringify({ count: rows.length, rows }, null, 2));
+    }
+    closeDb();
   });
 
 program
