@@ -9,10 +9,6 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
-import { existsSync } from 'node:fs';
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { z } from 'zod';
 import { RATE_LIMITS } from '../../constants.js';
 import { getDb } from '../../db/connection.js';
