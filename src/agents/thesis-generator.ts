@@ -9,6 +9,7 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import pLimit from 'p-limit';
+import { computeRubricAnchors, computeRubricTotal } from '../analysers/thesis-rubric.js';
 import { config } from '../config/env.js';
 import {
   type ExtSignalProviderFile,
@@ -53,6 +54,30 @@ RULES:
 5. timeHorizon: "short" (1-4 weeks), "medium" (1-3 months), "long" (3-12 months).
 6. triggerScreen: describe what signal/pattern triggered this analysis.
 7. Always provide at least 1 bull case and 1 bear case.
+
+RUBRIC (optional but strongly encouraged): Score each qualitative dimension 0-10
+using ONLY the provided context. If the context contains no evidence for a
+dimension, score it 4 (neutral) and say so.
+  - moat: pricing power + switching costs + gaining share, evidenced in provided data
+    9-10 = "pricing power + switching costs + gaining share, evidenced in provided data"
+    7-8 = "recognisable brand with some pricing power, but switching costs or moat width unverified"
+    4-6 = "average industry position; no clear moat visible"
+    0-3 = "commoditised, no differentiation visible in data"
+  - sectorTailwind: regulatory / demand / macro tailwind for the sector
+    9-10 = "strong structural tailwinds (govt policy, demand shift, supply constraints)"
+    7-8 = "sector in a cyclical upswing, supportive macros"
+    4-6 = "sector outlook neutral or mixed"
+    0-3 = "sector headwinds visible (regulatory, demand decline, overcapacity)"
+  - competitivePosition: market share, leadership vs peers
+    9-10 = "dominant market share with expanding lead"
+    7-8 = "top-3 position, holding or slowly gaining share"
+    4-6 = "competitive position average, not gaining or losing material share"
+    0-3 = "losing share to competitors, weak pricing power"
+  - newsCatalyst: recent news / events that act as a catalyst
+    9-10 = "company-specific positive catalyst confirmed (order win, regulatory approval, strong guidance)"
+    7-8 = "positive sector/peer news that indirectly benefits"
+    4-6 = "no material catalyst in recent news / neutral news flow"
+    0-3 = "negative news flow (profit warning, investigation, downgrade)"
 
 Return ONLY a single JSON object matching this schema:
 {
@@ -489,12 +514,21 @@ export async function generateTheses(
             };
           }
 
+          const anchors = computeRubricAnchors(candidate.symbol, date, db);
+          const rubricTotal = computeRubricTotal(anchors, thesisOut.rubric ?? null);
+          const rubricJson = JSON.stringify({
+            anchors,
+            llm: thesisOut.rubric ?? null,
+            total: rubricTotal,
+          });
+
           const row: UpsertThesisRow = {
             ...thesisOut,
             symbol: candidate.symbol,
             date,
             model: result.model,
             raw: result.raw,
+            rubricJson,
           };
           upsertThesis(row, db);
 
