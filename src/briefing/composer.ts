@@ -32,6 +32,7 @@ import {
 import { getPipelineHealth, recordPipelineStage } from '../db/pipeline-queries.js';
 import {
   type FlowAttributionSnapshot,
+  getConcallIntelForDate,
   getFlowAttribution,
   getMomentumRebalanceBriefingForCalendarDate,
   getPaperTradeStats,
@@ -47,7 +48,6 @@ import { gatherGlobalCues } from '../market/global-cues.js';
 import { latestQuoteClose, sessionChangeVsPriorClose } from '../market/quote-change.js';
 import { lastOpenOnOrBefore, previousOpenTradingDay } from '../market/trading-days.js';
 import type { ScreenDefinition } from '../types/domain.js';
-import { getConcallIntelForDate } from '../db/queries.js';
 import { renderCotGoldMacroLine } from './cot-gold-line.js';
 import { renderEtfPricingBlock } from './etf-pricing-card.js';
 import { type MomentumRebalanceSummary, renderMomentumBriefingBlock } from './momentum-card.js';
@@ -282,9 +282,7 @@ export async function composeBriefing(
   const etfPricingBlock =
     renderEtfPricingBlock(date, db, portfolio?.staleHoldings ?? false) || undefined;
 
-  const concallCard = partialPipeline
-    ? undefined
-    : gatherConcallCard(date, watchlist, db);
+  const concallCard = partialPipeline ? undefined : gatherConcallCard(date, watchlist, db);
 
   let regimeBlock: string | undefined;
   const regimeRow = pipelineHealth.canShowRegimeCard ? getRegimeForCalendarDate(date, db) : null;
@@ -585,24 +583,31 @@ function gatherTheses(
 // ---------------------------------------------------------------------------
 
 /** Concall card — recent analysed transcripts for held/watched names. */
-function gatherConcallCard(date: string, watchlist: string[], db: DatabaseType): string | undefined {
+function gatherConcallCard(
+  date: string,
+  watchlist: string[],
+  db: DatabaseType,
+): string | undefined {
   const rows = getConcallIntelForDate(date, watchlist, db);
   if (rows.length === 0) return undefined;
 
-  const lines = rows.map((r) => {
-    const sentimentBadge = r.sentiment === 'positive' || r.sentiment === 'cautiously_positive'
-      ? `<span class="sentiment-badge positive">${r.sentiment.replace('_', ' ')}</span>`
-      : r.sentiment === 'cautious' || r.sentiment === 'negative'
-        ? `<span class="sentiment-badge negative">${r.sentiment}</span>`
-        : `<span class="sentiment-badge neutral">${r.sentiment}</span>`;
-    return `<tr>
+  const lines = rows
+    .map((r) => {
+      const sentimentBadge =
+        r.sentiment === 'positive' || r.sentiment === 'cautiously_positive'
+          ? `<span class="sentiment-badge positive">${r.sentiment.replace('_', ' ')}</span>`
+          : r.sentiment === 'cautious' || r.sentiment === 'negative'
+            ? `<span class="sentiment-badge negative">${r.sentiment}</span>`
+            : `<span class="sentiment-badge neutral">${r.sentiment}</span>`;
+      return `<tr>
       <td><strong>${esc(r.symbol)}</strong></td>
       <td>${r.quarterLabel ?? '—'}</td>
       <td>${sentimentBadge}</td>
       <td>${'★'.repeat(r.credibilityStars)}${'☆'.repeat(5 - r.credibilityStars)}</td>
       <td class="muted">${esc(r.summary.slice(0, 100))}${r.summary.length > 100 ? '…' : ''}</td>
     </tr>`;
-  }).join('');
+    })
+    .join('');
 
   return `<section class="card">
     <h2>Concall Intelligence</h2>

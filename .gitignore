@@ -59,4 +59,4 @@ run-daily.sh
 scripts/fix-node-version.sh
 LOCAL_NODE_FIX.md
 
-
+.claude/skills

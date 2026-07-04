@@ -917,6 +917,7 @@ export function getTranscriptsWithoutIntel(
     LEFT JOIN concall_intel ci
       ON ct.symbol = ci.symbol AND ct.announced_at = ci.announced_at
     WHERE ct.text IS NOT NULL AND ct.char_count >= 2000
+      AND ct.kind = 'transcript'
       AND ci.symbol IS NULL
     ORDER BY ct.fetched_at ASC
     LIMIT ?
@@ -963,10 +964,7 @@ export interface ConcallIntelRow {
   model: string;
 }
 
-export function upsertConcallIntel(
-  row: ConcallIntelRow,
-  db: DatabaseType = getDb(),
-): void {
+export function upsertConcallIntel(row: ConcallIntelRow, db: DatabaseType = getDb()): void {
   db.prepare(
     `
     INSERT INTO concall_intel (
@@ -1014,12 +1012,12 @@ export function getLatestConcallIntel(
            guidance_json AS guidanceJson, delivery_json AS deliveryJson,
            deflections_json AS deflectionsJson, summary, model
     FROM concall_intel
-    WHERE symbol = ? AND announced_at <= date(?, '+90 days')
+    WHERE symbol = ? AND announced_at < ? AND announced_at >= date(?, '-90 days')
     ORDER BY announced_at DESC
     LIMIT 1
   `,
     )
-    .get(symbol.toUpperCase(), asOf) as ConcallIntelRow | undefined;
+    .get(symbol.toUpperCase(), asOf, asOf) as ConcallIntelRow | undefined;
   return row ?? null;
 }
 

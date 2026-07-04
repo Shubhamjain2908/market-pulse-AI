@@ -14,16 +14,16 @@ import pLimit from 'p-limit';
 import { config } from '../config/env.js';
 import { getDb } from '../db/connection.js';
 import {
-  getLatestConcallIntel,
   type ConcallIntelRow,
+  getLatestConcallIntel,
   getTranscriptsWithoutIntel,
   upsertConcallIntel,
 } from '../db/queries.js';
-import { getLlmProvider } from '../llm/index.js';
 import { assertBudgetAvailable, getCurrentRunId } from '../llm/budget.js';
+import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
-import { ConcallIntelSchema, type ConcallIntel } from '../types/domain.js';
+import { type ConcallIntel, ConcallIntelSchema } from '../types/domain.js';
 
 const log = child({ component: 'concall-analyser' });
 
@@ -137,10 +137,7 @@ export async function analyseConcallTranscripts(
           );
           return { ok: true as const };
         } catch (err) {
-          log.warn(
-            { symbol: t.symbol, err: (err as Error).message },
-            'concall analysis failed',
-          );
+          log.warn({ symbol: t.symbol, err: (err as Error).message }, 'concall analysis failed');
           return { ok: false as const };
         }
       }),

@@ -10,11 +10,12 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { z } from 'zod';
+import { config } from '../../config/env.js';
+import { loadWatchlist } from '../../config/loaders.js';
 import { RATE_LIMITS } from '../../constants.js';
 import { getDb } from '../../db/connection.js';
-import { getDistinctOpenPaperTradeSymbols, insertConcallTranscript } from '../../db/queries.js';
 import { getLatestHoldings } from '../../db/portfolio-queries.js';
-import { loadWatchlist } from '../../config/loaders.js';
+import { getDistinctOpenPaperTradeSymbols, insertConcallTranscript } from '../../db/queries.js';
 import { child } from '../../logger.js';
 import { isoDateIst } from '../base/dates.js';
 import { createHttpClient, type HttpClient } from '../base/http-client.js';
@@ -50,22 +51,34 @@ const NseAnnouncementsEnvelopeSchema = z.union([
   z.object({ data: z.array(NseAnnouncementItemSchema) }).passthrough(),
 ]);
 
-/** Normalise NSE date format `DD-MMM-YYYY` or `YYYY-MM-DD` to ISO. */
-function parseNseDate(raw: string): string | null {
+/** Normalise NSE date format `DD-MMM-YYYY HH:MM:SS`, `DD-MMM-YYYY`, or `YYYY-MM-DD` to ISO. */
+export function parseNseDate(raw: string): string | null {
   const t = raw.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
-  const m = /^(\d{2})-([A-Za-z]{3})-(\d{4})$/.exec(t);
+  // NSE an_dt includes time, e.g. "18-Jan-2026 23:50:41"
+  const m = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})(\s|$)/.exec(t);
   if (!m) return null;
   const months: Record<string, string> = {
-    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
-    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+    jan: '01',
+    feb: '02',
+    mar: '03',
+    apr: '04',
+    may: '05',
+    jun: '06',
+    jul: '07',
+    aug: '08',
+    sep: '09',
+    oct: '10',
+    nov: '11',
+    dec: '12',
   };
   const mm = months[m[2]?.toLowerCase() ?? ''];
   if (!mm) return null;
-  return `${m[3]}-${mm}-${m[1] ?? ''}`;
+  const dd = String(m[1] ?? '').padStart(2, '0');
+  return `${m[3]}-${mm}-${dd}`;
 }
 
-function classifyTranscriptKind(
+export function classifyTranscriptKind(
   attchmntFile: string | undefined,
   attchmntText: string | undefined,
 ): 'transcript' | 'invite' | null {
@@ -109,7 +122,7 @@ export async function fetchConcallTranscripts(
 ): Promise<FetchAnnouncementsResult> {
   const date = opts.date ?? isoDateIst();
   const db = opts.db ?? getDb();
-  const lookbackDays = opts.lookbackDays ?? 10;
+  const lookbackDays = opts.lookbackDays ?? config.CONCALL_LOOKBACK_DAYS;
 
   const client =
     opts.client ??
@@ -123,13 +136,34 @@ export async function fetchConcallTranscripts(
   const symbols = opts.symbols ?? resolveConcallUniverse(db);
   if (symbols.length === 0) {
     log.info({ date }, 'no symbols in concall universe — skipping');
-    return { date, symbolsChecked: 0, transcriptsFound: 0, downloaded: 0, extracted: 0, failed: 0, skipped: 0 };
+    return {
+      date,
+      symbolsChecked: 0,
+      transcriptsFound: 0,
+      downloaded: 0,
+      extracted: 0,
+      failed: 0,
+      skipped: 0,
+    };
   }
 
   const fromDate = (() => {
     const d = new Date(`${date}T00:00:00+05:30`);
     d.setDate(d.getDate() - lookbackDays);
-    return d.toLocaleDateString('sv-SE');
+    // NSE requires DD-MM-YYYY format
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    return `${dd}-${mm}-${yyyy}`;
+  })();
+
+  // NSE to_date also needs DD-MM-YYYY
+  const toDate = (() => {
+    const d = new Date(`${date}T00:00:00+05:30`);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yyyy = d.getFullYear();
+    return `${dd}-${mm}-${yyyy}`;
   })();
 
   const result: FetchAnnouncementsResult = {
@@ -153,7 +187,7 @@ export async function fetchConcallTranscripts(
   for (const symbol of symbols) {
     result.symbolsChecked++;
     try {
-      const url = `${NSE_ANNOUNCEMENTS_API}${encodeURIComponent(symbol)}&from_date=${fromDate}&to_date=${date}`;
+      const url = `${NSE_ANNOUNCEMENTS_API}${encodeURIComponent(symbol)}&from_date=${fromDate}&to_date=${toDate}`;
       const raw = await client.request<unknown>(url, {
         signal: opts.signal,
         headers: API_HEADERS,
@@ -161,7 +195,10 @@ export async function fetchConcallTranscripts(
 
       const parsed = NseAnnouncementsEnvelopeSchema.safeParse(raw);
       if (!parsed.success) {
-        log.warn({ symbol, preview: JSON.stringify(raw).slice(0, 200) }, 'announcements response failed validation');
+        log.warn(
+          { symbol, preview: JSON.stringify(raw).slice(0, 200) },
+          'announcements response failed validation',
+        );
         result.failed++;
         continue;
       }
@@ -176,7 +213,8 @@ export async function fetchConcallTranscripts(
       for (const item of rows) {
         const desc = (item.desc ?? '').toLowerCase();
         // Filter to concall-related announcements
-        if (!/\b(analysts|institutional investor|conference|con.?call|meet)\b/i.test(desc)) continue;
+        if (!/\b(analysts|institutional investor|conference|con.?call|meet)\b/i.test(desc))
+          continue;
         if (!/\b(updates?|meet|call|transcript)\b/i.test(desc)) continue;
 
         const kind = classifyTranscriptKind(item.attchmntFile, item.attchmntText);
@@ -196,17 +234,22 @@ export async function fetchConcallTranscripts(
 
         // Download and extract PDF
         try {
-          const pdfBuf = await client.got(pdfUrl, {
-            signal: opts.signal,
-            responseType: 'buffer',
-            timeout: { request: 30_000 },
-          }).buffer();
+          const pdfBuf = await client
+            .got(pdfUrl, {
+              signal: opts.signal,
+              responseType: 'buffer',
+              timeout: { request: 30_000 },
+            })
+            .buffer();
 
           const text = await extractPdfText(pdfBuf);
           const charCount = text.length;
 
           if (charCount < 2000) {
-            log.warn({ symbol, charCount, url: pdfUrl }, 'transcript PDF too short — skipping (likely image-only)');
+            log.warn(
+              { symbol, charCount, url: pdfUrl },
+              'transcript PDF too short — skipping (likely image-only)',
+            );
             result.skipped++;
             continue;
           }
@@ -230,7 +273,10 @@ export async function fetchConcallTranscripts(
             result.skipped++;
           }
         } catch (err) {
-          log.warn({ symbol, url: pdfUrl, err: (err as Error).message }, 'transcript PDF download/extract failed');
+          log.warn(
+            { symbol, url: pdfUrl, err: (err as Error).message },
+            'transcript PDF download/extract failed',
+          );
           result.failed++;
         }
 
@@ -239,7 +285,10 @@ export async function fetchConcallTranscripts(
       }
 
       if (symbolTranscripts > 0) {
-        log.info({ symbol, transcripts: symbolTranscripts }, 'concall transcripts found for symbol');
+        log.info(
+          { symbol, transcripts: symbolTranscripts },
+          'concall transcripts found for symbol',
+        );
       }
     } catch (err) {
       log.warn({ symbol, err: (err as Error).message }, 'announcements fetch failed for symbol');
@@ -298,7 +347,7 @@ export function resolveConcallUniverse(db: DatabaseType): string[] {
 async function extractPdfText(buf: Uint8Array | Buffer): Promise<string> {
   try {
     const { getDocumentProxy, extractText } = await import('unpdf');
-    const pdf = getDocumentProxy(buf);
+    const pdf = await getDocumentProxy(new Uint8Array(buf));
     const { text } = await extractText(pdf, { mergePages: true });
     return (text ?? '').trim();
   } catch (err) {

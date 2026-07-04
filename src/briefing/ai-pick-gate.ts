@@ -16,6 +16,7 @@ export type AiPickBlockReason =
   | 'false_momentum_flag'
   | 'golden_cross_stale_rank'
   | 'golden_cross_rejected'
+  | 'rubric_low'
   | 'no_confirmation_path';
 
 export type AiPickConfirmPath =
@@ -207,12 +208,14 @@ export function evaluateAiPickEligibility(
       if (!rubricEligible) {
         return {
           eligible: false,
-          reasons: ['confidence_low'],
+          reasons: ['rubric_low'],
           facts,
         };
       }
     }
-    // Fall through to remaining gates (false-flag, paths) when rubric passes or is missing
+    // When rubric gate is enabled, rubric replaces the confidence<6 check entirely.
+    // The rubric check above handles the gate; fall through to path-based gates below,
+    // and the confidence<6 check is skipped via the `&& AI_PICK_RUBRIC_GATE !== '1'` guard.
   } else {
     // Shadow mode: log rubric disagreement stats for calibration
     const rubric = loadRubricJson(sym, sourceDate, db);
@@ -237,7 +240,7 @@ export function evaluateAiPickEligibility(
     }
   }
 
-  if (thesis.confidence < 6) {
+  if (thesis.confidence < 6 && config.AI_PICK_RUBRIC_GATE !== '1') {
     return {
       eligible: false,
       reasons: ['confidence_low'],

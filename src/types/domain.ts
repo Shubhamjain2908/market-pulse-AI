@@ -287,20 +287,27 @@ export type RubricJson = z.infer<typeof RubricJsonSchema>;
 // Concall Intelligence (Task B)
 // ---------------------------------------------------------------------------
 
+/**
+ * Schema for LLM response — symbol and announcedAt are set from the DB row,
+ * not from the LLM. deflections sometimes arrives as mixed types; we catch
+ * and coerce to a string array.
+ */
 export const ConcallIntelSchema = z.object({
-  symbol: z.string(),
-  announcedAt: z.string(),
+  symbol: z.string().optional(),
+  announcedAt: z.string().optional(),
   quarterLabel: z.string().optional(),
   sentiment: z.enum(['positive', 'cautiously_positive', 'neutral', 'cautious', 'negative']),
-  credibilityStars: z.coerce.number().int().min(1).max(5),
-  guidance: z.array(
-    z.object({
-      metric: z.string(),
-      value: z.string(),
-      horizon: z.string(),
-      verbatim: z.string(),
-    }),
-  ),
+  credibilityStars: z.coerce.number().int().min(1).max(5).catch(3),
+  guidance: z
+    .array(
+      z.object({
+        metric: z.string().catch(''),
+        value: z.string().catch(''),
+        horizon: z.string().catch(''),
+        verbatim: z.string().catch(''),
+      }),
+    )
+    .catch([]),
   delivery: z
     .array(
       z.object({
@@ -309,8 +316,15 @@ export const ConcallIntelSchema = z.object({
       }),
     )
     .optional(),
-  deflections: z.array(z.string()).optional(),
-  summary: z.string().max(600), // <=120 words ≈ 600 chars max
+  deflections: z
+    .preprocess((v) => {
+      if (Array.isArray(v)) return v.map(String);
+      if (typeof v === 'string') return [v];
+      if (v && typeof v === 'object') return Object.values(v).map(String);
+      return [];
+    }, z.array(z.string()))
+    .optional(),
+  summary: z.string().max(600).catch('Summary unavailable'), // <=120 words ≈ 600 chars max
 });
 export type ConcallIntel = z.infer<typeof ConcallIntelSchema>;
 
