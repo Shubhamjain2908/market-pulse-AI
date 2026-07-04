@@ -35,6 +35,7 @@
 
 import { Command } from 'commander';
 import { runBriefingComposer } from './agents/briefing-composer.js';
+import { analyseConcallTranscripts } from './agents/concall-analyser.js';
 import { runDailyIngestor } from './agents/daily-ingestor.js';
 import { runDailyWorkflow } from './agents/daily-workflow.js';
 import { runLiveScan } from './agents/live-scanner.js';
@@ -60,6 +61,7 @@ import { getStageHistory } from './db/pipeline-queries.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
+import { fetchConcallTranscripts } from './ingestors/nse/announcements-fetcher.js';
 import { logger } from './logger.js';
 import {
   defaultIngestSymbolUniverse,
@@ -405,6 +407,29 @@ program
       });
     },
   );
+
+program
+  .command('concall')
+  .description('fetch and analyse NSE concall transcripts for holdings/watchlist')
+  .option('--symbol <symbol>', 'restrict to a single symbol')
+  .option('--skip-fetch', 'skip PDF download, only run LLM analysis on existing transcripts')
+  .action(async (opts: { symbol?: string; reanalyse?: boolean; skipFetch?: boolean }) => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
+    const db = getDb();
+
+    if (!opts.skipFetch) {
+      const symbols = opts.symbol ? [opts.symbol.toUpperCase()] : undefined;
+      const fetchResult = await fetchConcallTranscripts({ date, db, symbols });
+      logger.info(fetchResult, 'concall fetch complete');
+      console.log(JSON.stringify(fetchResult, null, 2));
+    }
+
+    const analysisResult = await analyseConcallTranscripts({}, db);
+    logger.info(analysisResult, 'concall analysis complete');
+    console.log(JSON.stringify(analysisResult, null, 2));
+    closeDb();
+  });
 
 program
   .command('sentiment')

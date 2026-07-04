@@ -885,6 +885,235 @@ export function upsertPromoterPledgeRows(
   return rows.length;
 }
 
+// ---------------------------------------------------------------------------
+// Concall Transcripts & Intel (Task B)
+// ---------------------------------------------------------------------------
+
+export interface ConcallTranscriptRow {
+  symbol: string;
+  announcedAt: string;
+  attachmentUrl: string;
+  kind: string;
+  text: string | null;
+  charCount: number | null;
+  fetchedAt: string;
+}
+
+export function getTranscriptsWithoutIntel(
+  limit: number = 25,
+  db: DatabaseType = getDb(),
+): ConcallTranscriptRow[] {
+  return db
+    .prepare(
+      `
+    SELECT ct.symbol, ct.announced_at AS announcedAt, ct.attachment_url AS attachmentUrl,
+           ct.kind, ct.text, ct.char_count AS charCount, ct.fetched_at AS fetchedAt
+    FROM concall_transcripts ct
+    LEFT JOIN concall_intel ci
+      ON ct.symbol = ci.symbol AND ct.announced_at = ci.announced_at
+    WHERE ct.text IS NOT NULL AND ct.char_count >= 2000
+      AND ct.kind = 'transcript'
+      AND ci.symbol IS NULL
+    ORDER BY ct.fetched_at ASC
+    LIMIT ?
+  `,
+    )
+    .all(limit) as ConcallTranscriptRow[];
+}
+
+export function insertConcallTranscript(
+  row: Omit<ConcallTranscriptRow, 'fetchedAt'>,
+  db: DatabaseType = getDb(),
+): boolean {
+  const result = db
+    .prepare(
+      `
+    INSERT OR IGNORE INTO concall_transcripts (
+      symbol, announced_at, attachment_url, kind, text, char_count
+    ) VALUES (
+      @symbol, @announcedAt, @attachmentUrl, @kind, @text, @charCount
+    )
+  `,
+    )
+    .run({
+      symbol: row.symbol.toUpperCase(),
+      announcedAt: row.announcedAt,
+      attachmentUrl: row.attachmentUrl,
+      kind: row.kind,
+      text: row.text,
+      charCount: row.charCount,
+    });
+  return result.changes > 0;
+}
+
+export interface ConcallIntelRow {
+  symbol: string;
+  announcedAt: string;
+  quarterLabel: string | null;
+  sentiment: string;
+  credibilityStars: number;
+  guidanceJson: string;
+  deliveryJson: string | null;
+  deflectionsJson: string | null;
+  summary: string;
+  model: string;
+}
+
+export function upsertConcallIntel(row: ConcallIntelRow, db: DatabaseType = getDb()): void {
+  db.prepare(
+    `
+    INSERT INTO concall_intel (
+      symbol, announced_at, quarter_label, sentiment, credibility_stars,
+      guidance_json, delivery_json, deflections_json, summary, model
+    ) VALUES (
+      @symbol, @announcedAt, @quarterLabel, @sentiment, @credibilityStars,
+      @guidanceJson, @deliveryJson, @deflectionsJson, @summary, @model
+    )
+    ON CONFLICT(symbol, announced_at) DO UPDATE SET
+      quarter_label     = excluded.quarter_label,
+      sentiment         = excluded.sentiment,
+      credibility_stars = excluded.credibility_stars,
+      guidance_json     = excluded.guidance_json,
+      delivery_json     = excluded.delivery_json,
+      deflections_json  = excluded.deflections_json,
+      summary           = excluded.summary,
+      model             = excluded.model,
+      created_at        = datetime('now')
+  `,
+  ).run({
+    symbol: row.symbol.toUpperCase(),
+    announcedAt: row.announcedAt,
+    quarterLabel: row.quarterLabel ?? null,
+    sentiment: row.sentiment,
+    credibilityStars: row.credibilityStars,
+    guidanceJson: row.guidanceJson,
+    deliveryJson: row.deliveryJson ?? null,
+    deflectionsJson: row.deflectionsJson ?? null,
+    summary: row.summary,
+    model: row.model,
+  });
+}
+
+export function getLatestConcallIntel(
+  symbol: string,
+  asOf: string,
+  db: DatabaseType = getDb(),
+): ConcallIntelRow | null {
+  const row = db
+    .prepare(
+      `
+    SELECT symbol, announced_at AS announcedAt, quarter_label AS quarterLabel,
+           sentiment, credibility_stars AS credibilityStars,
+           guidance_json AS guidanceJson, delivery_json AS deliveryJson,
+           deflections_json AS deflectionsJson, summary, model
+    FROM concall_intel
+    WHERE symbol = ? AND announced_at < ? AND announced_at >= date(?, '-90 days')
+    ORDER BY announced_at DESC
+    LIMIT 1
+  `,
+    )
+    .get(symbol.toUpperCase(), asOf, asOf) as ConcallIntelRow | undefined;
+  return row ?? null;
+}
+
+export function getRecentConcallIntelForSymbols(
+  symbols: string[],
+  asOf: string,
+  db: DatabaseType = getDb(),
+): Map<string, ConcallIntelRow> {
+  if (symbols.length === 0) return new Map();
+  const upper = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  const placeholders = upper.map(() => '?').join(', ');
+  const rows = db
+    .prepare(
+      `
+    SELECT symbol, announced_at AS announcedAt, quarter_label AS quarterLabel,
+           sentiment, credibility_stars AS credibilityStars,
+           guidance_json AS guidanceJson, delivery_json AS deliveryJson,
+           deflections_json AS deflectionsJson, summary, model
+    FROM concall_intel
+    WHERE symbol IN (${placeholders})
+      AND announced_at >= date(?, '-90 days')
+    ORDER BY symbol, announced_at DESC
+  `,
+    )
+    .all(...upper, asOf) as ConcallIntelRow[];
+  const m = new Map<string, ConcallIntelRow>();
+  for (const r of rows) {
+    const sym = r.symbol.toUpperCase();
+    if (!m.has(sym)) m.set(sym, r);
+  }
+  return m;
+}
+
+export function getConcallIntelCoverage(
+  symbols: string[],
+  db: DatabaseType = getDb(),
+): { covered: number; total: number; pct: number } {
+  if (symbols.length === 0) return { covered: 0, total: 0, pct: 0 };
+  const upper = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  const placeholders = upper.map(() => '?').join(', ');
+  const row = db
+    .prepare(
+      `
+    SELECT COUNT(DISTINCT symbol) AS cnt FROM concall_intel
+    WHERE symbol IN (${placeholders})
+  `,
+    )
+    .get(...upper) as { cnt: number };
+  return {
+    covered: row.cnt,
+    total: symbols.length,
+    pct: symbols.length > 0 ? (row.cnt / symbols.length) * 100 : 0,
+  };
+}
+
+export function getConcallTranscriptsForDate(
+  date: string,
+  symbols: string[],
+  db: DatabaseType = getDb(),
+): ConcallTranscriptRow[] {
+  if (symbols.length === 0) return [];
+  const upper = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  const placeholders = upper.map(() => '?').join(', ');
+  return db
+    .prepare(
+      `
+    SELECT symbol, announced_at AS announcedAt, attachment_url AS attachmentUrl,
+           kind, text, char_count AS charCount, fetched_at AS fetchedAt
+    FROM concall_transcripts
+    WHERE symbol IN (${placeholders}) AND announced_at = ?
+    ORDER BY symbol, announced_at DESC
+  `,
+    )
+    .all(...upper, date) as ConcallTranscriptRow[];
+}
+
+export function getConcallIntelForDate(
+  date: string,
+  symbols: string[],
+  db: DatabaseType = getDb(),
+): ConcallIntelRow[] {
+  if (symbols.length === 0) return [];
+  const upper = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  const placeholders = upper.map(() => '?').join(', ');
+  return db
+    .prepare(
+      `
+    SELECT symbol, announced_at AS announcedAt, quarter_label AS quarterLabel,
+           sentiment, credibility_stars AS credibilityStars,
+           guidance_json AS guidanceJson, delivery_json AS deliveryJson,
+           deflections_json AS deflectionsJson, summary, model
+    FROM concall_intel
+    WHERE symbol IN (${placeholders})
+      AND announced_at >= date(?, '-14 days')
+      AND announced_at <= date(?)
+    ORDER BY symbol, announced_at DESC
+  `,
+    )
+    .all(...upper, date, date) as ConcallIntelRow[];
+}
+
 export function getPromoterPledgeSnapshot(
   symbol: string,
   asOf: string,

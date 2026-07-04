@@ -32,6 +32,7 @@ import {
 import { getPipelineHealth, recordPipelineStage } from '../db/pipeline-queries.js';
 import {
   type FlowAttributionSnapshot,
+  getConcallIntelForDate,
   getFlowAttribution,
   getMomentumRebalanceBriefingForCalendarDate,
   getPaperTradeStats,
@@ -60,6 +61,7 @@ import { classifySector } from './sector-classifier.js';
 import {
   type AiPicksSectionStatus,
   type BriefingData,
+  esc,
   type MoverRow,
   type NewsRow,
   type PortfolioPositionCard,
@@ -280,6 +282,8 @@ export async function composeBriefing(
   const etfPricingBlock =
     renderEtfPricingBlock(date, db, portfolio?.staleHoldings ?? false) || undefined;
 
+  const concallCard = partialPipeline ? undefined : gatherConcallCard(date, watchlist, db);
+
   let regimeBlock: string | undefined;
   const regimeRow = pipelineHealth.canShowRegimeCard ? getRegimeForCalendarDate(date, db) : null;
   if (regimeRow) {
@@ -368,6 +372,7 @@ export async function composeBriefing(
     regimeBlock,
     momentumBlock,
     etfPricingBlock,
+    concallCard,
     warnings: warnings.length > 0 ? warnings : undefined,
     budgetExceeded: opts.budgetExceeded,
     partialPipeline: partialPipeline || undefined,
@@ -575,6 +580,43 @@ function gatherTheses(
 // ---------------------------------------------------------------------------
 // Section gatherers (data-only, no LLM)
 // ---------------------------------------------------------------------------
+
+/** Concall card — recent analysed transcripts for held/watched names. */
+function gatherConcallCard(
+  date: string,
+  watchlist: string[],
+  db: DatabaseType,
+): string | undefined {
+  const rows = getConcallIntelForDate(date, watchlist, db);
+  if (rows.length === 0) return undefined;
+
+  const lines = rows
+    .map((r) => {
+      const sentimentBadge =
+        r.sentiment === 'positive' || r.sentiment === 'cautiously_positive'
+          ? `<span class="sentiment-badge positive">${r.sentiment.replace('_', ' ')}</span>`
+          : r.sentiment === 'cautious' || r.sentiment === 'negative'
+            ? `<span class="sentiment-badge negative">${r.sentiment}</span>`
+            : `<span class="sentiment-badge neutral">${r.sentiment}</span>`;
+      return `<tr>
+      <td><strong>${esc(r.symbol)}</strong></td>
+      <td>${r.quarterLabel ?? '—'}</td>
+      <td>${sentimentBadge}</td>
+      <td>${'★'.repeat(r.credibilityStars)}${'☆'.repeat(5 - r.credibilityStars)}</td>
+      <td class="muted">${esc(r.summary.slice(0, 100))}${r.summary.length > 100 ? '…' : ''}</td>
+    </tr>`;
+    })
+    .join('');
+
+  return `<section class="card">
+    <h2>Concall Intelligence</h2>
+    <p class="section-lede muted">Recent earnings-call analyses for held and watched names — advisory only.</p>
+    <table class="briefing-data-table">
+      <thead><tr><th>Symbol</th><th>Quarter</th><th>Sentiment</th><th>Cred.</th><th>Summary</th></tr></thead>
+      <tbody>${lines}</tbody>
+    </table>
+  </section>`;
+}
 
 function gatherMood(date: string, db: DatabaseType): BriefingData['mood'] {
   const row = db

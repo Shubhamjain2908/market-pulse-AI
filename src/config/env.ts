@@ -138,6 +138,16 @@ const EnvSchema = z.object({
   AI_PICK_RUBRIC_GATE: z.enum(['0', '1']).default('0'),
   /** Minimum composite rubric total (0–90 scale) required when `AI_PICK_RUBRIC_GATE=1`. */
   AI_PICK_RUBRIC_MIN: z.coerce.number().default(54),
+
+  /**
+   * `'1'` — run concall transcript analysis (download PDFs + LLM).
+   * `'0'` (default) — skip concall analysis entirely.
+   */
+  CONCALL_ANALYSIS_ENABLED: z.enum(['0', '1']).default('0'),
+  /** Max concall transcripts to analyse per run (LLM cost control). */
+  CONCALL_MAX_PER_RUN: z.coerce.number().int().min(1).max(25).default(5),
+  /** Days of lookback for fetching NSE announcements. */
+  CONCALL_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(30).default(10),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

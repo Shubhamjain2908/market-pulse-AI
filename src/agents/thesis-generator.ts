@@ -19,6 +19,7 @@ import {
 import { getDb, getLatestHoldings, isStrategyAllowed } from '../db/index.js';
 import {
   getDistinctOpenPaperTradeSymbols,
+  getLatestConcallIntel,
   getThesesForDate,
   type StoredThesis,
   type UpsertThesisRow,
@@ -890,6 +891,33 @@ export function buildStockContext(
 
     const extCtx = getExtSignalContext(db, symbol, date);
     if (extCtx) sections.push(`\n${extCtx}`);
+
+    // Concall intelligence context (Task B) — advisory only, never gates anything
+    const concallIntel = getLatestConcallIntel(symbol, date, db);
+    if (concallIntel) {
+      sections.push('\n## Latest concall intelligence');
+      sections.push(
+        `Sentiment: ${concallIntel.sentiment} · Credibility: ${concallIntel.credibilityStars}/5`,
+      );
+      sections.push(`Summary: ${concallIntel.summary}`);
+      try {
+        const guidance = JSON.parse(concallIntel.guidanceJson) as Array<{
+          metric: string;
+          value: string;
+          horizon: string;
+          verbatim: string;
+        }>;
+        const top3 = guidance.slice(0, 3);
+        if (top3.length > 0) {
+          sections.push('Top guidance items:');
+          for (const g of top3) {
+            sections.push(`- ${g.metric}: ${g.value} (${g.horizon}) — "${g.verbatim}"`);
+          }
+        }
+      } catch {
+        // guidance_json parse failure — skip
+      }
+    }
   }
 
   return sections.join('\n');

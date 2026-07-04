@@ -195,6 +195,8 @@ export interface BriefingData {
   momentumBlock?: string;
   /** ETF iNAV premium/discount alerts for held symbols (NSE `/api/etf`). */
   etfPricingBlock?: string;
+  /** Concall intelligence card — recent analysed transcripts for held/watched names. */
+  concallCard?: string;
   /** Non-fatal warnings to display in a yellow banner at the top of the briefing. */
   warnings?: WarningEntry[];
   /** When true, show a dedicated banner that the per-run LLM budget was exceeded. */
@@ -221,6 +223,7 @@ export function renderBriefing(data: BriefingData): string {
     ${data.etfPricingBlock ?? ''}
     ${data.partialPipeline ? '' : renderScreenMatches(data.screenMatches)}
     ${data.momentumBlock ?? ''}
+    ${data.concallCard ?? ''}
     ${renderWatchlistAlerts(data.watchlistAlerts)}
     ${renderMovers(data.topGainers, data.topLosers)}
     ${data.partialPipeline ? '' : renderAiPicks(data.theses, data.aiPicksStatus)}
@@ -887,7 +890,7 @@ function sentimentBadge(sentiment: number | null | undefined): string {
   return ` <span class="sentiment-badge ${cls}" title="Sentiment: ${sentiment.toFixed(2)}">${label}</span>`;
 }
 
-function esc(s: string | number | undefined): string {
+export function esc(s: string | number | undefined): string {
   if (s == null) return '';
   return String(s)
     .replaceAll('&', '&amp;')
