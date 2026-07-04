@@ -85,10 +85,9 @@ export function renderRegimeCard(
 ): string {
   const pal = REGIME_PALETTE[row.regime];
   const narrative = row.narrative?.trim() || 'No narrative stored for this session.';
-  const dataRecency =
-    row.date
-      ? `<div class="regime-data-recency muted">Data as of ${esc(row.date)}</div>`
-      : '';
+  const dataRecency = row.date
+    ? `<div class="regime-data-recency muted">Data as of ${esc(row.date)}</div>`
+    : '';
   const active = gateSummary.active.length;
   const total = gateSummary.totalRows;
   const gateLine =

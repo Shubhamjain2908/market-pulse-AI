@@ -29,12 +29,11 @@ import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
-import { buildContextProvenance } from './context-provenance.js';
 import { type Thesis, ThesisSchema } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
+import { buildContextProvenance } from './context-provenance.js';
 import { formatFundamentalsForLlm } from './portfolio-context.js';
 import { getLatestSignalsMap, getLatestSignalsMapsForSymbols } from './portfolio-trigger.js';
-
 
 const log = child({ component: 'thesis-generator' });
 
@@ -532,9 +531,7 @@ export async function generateTheses(
           });
 
           // Task C: build data provenance from context sources
-          const contextRefs = JSON.stringify(
-            buildContextProvenance(candidate.symbol, date, db),
-          );
+          const contextRefs = JSON.stringify(buildContextProvenance(candidate.symbol, date, db));
 
           const row: UpsertThesisRow = {
             ...thesisOut,

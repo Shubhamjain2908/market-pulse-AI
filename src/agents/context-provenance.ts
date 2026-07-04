@@ -15,7 +15,7 @@ import { getDb } from '../db/index.js';
  */
 export interface ContextRefs {
   quotes: { from: string; to: string; bars: number; source: string };
-  fundamentals: { asOf: string; source: string } | null;
+  fundamentals: { asOf: string; source: string; stale: boolean } | null;
   quarterly: { quarters: string[]; source: string } | null;
   signals: { count: number; latestDate: string };
   news: Array<{ headline: string; url: string; publishedAt: string }>;
@@ -38,15 +38,17 @@ export function buildContextProvenance(
   // Quotes: date range of the last 20 bars used by buildStockContext
   const quoteRows = db
     .prepare(
-      `SELECT date FROM quotes
-       WHERE symbol = ? AND exchange = 'NSE' AND date <= ?
+      `      SELECT date FROM quotes
+       WHERE symbol = ? AND date <= ?
        ORDER BY date DESC LIMIT 20`,
     )
     .all(sym, date) as Array<{ date: string }>;
   const quotes: ContextRefs['quotes'] =
     quoteRows.length > 0
       ? {
+          // biome-ignore lint/style/noNonNullAssertion: guarded by .length > 0
           from: quoteRows[quoteRows.length - 1]!.date,
+          // biome-ignore lint/style/noNonNullAssertion: guarded by .length > 0
           to: quoteRows[0]!.date,
           bars: quoteRows.length,
           source: 'NSE',
@@ -60,8 +62,9 @@ export function buildContextProvenance(
        WHERE symbol = ? ORDER BY as_of DESC LIMIT 1`,
     )
     .get(sym) as { asOf: string; source: string } | undefined;
+  const fundamentalsStale = fundaRow != null ? fundaRow.asOf < `${date.slice(0, 7)}-01` : false;
   const fundamentals: ContextRefs['fundamentals'] = fundaRow
-    ? { asOf: fundaRow.asOf, source: fundaRow.source }
+    ? { asOf: fundaRow.asOf, source: fundaRow.source, stale: fundamentalsStale }
     : null;
 
   // Quarterly fundamentals: most recent quarters
@@ -76,6 +79,7 @@ export function buildContextProvenance(
     quarterRows.length > 0
       ? {
           quarters: quarterRows.map((r) => r.quarterEnd),
+          // biome-ignore lint/style/noNonNullAssertion: guarded by .length > 0
           source: quarterRows[0]!.source,
         }
       : null;
@@ -108,17 +112,17 @@ export function buildContextProvenance(
     publishedAt: r.publishedAt,
   }));
 
-  // Concall intel: latest analysed transcript
+  // Concall intel: latest analysed transcript (strictly prior, max 90 days lookback)
   const concallRow = db
     .prepare(
       `SELECT ci.announced_at AS announcedAt, ct.attachment_url AS pdfUrl
        FROM concall_intel ci
        LEFT JOIN concall_transcripts ct
          ON ci.symbol = ct.symbol AND ci.announced_at = ct.announced_at
-       WHERE ci.symbol = ? AND ci.announced_at <= date(?, '+90 days')
+       WHERE ci.symbol = ? AND ci.announced_at < ? AND ci.announced_at >= date(?, '-90 days')
        ORDER BY ci.announced_at DESC LIMIT 1`,
     )
-    .get(sym, date) as { announcedAt: string; pdfUrl: string | null } | undefined;
+    .get(sym, date, date) as { announcedAt: string; pdfUrl: string | null } | undefined;
   const concall: ContextRefs['concall'] = concallRow
     ? { announcedAt: concallRow.announcedAt, pdfUrl: concallRow.pdfUrl ?? '' }
     : null;
@@ -131,9 +135,7 @@ export function buildContextProvenance(
        ORDER BY shp_date DESC LIMIT 1`,
     )
     .get(sym, date) as { shpDate: string } | undefined;
-  const pledge: ContextRefs['pledge'] = pledgeRow
-    ? { shpDate: pledgeRow.shpDate }
-    : null;
+  const pledge: ContextRefs['pledge'] = pledgeRow ? { shpDate: pledgeRow.shpDate } : null;
 
   return { quotes, fundamentals, quarterly, signals, news, concall, pledge };
 }
