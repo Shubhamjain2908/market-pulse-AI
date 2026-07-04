@@ -31,6 +31,7 @@ import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
 import { type Thesis, ThesisSchema } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
+import { buildContextProvenance } from './context-provenance.js';
 import { formatFundamentalsForLlm } from './portfolio-context.js';
 import { getLatestSignalsMap, getLatestSignalsMapsForSymbols } from './portfolio-trigger.js';
 
@@ -91,7 +92,13 @@ Return ONLY a single JSON object matching this schema:
   "target": string,
   "timeHorizon": "short" | "medium" | "long",
   "confidenceScore": number (1-10),
-  "triggerScreen": string
+  "triggerScreen": string,
+  "rubric": {
+    "moat": number (0-10),
+    "sectorTailwind": number (0-10),
+    "competitivePosition": number (0-10),
+    "newsCatalyst": number (0-10)
+  }
 }
 
 No markdown, no code fences, no commentary. ONLY the JSON object.`;
@@ -523,6 +530,9 @@ export async function generateTheses(
             total: rubricTotal,
           });
 
+          // Task C: build data provenance from context sources
+          const contextRefs = JSON.stringify(buildContextProvenance(candidate.symbol, date, db));
+
           const row: UpsertThesisRow = {
             ...thesisOut,
             symbol: candidate.symbol,
@@ -530,6 +540,7 @@ export async function generateTheses(
             model: result.model,
             raw: result.raw,
             rubricJson,
+            contextRefs,
           };
           upsertThesis(row, db);
 
@@ -890,7 +901,9 @@ export function buildStockContext(
     const concallIntel = getLatestConcallIntel(symbol, date, db);
     if (concallIntel) {
       sections.push('\n## Latest concall intelligence');
-      sections.push(`Sentiment: ${concallIntel.sentiment} · Credibility: ${concallIntel.credibilityStars}/5`);
+      sections.push(
+        `Sentiment: ${concallIntel.sentiment} · Credibility: ${concallIntel.credibilityStars}/5`,
+      );
       sections.push(`Summary: ${concallIntel.summary}`);
       try {
         const guidance = JSON.parse(concallIntel.guidanceJson) as Array<{

@@ -140,10 +140,10 @@ const EnvSchema = z.object({
   AI_PICK_RUBRIC_MIN: z.coerce.number().default(54),
 
   /**
-   * `'1'` (default) — run concall transcript analysis (download PDFs + LLM).
-   * `'0'` — skip concall analysis entirely.
+   * `'1'` — run concall transcript analysis (download PDFs + LLM).
+   * `'0'` (default) — skip concall analysis entirely.
    */
-  CONCALL_ANALYSIS_ENABLED: z.enum(['0', '1']).default('1'),
+  CONCALL_ANALYSIS_ENABLED: z.enum(['0', '1']).default('0'),
   /** Max concall transcripts to analyse per run (LLM cost control). */
   CONCALL_MAX_PER_RUN: z.coerce.number().int().min(1).max(25).default(5),
   /** Days of lookback for fetching NSE announcements. */

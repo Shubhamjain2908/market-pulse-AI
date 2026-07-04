@@ -704,13 +704,16 @@ export interface StoredThesis {
   confidence: number;
   triggerReason: string;
   model: string;
+  /** Optional data-provenance JSON (data-as-of timestamps for each context source). */
+  contextRefs?: string | null;
 }
 
 export function getThesesForDate(date: string, db: DatabaseType = getDb()): StoredThesis[] {
   const rows = db
     .prepare(`
       SELECT symbol, date, thesis, bull_case, bear_case, entry_zone, stop_loss,
-             target, time_horizon, confidence, trigger_reason, model
+             target, time_horizon, confidence, trigger_reason, model,
+             context_refs
       FROM theses
       WHERE date = ?
       ORDER BY confidence DESC
@@ -728,6 +731,7 @@ export function getThesesForDate(date: string, db: DatabaseType = getDb()): Stor
     confidence: number;
     trigger_reason: string;
     model: string;
+    context_refs: string | null;
   }>;
 
   return rows.map((r) => ({
@@ -743,6 +747,7 @@ export function getThesesForDate(date: string, db: DatabaseType = getDb()): Stor
     confidence: r.confidence,
     triggerReason: r.trigger_reason,
     model: r.model,
+    contextRefs: r.context_refs,
   }));
 }
 
@@ -912,6 +917,7 @@ export function getTranscriptsWithoutIntel(
     LEFT JOIN concall_intel ci
       ON ct.symbol = ci.symbol AND ct.announced_at = ci.announced_at
     WHERE ct.text IS NOT NULL AND ct.char_count >= 2000
+      AND ct.kind = 'transcript'
       AND ci.symbol IS NULL
     ORDER BY ct.fetched_at ASC
     LIMIT ?
@@ -958,10 +964,7 @@ export interface ConcallIntelRow {
   model: string;
 }
 
-export function upsertConcallIntel(
-  row: ConcallIntelRow,
-  db: DatabaseType = getDb(),
-): void {
+export function upsertConcallIntel(row: ConcallIntelRow, db: DatabaseType = getDb()): void {
   db.prepare(
     `
     INSERT INTO concall_intel (
@@ -1009,12 +1012,12 @@ export function getLatestConcallIntel(
            guidance_json AS guidanceJson, delivery_json AS deliveryJson,
            deflections_json AS deflectionsJson, summary, model
     FROM concall_intel
-    WHERE symbol = ? AND announced_at <= date(?, '+90 days')
+    WHERE symbol = ? AND announced_at < ? AND announced_at >= date(?, '-90 days')
     ORDER BY announced_at DESC
     LIMIT 1
   `,
     )
-    .get(symbol.toUpperCase(), asOf) as ConcallIntelRow | undefined;
+    .get(symbol.toUpperCase(), asOf, asOf) as ConcallIntelRow | undefined;
   return row ?? null;
 }
 

@@ -16,7 +16,6 @@ import { isoDateIst } from '../ingestors/base/dates.js';
 import { applyCorporateActionsFromYahooSplits } from '../ingestors/corporate-actions.js';
 import { runExtSignalHoldingsIngestor } from '../ingestors/ext-signal-holdings-ingestor.js';
 import { fetchInavSnapshots } from '../ingestors/inav-fetcher.js';
-import { analyseConcallTranscripts } from './concall-analyser.js';
 import { fetchConcallTranscripts } from '../ingestors/nse/announcements-fetcher.js';
 import { fetchPromoterPledge } from '../ingestors/nse/pledge-fetcher.js';
 import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
@@ -28,6 +27,7 @@ import { runMomentumRanker } from '../rankers/momentum-ranker.js';
 import { type EvaluateTradesResult, runEvaluatePaperTrades } from '../scripts/evaluate-trades.js';
 import { applyMomentumRegimeGateExits } from '../strategies/momentum-rebalance.js';
 import { type BriefRunResult, runBriefingComposer } from './briefing-composer.js';
+import { analyseConcallTranscripts } from './concall-analyser.js';
 import { type IngestRunResult, runDailyIngestor } from './daily-ingestor.js';
 import { analysePortfolio } from './portfolio-analyser.js';
 import { runPortfolioSync } from './portfolio-sync.js';
@@ -277,14 +277,20 @@ export async function runDailyWorkflow(
       if (concallFetchStage.ok) {
         const r = concallFetchStage.result;
         if (r.transcriptsFound > 0) {
-          log.info({ transcriptsFound: r.transcriptsFound, extracted: r.extracted }, 'concall transcript ingest complete');
+          log.info(
+            { transcriptsFound: r.transcriptsFound, extracted: r.extracted },
+            'concall transcript ingest complete',
+          );
         }
       } else {
         warnings.push({
           category: 'Concall',
           message: `Concall transcript fetch failed: ${concallFetchStage.message}`,
         });
-        log.warn({ err: concallFetchStage.error }, 'concall: fetch failed — transcripts unavailable');
+        log.warn(
+          { err: concallFetchStage.error },
+          'concall: fetch failed — transcripts unavailable',
+        );
       }
     }
 
@@ -496,7 +502,10 @@ export async function runDailyWorkflow(
               { runDate, stage: 'concall-analysis', status: 'skipped', errorMsg: err.message },
               db,
             );
-            log.warn({ err, spent: err.spent, cap: err.cap }, 'concall analysis skipped: LLM budget exceeded');
+            log.warn(
+              { err, spent: err.spent, cap: err.cap },
+              'concall analysis skipped: LLM budget exceeded',
+            );
           } else {
             recordPipelineStage(
               {
@@ -507,7 +516,10 @@ export async function runDailyWorkflow(
               },
               db,
             );
-            log.warn({ err: (err as Error).message }, 'concall analysis failed; continuing workflow');
+            log.warn(
+              { err: (err as Error).message },
+              'concall analysis failed; continuing workflow',
+            );
           }
         }
       }
