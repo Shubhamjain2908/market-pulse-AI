@@ -210,9 +210,12 @@ CREATE TABLE theses (
   trigger_reason  TEXT    NOT NULL, -- what screen/signal triggered this
   model           TEXT    NOT NULL, -- which LLM model generated it
   raw_response    TEXT,             -- full LLM response for audit
+  rubric_json     TEXT,             -- JSON: {anchors, llm, total} — Task A rubric
+  context_refs    TEXT,             -- JSON: data provenance — Task C
   created_at      TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (symbol, date)
 );
+
 CREATE INDEX idx_theses_date ON theses(date);
 CREATE INDEX idx_news_sentiment ON news(sentiment);
 CREATE TABLE alerts (

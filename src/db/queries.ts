@@ -641,16 +641,22 @@ export interface UpsertThesisRow extends Thesis {
   date: string;
   model: string;
   raw?: string;
+  /** Optional rubric JSON (anchors + LLM sub-scores + total) — Task A. */
+  rubricJson?: string | null;
+  /** Optional context refs JSON (data provenance) — Task C. */
+  contextRefs?: string | null;
 }
 
 export function upsertThesis(row: UpsertThesisRow, db: DatabaseType = getDb()): void {
   db.prepare(`
     INSERT INTO theses (
       symbol, date, thesis, bull_case, bear_case, entry_zone, stop_loss,
-      target, time_horizon, confidence, trigger_reason, model, raw_response
+      target, time_horizon, confidence, trigger_reason, model, raw_response,
+      rubric_json, context_refs
     ) VALUES (
       @symbol, @date, @thesis, @bullCase, @bearCase, @entryZone, @stopLoss,
-      @target, @timeHorizon, @confidence, @triggerReason, @model, @raw
+      @target, @timeHorizon, @confidence, @triggerReason, @model, @raw,
+      @rubricJson, @contextRefs
     )
     ON CONFLICT(symbol, date) DO UPDATE SET
       thesis         = excluded.thesis,
@@ -663,7 +669,9 @@ export function upsertThesis(row: UpsertThesisRow, db: DatabaseType = getDb()): 
       confidence     = excluded.confidence,
       trigger_reason = excluded.trigger_reason,
       model          = excluded.model,
-      raw_response   = excluded.raw_response
+      raw_response   = excluded.raw_response,
+      rubric_json    = excluded.rubric_json,
+      context_refs   = excluded.context_refs
   `).run({
     symbol: row.symbol,
     date: row.date ?? new Date().toISOString().slice(0, 10),
@@ -678,6 +686,8 @@ export function upsertThesis(row: UpsertThesisRow, db: DatabaseType = getDb()): 
     triggerReason: row.triggerScreen,
     model: row.model,
     raw: row.raw ?? null,
+    rubricJson: row.rubricJson ?? null,
+    contextRefs: row.contextRefs ?? null,
   });
 }
 

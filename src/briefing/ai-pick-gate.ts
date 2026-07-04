@@ -4,14 +4,19 @@
  */
 
 import type { Database as DatabaseType } from 'better-sqlite3';
+import { config } from '../config/env.js';
 import { getRegimeForCalendarDate } from '../db/regime-queries.js';
+import { child } from '../logger.js';
 import type { ThesisCard } from './template.js';
+
+const log = child({ component: 'ai-pick-gate' });
 
 export type AiPickBlockReason =
   | 'confidence_low'
   | 'false_momentum_flag'
   | 'golden_cross_stale_rank'
   | 'golden_cross_rejected'
+  | 'rubric_low'
   | 'no_confirmation_path';
 
 export type AiPickConfirmPath =
@@ -159,6 +164,28 @@ function evaluatePathC(
   return { ok: false, reason: 'golden_cross_rejected' };
 }
 
+/**
+ * Load rubric_json from the theses table for the given symbol and date.
+ * Returns null when no rubric data exists (pre-migration rows, or rows where LLM didn't return rubric).
+ */
+function loadRubricJson(
+  symbol: string,
+  sourceDate: string,
+  db: DatabaseType,
+): { total: number } | null {
+  try {
+    const row = db
+      .prepare(`SELECT rubric_json FROM theses WHERE symbol = ? AND date = ?`)
+      .get(symbol.toUpperCase(), sourceDate) as { rubric_json: string | null } | undefined;
+    if (!row?.rubric_json) return null;
+    const parsed = JSON.parse(row.rubric_json) as { total?: number };
+    if (typeof parsed.total !== 'number' || !Number.isFinite(parsed.total)) return null;
+    return { total: parsed.total };
+  } catch {
+    return null;
+  }
+}
+
 export function evaluateAiPickEligibility(
   symbol: string,
   sourceDate: string,
@@ -168,7 +195,52 @@ export function evaluateAiPickEligibility(
   const sym = symbol.toUpperCase();
   const facts: Record<string, unknown> = { symbol: sym, sourceDate, confidence: thesis.confidence };
 
-  if (thesis.confidence < 6) {
+  // ---- Rubric shadow logging (Task A) ----
+  // When AI_PICK_RUBRIC_GATE=1, the rubric gate replaces confidence-based gating.
+  // When '0' (default), we shadow-log for calibration without changing behaviour.
+  if (config.AI_PICK_RUBRIC_GATE === '1') {
+    const rubric = loadRubricJson(sym, sourceDate, db);
+    if (rubric) {
+      const rubricEligible = rubric.total >= config.AI_PICK_RUBRIC_MIN;
+      facts.rubricTotal = rubric.total;
+      facts.rubricEligible = rubricEligible;
+      facts.rubricGateMin = config.AI_PICK_RUBRIC_MIN;
+      if (!rubricEligible) {
+        return {
+          eligible: false,
+          reasons: ['rubric_low'],
+          facts,
+        };
+      }
+    }
+    // When rubric gate is enabled, rubric replaces the confidence<6 check entirely.
+    // The rubric check above handles the gate; fall through to path-based gates below,
+    // and the confidence<6 check is skipped via the `&& AI_PICK_RUBRIC_GATE !== '1'` guard.
+  } else {
+    // Shadow mode: log rubric disagreement stats for calibration
+    const rubric = loadRubricJson(sym, sourceDate, db);
+    if (rubric) {
+      const rubricEligible = rubric.total >= config.AI_PICK_RUBRIC_MIN;
+      facts.rubricTotal = rubric.total;
+      facts.rubricEligible = rubricEligible;
+      facts.rubricDisagreesWithConfidence = rubricEligible !== thesis.confidence >= 6;
+      if (rubricEligible !== thesis.confidence >= 6) {
+        log.info(
+          {
+            symbol: sym,
+            sourceDate,
+            confidence: thesis.confidence,
+            rubricTotal: rubric.total,
+            rubricEligible,
+            rubricMin: config.AI_PICK_RUBRIC_MIN,
+          },
+          'rubric-confidence disagreement (shadow)',
+        );
+      }
+    }
+  }
+
+  if (thesis.confidence < 6 && config.AI_PICK_RUBRIC_GATE !== '1') {
     return {
       eligible: false,
       reasons: ['confidence_low'],

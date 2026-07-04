@@ -172,6 +172,7 @@ describe('getTrailingOpmStdDev', () => {
     );
     const sd = getTrailingOpmStdDev(symbol, '2026-01-01', 4, db);
     expect(sd).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: guarded by expect(sd).not.toBeNull()
     expect(check(sd!)).toBe(true);
   });
 
@@ -198,6 +199,7 @@ describe('getTrailingOpmStdDev', () => {
     ]);
     const sd = getTrailingOpmStdDev(symbol, '2025-10-15', 4, db);
     expect(sd).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: guarded by expect(sd).not.toBeNull()
     expect(sd!).toBeCloseTo(1.118, 2);
   });
 });

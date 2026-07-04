@@ -129,6 +129,15 @@ const EnvSchema = z.object({
    * `'0'` (default) — shadow-only (`pledge_shadow` funnel counter).
    */
   QUALITY_GARP_PLEDGE_GATE: z.enum(['0', '1']).default('0'),
+
+  /**
+   * `'1'` — replace the `confidence < 6` early-return in `evaluateAiPickEligibility`
+   * with the rubric-derived gate (`rubricTotal >= AI_PICK_RUBRIC_MIN`).
+   * `'0'` (default) — shadow-only; behaviour unchanged.
+   */
+  AI_PICK_RUBRIC_GATE: z.enum(['0', '1']).default('0'),
+  /** Minimum composite rubric total (0–90 scale) required when `AI_PICK_RUBRIC_GATE=1`. */
+  AI_PICK_RUBRIC_MIN: z.coerce.number().default(54),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
