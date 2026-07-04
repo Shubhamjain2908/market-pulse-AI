@@ -96,13 +96,13 @@ describe('db/pipeline-queries', () => {
 
     const rows = getStageHistory('yahoo-snapshot', 7, db);
     expect(rows).toHaveLength(2);
-    expect(rows[0]!.runDate).toBe('2026-07-02');
-    expect(rows[1]!.runDate).toBe('2026-07-01');
-    expect(rows[0]!.status).toBe('success');
-    expect(rows[1]!.status).toBe('success');
+    expect(rows[0]?.runDate).toBe('2026-07-02');
+    expect(rows[1]?.runDate).toBe('2026-07-01');
+    expect(rows[0]?.status).toBe('success');
+    expect(rows[1]?.status).toBe('success');
 
     // metadata is already parsed from JSON by getStageHistory
-    expect(rows[0]!.metadata).toEqual({ attempted: 250, written: 250, failed: 0 });
+    expect(rows[0]?.metadata).toEqual({ attempted: 250, written: 250, failed: 0 });
   });
 
   it('getStageHistory respects the days parameter', () => {
@@ -112,9 +112,7 @@ describe('db/pipeline-queries', () => {
     // Both `toISOString()` and SQLite's `date('now')` use UTC.
     const now = new Date();
     const today = now.toISOString().slice(0, 10);
-    const pastDay = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10);
+    const pastDay = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     recordPipelineStage(
       { runDate: pastDay, stage: 'yahoo-snapshot', status: 'failed', errorMsg: 'timeout' },
       db,
@@ -124,7 +122,7 @@ describe('db/pipeline-queries', () => {
     const oldRows = getStageHistory('yahoo-snapshot', 1, db);
     // pastDay (30 days ago) is beyond the 1-day window, so only today should appear
     expect(oldRows).toHaveLength(1);
-    expect(oldRows[0]!.runDate).toBe(today);
+    expect(oldRows[0]?.runDate).toBe(today);
   });
 
   it('getStageHistory returns empty for a non-existent stage', () => {

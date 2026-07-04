@@ -363,9 +363,10 @@ function periodLabelToDate(label: string): string | null {
 
   // Try quarterly format: "Dec 2025", "Dec 25", "Dec'25", "Dec' 25", "Dec-25"
   const qMatch = trimmed.match(/^(\w{3})\s*['\u2019]?\s*(\d{2,4})$/i);
-  if (qMatch && qMatch[1] && qMatch[2]) {
-    const monthNum = MONTH_MAP[qMatch[1]!.toLowerCase()];
+  if (qMatch?.[1] && qMatch[2]) {
+    const monthNum = MONTH_MAP[qMatch[1]?.toLowerCase()];
     if (!monthNum) return null;
+    // biome-ignore lint/style/noNonNullAssertion: guarded by if (qMatch[2]) above
     let year = Number.parseInt(qMatch[2]!, 10);
     if (!Number.isFinite(year)) return null;
     // Normalize 2-digit years to 4-digit: 25 → 2025, 98 → 1998

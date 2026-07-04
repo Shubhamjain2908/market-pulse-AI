@@ -173,6 +173,7 @@ describe('stock screener analyser: quality_garp', () => {
       )
       .get() as { matchedCriteria: string } | undefined;
     expect(row).toBeTruthy();
+    // biome-ignore lint/style/noNonNullAssertion: guarded by expect(row).toBeTruthy()
     const payload = JSON.parse(row!.matchedCriteria) as Record<string, unknown>;
     expect(payload).toHaveProperty('opm_std_dev');
     expect(payload.opm_std_dev).toBeNull();
