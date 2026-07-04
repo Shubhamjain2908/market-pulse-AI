@@ -573,6 +573,7 @@ function gatherTheses(
       triggerReason: r.triggerReason,
       rank: meta?.rank,
       rankBlurb: meta?.reasonsLine,
+      contextRefs: r.contextRefs,
     };
   });
 }

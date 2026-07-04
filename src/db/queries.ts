@@ -704,13 +704,16 @@ export interface StoredThesis {
   confidence: number;
   triggerReason: string;
   model: string;
+  /** Optional data-provenance JSON (data-as-of timestamps for each context source). */
+  contextRefs?: string | null;
 }
 
 export function getThesesForDate(date: string, db: DatabaseType = getDb()): StoredThesis[] {
   const rows = db
     .prepare(`
       SELECT symbol, date, thesis, bull_case, bear_case, entry_zone, stop_loss,
-             target, time_horizon, confidence, trigger_reason, model
+             target, time_horizon, confidence, trigger_reason, model,
+             context_refs
       FROM theses
       WHERE date = ?
       ORDER BY confidence DESC
@@ -728,6 +731,7 @@ export function getThesesForDate(date: string, db: DatabaseType = getDb()): Stor
     confidence: number;
     trigger_reason: string;
     model: string;
+    context_refs: string | null;
   }>;
 
   return rows.map((r) => ({
@@ -743,6 +747,7 @@ export function getThesesForDate(date: string, db: DatabaseType = getDb()): Stor
     confidence: r.confidence,
     triggerReason: r.trigger_reason,
     model: r.model,
+    contextRefs: r.context_refs,
   }));
 }
 
