@@ -896,7 +896,9 @@ export function buildStockContext(
     const concallIntel = getLatestConcallIntel(symbol, date, db);
     if (concallIntel) {
       sections.push('\n## Latest concall intelligence');
-      sections.push(`Sentiment: ${concallIntel.sentiment} · Credibility: ${concallIntel.credibilityStars}/5`);
+      sections.push(
+        `Sentiment: ${concallIntel.sentiment} · Credibility: ${concallIntel.credibilityStars}/5`,
+      );
       sections.push(`Summary: ${concallIntel.summary}`);
       try {
         const guidance = JSON.parse(concallIntel.guidanceJson) as Array<{
