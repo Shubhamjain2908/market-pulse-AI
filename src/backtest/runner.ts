@@ -20,7 +20,12 @@ import {
 import { closeDb, getDb, migrate } from '../db/index.js';
 import { isIsoDate } from '../ingestors/base/dates.js';
 import { NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
-import { type OptionAStrategy, type RunOptionAEngineResult, runOptionAEngine } from './engine.js';
+import {
+  type OptionAStrategy,
+  type RunOptionAEngineResult,
+  runOptionAEngine,
+  type StageGateMode,
+} from './engine.js';
 import {
   countBenchQuotesStrictlyBefore,
   type OptionARegimeSource,
@@ -61,6 +66,8 @@ export interface OptionARunnerInput {
   sweepLockIn?: boolean;
   tightenedMultiplier?: number;
   lockInThresholdPct?: number;
+  /** Weinstein stage gate for entries. 'off' (default) = no filter. */
+  stageGate?: StageGateMode;
 }
 
 function usage(): void {
@@ -69,6 +76,7 @@ function usage(): void {
     --strategy momentum-mf|ai-pick|all \\
     [--from YYYY-MM-DD] [--to YYYY-MM-DD] \\
     [--min-history-days 504] [--cost-bps 20] [--regime-source proxy|daily] \\
+    [--stage-gate off|stage2|exclude4] \\
     [--initial-multiplier 2.5] [--sweep-initial-stop] [--sweep-lock-in] [--dry-run] [--verbose]
 
   Phase 1 initial-ATR sweep (momentum-mf):
@@ -305,6 +313,7 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
     initialMultiplier: input.initialMultiplier,
     tightenedMultiplier: input.tightenedMultiplier,
     lockInThresholdPct: input.lockInThresholdPct,
+    stageGate: input.stageGate,
     universe,
     db,
     regimeSource,
@@ -317,7 +326,9 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
     regimeSource === 'proxy'
       ? ' regime_source=proxy (quotes-only 3-signal regime; not regime_daily; no persistence).'
       : ' regime_source=daily (regime_daily table).';
-  const notesCombined = `${survivorshipNote}${regimePersistNote}`;
+  const stageGateNote =
+    input.stageGate != null && input.stageGate !== 'off' ? ` stage_gate=${input.stageGate}.` : '';
+  const notesCombined = `${survivorshipNote}${regimePersistNote}${stageGateNote}`;
 
   if (input.dryRun) {
     const keysToReport = keysForStrategy(input.strategy);
@@ -331,11 +342,13 @@ export async function runOptionABacktestJob(input: OptionARunnerInput): Promise<
   }
 
   const keysToPersist = keysForStrategy(input.strategy);
+  const strategyIdSuffix =
+    input.stageGate != null && input.stageGate !== 'off' ? `__${input.stageGate}` : '';
   for (const sid of keysToPersist) {
     const trades = byStrategy[sid] ?? [];
     const holdDays = sid === 'ai_pick' ? 20 : 90;
     const row = buildOptionARunRow({
-      strategyId: sid,
+      strategyId: `${sid}${strategyIdSuffix}`,
       from: input.from,
       to: input.to,
       holdDays,

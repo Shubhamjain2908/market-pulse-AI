@@ -21,6 +21,10 @@ import {
   computeVolumeBreakoutFlag,
 } from '../../enrichers/momentum-signals.js';
 import { atr } from '../../enrichers/technical/indicators.js';
+import {
+  computeWeinsteinStage,
+  WEINSTEIN_STAGE,
+} from '../../enrichers/technical/weinstein-stage.js';
 import { NIFTY_BENCHMARK_SYMBOL } from '../../market/benchmarks.js';
 import { addCalendarDaysIst, lastOpenOnOrBefore } from '../../market/trading-days.js';
 import { buildTradingDayIndex } from '../../scripts/evaluate-trades.js';
@@ -34,6 +38,8 @@ import type { BacktestExitReason, ClosedSimTrade } from '../types.js';
 import { filterOptionAUniverse } from '../universe-filter.js';
 
 const MARKET_TZ = 'Asia/Kolkata';
+
+export type StageGateMode = 'off' | 'stage2' | 'exclude4';
 
 export interface MomentumMfBacktestOpts {
   from: string;
@@ -51,6 +57,8 @@ export interface MomentumMfBacktestOpts {
   db: DatabaseType;
   regimeSource: OptionARegimeSource;
   regimeProxyByDate?: RegimeProxyMap;
+  /** Weinstein stage gate for entries. 'off' (default) = no filter. */
+  stageGate?: StageGateMode;
 }
 
 interface OpenPosition {
@@ -415,6 +423,22 @@ export function runMomentumMfBacktest(opts: MomentumMfBacktestOpts): ClosedSimTr
 
       const barsAll = ohlcv.get(sym);
       if (!barsAll) continue;
+
+      // Stage gate: filter entries by Weinstein stage
+      if (opts.stageGate != null && opts.stageGate !== 'off') {
+        const closes = barsThroughDate(barsAll, D).map((b) => b.close);
+        if (closes.length >= 50) {
+          const stageResult = computeWeinsteinStage(closes, closes.length - 1);
+          if (
+            opts.stageGate === 'stage2' &&
+            stageResult.stageCode !== WEINSTEIN_STAGE.STAGE_2A &&
+            stageResult.stageCode !== WEINSTEIN_STAGE.STAGE_2B
+          )
+            continue;
+          if (opts.stageGate === 'exclude4' && stageResult.stageCode === WEINSTEIN_STAGE.STAGE_4)
+            continue;
+        }
+      }
       const bx = barOnDate(barsAll, D);
       if (!bx) continue;
       const entryPx = bx.close;

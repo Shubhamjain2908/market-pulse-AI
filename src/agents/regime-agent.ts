@@ -11,6 +11,7 @@ import {
   prepareRegimeDaily,
   type RunRegimeClassifierOptions,
 } from '../analysers/regime-classifier.js';
+import { computeStage4Breadth } from '../analysers/stage-breadth.js';
 import { getDb } from '../db/connection.js';
 import { insertRegimeRow } from '../db/regime-queries.js';
 import { getLlmProvider } from '../llm/index.js';
@@ -135,6 +136,39 @@ export async function runRegimeAgent(
 
   const changed =
     classification.prevRegime != null && classification.prevRegime !== classification.regime;
+
+  // Task D2: log-only stage-regime divergence warning (observe-safe, no gating)
+  if (typeof db.prepare === 'function') {
+    try {
+      const stageBreadth = computeStage4Breadth(prepared.sessionDate, db);
+      if (
+        stageBreadth.pctStage4 > 40 &&
+        (classification.regime === 'BULL_TRENDING' || classification.regime === 'CHOPPY')
+      ) {
+        log.warn(
+          {
+            event: 'stage_regime_divergence',
+            regime: classification.regime,
+            pctStage4: stageBreadth.pctStage4,
+            stage4Symbols: stageBreadth.stage4Count,
+            withStage: stageBreadth.withStage,
+            totalSymbols: stageBreadth.totalSymbols,
+          },
+          `Stage-regime divergence: ${classification.regime} regime with ${stageBreadth.pctStage4.toFixed(1)}% of momentum universe in Stage 4`,
+        );
+      }
+    } catch {
+      log.debug(
+        { event: 'stage_regime_divergence_skipped' },
+        'stage-breadth unavailable — skipping divergence check',
+      );
+    }
+  } else {
+    log.debug(
+      { event: 'stage_regime_divergence_skipped' },
+      'db missing prepare — skipping stage-breadth',
+    );
+  }
 
   let narrative = buildFallbackNarrative(prepared);
   let usedFallbackNarrative = true;

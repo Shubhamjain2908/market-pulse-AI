@@ -10,6 +10,7 @@ import {
   sma,
   volumeRatio,
 } from '../enrichers/technical/indicators.js';
+import { computeWeinsteinStage } from '../enrichers/technical/weinstein-stage.js';
 
 /** Bars oldest-first; typically last 252 sessions ending at D. */
 export interface OHLCVBar {
@@ -34,6 +35,14 @@ export interface BarSignals {
   pctFrom52wLow: number;
   close: number;
   volume: number;
+  /** Weinstein stage code (0-4 / 21-22) from computeWeinsteinStage. */
+  weinsteinStageCode: number;
+  /** Weinstein stage score (0-30) from computeWeinsteinStage. */
+  weinsteinStageScore: number;
+  /** % price above SMA200. Null when < 50 bars. */
+  pctAboveSma200: number | null;
+  /** 30-day SMA200 slope %. Null when < 50 bars. */
+  sma200Slope30dPct: number | null;
 }
 
 /** Match enricher: 252 trading days for 52-week window. */
@@ -93,6 +102,8 @@ export function computeSignalsForLastBar(bars: OHLCVBar[]): BarSignals | null {
   const fw = fiftyTwoWeek(hiLo, 252);
   if (!fw) return null;
 
+  const stage = computeWeinsteinStage(closes, i);
+
   return {
     sma20: s20,
     sma50: s50,
@@ -104,5 +115,9 @@ export function computeSignalsForLastBar(bars: OHLCVBar[]): BarSignals | null {
     pctFrom52wLow: fw.pctFromLow,
     close: lastBar.close,
     volume: lastBar.volume,
+    weinsteinStageCode: stage.stageCode,
+    weinsteinStageScore: stage.stageScore,
+    pctAboveSma200: stage.pctAboveSma200,
+    sma200Slope30dPct: stage.sma200Slope30dPct,
   };
 }

@@ -11,13 +11,14 @@ import {
   type RegimeProxyMap,
 } from './regime-proxy.js';
 import { runAiPickBacktest } from './strategies/ai-pick.js';
-import { runMomentumMfBacktest } from './strategies/momentum-mf.js';
+import { runMomentumMfBacktest, type StageGateMode } from './strategies/momentum-mf.js';
 import type { ClosedSimTrade } from './types.js';
 import { filterOptionAUniverse } from './universe-filter.js';
 
 export type OptionAStrategy = 'momentum-mf' | 'ai-pick' | 'all';
 
 export type { OptionARegimeSource } from './regime-proxy.js';
+export type { StageGateMode };
 
 export interface RunOptionAEngineOpts {
   strategy: OptionAStrategy;
@@ -34,6 +35,8 @@ export interface RunOptionAEngineOpts {
   universe?: string[];
   db: DatabaseType;
   regimeSource?: OptionARegimeSource;
+  /** Weinstein stage gate for entries. 'off' (default) = no filter. */
+  stageGate?: StageGateMode;
 }
 
 export interface RunOptionAEngineResult {
@@ -78,6 +81,7 @@ export function runOptionAEngine(opts: RunOptionAEngineOpts): RunOptionAEngineRe
     db: opts.db,
     regimeSource,
     regimeProxyByDate,
+    stageGate: opts.stageGate,
   };
 
   if (opts.strategy === 'momentum-mf' || opts.strategy === 'all') {
