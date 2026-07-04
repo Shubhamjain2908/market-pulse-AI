@@ -108,16 +108,23 @@ describe('db/pipeline-queries', () => {
   it('getStageHistory respects the days parameter', () => {
     const db = getDb({ path: dbPath });
     migrate(db);
+    // Use dates relative to now so the date('now', ...) filter in SQL matches.
+    // Both `toISOString()` and SQLite's `date('now')` use UTC.
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const pastDay = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
     recordPipelineStage(
-      { runDate: '2026-06-01', stage: 'yahoo-snapshot', status: 'failed', errorMsg: 'timeout' },
+      { runDate: pastDay, stage: 'yahoo-snapshot', status: 'failed', errorMsg: 'timeout' },
       db,
     );
-    recordPipelineStage({ runDate: '2026-07-01', stage: 'yahoo-snapshot', status: 'success' }, db);
+    recordPipelineStage({ runDate: today, stage: 'yahoo-snapshot', status: 'success' }, db);
 
     const oldRows = getStageHistory('yahoo-snapshot', 1, db);
-    // 2026-06-01 is beyond 1 day, so only 2026-07-01 should appear
+    // pastDay (30 days ago) is beyond the 1-day window, so only today should appear
     expect(oldRows).toHaveLength(1);
-    expect(oldRows[0]!.runDate).toBe('2026-07-01');
+    expect(oldRows[0]!.runDate).toBe(today);
   });
 
   it('getStageHistory returns empty for a non-existent stage', () => {
