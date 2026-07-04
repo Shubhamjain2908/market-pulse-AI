@@ -91,7 +91,13 @@ Return ONLY a single JSON object matching this schema:
   "target": string,
   "timeHorizon": "short" | "medium" | "long",
   "confidenceScore": number (1-10),
-  "triggerScreen": string
+  "triggerScreen": string,
+  "rubric": {
+    "moat": number (0-10),
+    "sectorTailwind": number (0-10),
+    "competitivePosition": number (0-10),
+    "newsCatalyst": number (0-10)
+  }
 }
 
 No markdown, no code fences, no commentary. ONLY the JSON object.`;
