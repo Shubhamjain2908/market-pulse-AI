@@ -360,6 +360,7 @@ program
     'proxy (default): quotes-only coarse regime; daily: require regime_daily ≥80% coverage',
     'proxy',
   )
+  .option('--stage-gate <mode>', 'Weinstein stage gate: off (default) | stage2 | exclude4', 'off')
   .option('--dry-run', 'no DB writes; regime gate still enforced', false)
   .option('--verbose', 'extra progress logging (engine timing)', false)
   .action(
@@ -372,6 +373,7 @@ program
       dryRun?: boolean;
       verbose?: boolean;
       regimeSource?: string;
+      stageGate?: string;
     }) => {
       const { runOptionABacktestJob } = await import('./backtest/runner.js');
       const s = opts.strategy.trim().toLowerCase();
@@ -395,6 +397,14 @@ program
         process.exitCode = 1;
         return;
       }
+      const gateRaw = (opts.stageGate ?? 'off').trim().toLowerCase();
+      const stageGate =
+        gateRaw === 'stage2'
+          ? ('stage2' as const)
+          : gateRaw === 'exclude4'
+            ? ('exclude4' as const)
+            : ('off' as const);
+
       await runOptionABacktestJob({
         strategy,
         from: opts.from,
@@ -404,6 +414,7 @@ program
         dryRun: Boolean(opts.dryRun),
         verbose: Boolean(opts.verbose),
         regimeSource,
+        stageGate,
       });
     },
   );
