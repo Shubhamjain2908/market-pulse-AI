@@ -10,6 +10,7 @@
  * - Never throws — returns result counters on any failure
  */
 
+import type { Database as DatabaseType } from 'better-sqlite3';
 import pLimit from 'p-limit';
 import { config } from '../config/env.js';
 import { getDb } from '../db/connection.js';
@@ -60,7 +61,7 @@ export interface AnalyseConcallResult {
 
 export async function analyseConcallTranscripts(
   opts: AnalyseConcallOptions = {},
-  db = getDb(),
+  db: DatabaseType = getDb(),
   llm: LlmProvider = getLlmProvider(),
 ): Promise<AnalyseConcallResult> {
   const maxPerRun = opts.maxPerRun ?? config.CONCALL_MAX_PER_RUN;
