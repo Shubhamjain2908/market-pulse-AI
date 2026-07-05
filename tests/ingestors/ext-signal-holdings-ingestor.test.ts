@@ -454,7 +454,7 @@ describe('ext-signal-holdings-ingestor', () => {
     expect(typeof cfg.enabled).toBe('boolean');
     expect(onDisk.enabled).toBe(true);
     expect(Array.isArray(onDisk.strategies)).toBe(true);
-    expect(onDisk.strategies).toHaveLength(3);
+    expect(onDisk.strategies).toHaveLength(1);
     expect(onDisk).not.toHaveProperty('endpoint');
   });
 });

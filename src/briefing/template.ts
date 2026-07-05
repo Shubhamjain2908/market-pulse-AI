@@ -179,6 +179,8 @@ export interface BriefingData {
   watchlistAlerts: WatchlistAlert[];
   /** Screens that fired today (Phase 2). */
   screenMatches: ScreenMatch[] | undefined;
+  /** External signal confirmations for GARP screen symbols — symbol → strategy display names. */
+  extAnnotations?: Record<string, string[]>;
   topGainers: MoverRow[];
   topLosers: MoverRow[];
   news: NewsRow[];
@@ -223,7 +225,7 @@ export function renderBriefing(data: BriefingData): string {
     ${renderGlobalCues(data.globalCues)}
     ${data.partialPipeline ? '' : renderPortfolio(data.portfolio)}
     ${data.etfPricingBlock ?? ''}
-    ${data.partialPipeline ? '' : renderScreenMatches(data.screenMatches)}
+    ${data.partialPipeline ? '' : renderScreenMatches(data.screenMatches, data.extAnnotations)}
     ${data.momentumBlock ?? ''}
     ${data.concallCard ?? ''}
     ${renderWatchlistAlerts(data.watchlistAlerts)}
@@ -638,7 +640,10 @@ function signedPct(v: number): string {
   return v >= 0 ? `+${v.toFixed(2)}%` : `${v.toFixed(2)}%`;
 }
 
-function renderScreenMatches(matches?: ScreenMatch[]): string {
+function renderScreenMatches(
+  matches?: ScreenMatch[],
+  extAnnotations?: Record<string, string[]>,
+): string {
   if (!matches || matches.length === 0) return '';
   const totalMatches = matches.reduce((s, m) => s + m.symbols.length, 0);
   if (totalMatches === 0) return '';
@@ -650,7 +655,15 @@ function renderScreenMatches(matches?: ScreenMatch[]): string {
         ? `<span class="tag">${esc(m.timeHorizon.toUpperCase())}</span>`
         : '';
       const desc = m.description ? `<p class="muted">${esc(m.description)}</p>` : '';
-      const chips = m.symbols.map((s) => `<span class="symbol-chip">${esc(s)}</span>`).join(' ');
+      const chips = m.symbols
+        .map((s) => {
+          const annotations = extAnnotations?.[s.toUpperCase()];
+          const extHtml = annotations?.length
+            ? ` <span class="ext-confirmation">ext: ${esc(annotations.join(', '))}</span>`
+            : '';
+          return `<span class="symbol-chip">${esc(s)}${extHtml}</span>`;
+        })
+        .join(' ');
       return `
         <div class="screen-block">
           <table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout screen-block-title"><tr>
@@ -1140,6 +1153,8 @@ function baseStyles(): string {
     .symbol-chip { display: inline-block; padding: 2px 8px; border-radius: 4px;
       background: #eef4f8; color: ${c.accent}; font-weight: 600; font-size: 12px;
       margin: 0 6px 6px 0; }
+    .ext-confirmation { font-weight: 400; font-size: 10px; color: ${c.positive};
+      letter-spacing: 0.02em; }
     .position-cards-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
     .portfolio-risk-rollup { margin-top: 14px; padding-top: 14px; border-top: 1px solid ${c.border}; }
     .portfolio-risk-rollup .h-small { font-size: 13px; margin: 0 0 8px; color: ${c.accent}; }
