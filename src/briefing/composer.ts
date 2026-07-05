@@ -19,7 +19,12 @@ import {
   readQualityGarpFunnelForDate,
 } from '../analysers/quality-garp.js';
 import { config } from '../config/env.js';
-import { loadScreens, loadSectorMap, loadWatchlist } from '../config/loaders.js';
+import {
+  loadExtSignalProvider,
+  loadScreens,
+  loadSectorMap,
+  loadWatchlist,
+} from '../config/loaders.js';
 import {
   countGatesForRegime,
   getDb,
@@ -323,6 +328,43 @@ export async function composeBriefing(
     });
   }
 
+  // Build ext-signal annotations for GARP passing symbols (fail-open)
+  const extAnnotations: Record<string, string[]> = {};
+  try {
+    const qualityGarpSymbols = screenMatches.find(
+      (m) => m.screenName === QUALITY_GARP_SCREEN,
+    )?.symbols;
+    if (qualityGarpSymbols && qualityGarpSymbols.length > 0) {
+      const cfg = loadExtSignalProvider();
+      if (cfg.enabled && cfg.strategies.length > 0) {
+        const placeholders = qualityGarpSymbols.map(() => '?').join(',');
+        const extRows = db
+          .prepare(
+            `SELECT symbol, strategy_name FROM ext_signal_holdings
+             WHERE symbol IN (${placeholders}) AND as_of >= date(?, '-3 days')`,
+          )
+          .all(...qualityGarpSymbols, date) as Array<{
+          symbol: string;
+          strategy_name: string;
+        }>;
+        const stratNames = new Map(cfg.strategies.map((s) => [s.name, s.display_name]));
+        for (const row of extRows) {
+          const sym = row.symbol.toUpperCase();
+          if (!extAnnotations[sym]) extAnnotations[sym] = [];
+          const display = stratNames.get(row.strategy_name) ?? row.strategy_name;
+          if (!extAnnotations[sym].includes(display)) {
+            extAnnotations[sym].push(display);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    log.warn(
+      { err: (err as Error).message },
+      'ext-signal annotation lookup failed — continuing without annotations',
+    );
+  }
+
   const qualityGarpMatches = screenMatches.find((m) => m.screenName === QUALITY_GARP_SCREEN);
   if (!qualityGarpMatches || qualityGarpMatches.symbols.length === 0) {
     const funnelRecord = readQualityGarpFunnelForDate(date);
@@ -362,6 +404,7 @@ export async function composeBriefing(
     watchlistAlerts,
     signalPerformance,
     screenMatches: !partialPipeline && screenMatches.length > 0 ? screenMatches : undefined,
+    extAnnotations: Object.keys(extAnnotations).length > 0 ? extAnnotations : undefined,
     portfolio,
     topGainers,
     topLosers,
