@@ -282,6 +282,24 @@ export async function runDailyWorkflow(
             'concall transcript ingest complete',
           );
         }
+        // Surfacing concall coverage gaps: when we found PDFs but none were extractable,
+        // or when we checked symbols but found no transcripts at all.
+        if (r.transcriptsFound > 0 && r.extracted === 0) {
+          warnings.push({
+            category: 'Concall coverage',
+            message: `Found ${r.transcriptsFound} potential transcript PDFs but extracted 0 usable ones — likely invites/outcome sheets (${r.skipped} skipped as too short / duplicate).`,
+          });
+        } else if (r.transcriptsFound > 0 && r.extracted < r.transcriptsFound) {
+          warnings.push({
+            category: 'Concall coverage',
+            message: `Partial extraction: ${r.extracted}/${r.transcriptsFound} PDFs extracted (${r.skipped} skipped as too short / duplicate, ${r.failed} failed).`,
+          });
+        } else if (r.symbolsChecked > 0 && r.transcriptsFound === 0) {
+          warnings.push({
+            category: 'Concall coverage',
+            message: `Checked ${r.symbolsChecked} symbols but found 0 concall announcements in the lookback window.`,
+          });
+        }
       } else {
         warnings.push({
           category: 'Concall',
