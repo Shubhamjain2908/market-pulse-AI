@@ -1,9 +1,6 @@
 name: Jules Code Review
 
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
   issue_comment:
     types: [created]
@@ -12,20 +9,17 @@ concurrency:
   group: jules-review-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
-permissions:
-  pull-requests: write
-  contents: read
-  statuses: write
-
 jobs:
   review:
     if: |
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'pull_request' ||
       (github.event.issue.pull_request && startsWith(github.event.comment.body, '/review'))
 
     runs-on: ubuntu-latest
-
+    permissions:
+      pull-requests: write
+      contents: read
+      statuses: write
     steps:
       - uses: sanjay3290/jules-pr-reviewer@v1
         with:
