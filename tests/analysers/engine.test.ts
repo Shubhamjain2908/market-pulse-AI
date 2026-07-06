@@ -124,4 +124,61 @@ describe('screen engine: end-to-end against SQLite', () => {
     const rows = db.prepare('SELECT COUNT(*) AS n FROM screens').get() as { n: number };
     expect(rows.n).toBe(0);
   });
+
+  it('golden_cross rejects symbol with rsi_14 > 70 (NYKAA regression)', () => {
+    const db = getDb({ path: dbPath });
+    migrate(db);
+
+    const date = '2026-07-06';
+    const insertSignals = (symbol: string, vals: Record<string, number>) => {
+      const stmt = db.prepare(`
+        INSERT INTO signals (symbol, date, name, value, source)
+        VALUES (?, ?, ?, ?, 'technical')
+      `);
+      for (const [name, value] of Object.entries(vals)) stmt.run(symbol, date, name, value);
+    };
+
+    // NYKAA — rsi_14 = 70.528, above golden_cross band [45, 70]
+    insertSignals('NYKAA', {
+      rsi_14: 70.528,
+      close: 2100,
+      sma_50: 2000,
+      volume_ratio_20d: 1.2,
+    });
+    // RELIANCE — rsi_14 = 65, within band
+    insertSignals('RELIANCE', {
+      rsi_14: 65,
+      close: 3100,
+      sma_50: 3000,
+      volume_ratio_20d: 1.0,
+    });
+
+    const goldenCross: ScreenDefinition = {
+      name: 'golden_cross',
+      label: 'Golden Cross',
+      description: 'test',
+      timeHorizon: 'short',
+      criteria: [
+        { signal: 'close', op: 'gt_signal', value: 'sma_50' },
+        { signal: 'rsi_14', op: 'between', value: [45, 70] },
+      ],
+    };
+
+    const result = runScreenEngine(
+      { date, symbols: ['NYKAA', 'RELIANCE'], screens: [goldenCross], persist: false },
+      db,
+    );
+
+    expect(result.matchesByScreen.golden_cross).toBe(1);
+    // NYKAA scores 0.5 (1/2) which is below the 0.6 PARTIAL_MATCH_THRESHOLD
+
+    const nykaa = result.evaluations.find((e) => e.symbol === 'NYKAA');
+    expect(nykaa?.passed).toBe(false);
+    expect(nykaa?.criteria[1]?.reason).toMatch(/not in/);
+
+    const reliance = result.evaluations.find((e) => e.symbol === 'RELIANCE');
+    expect(reliance?.passed).toBe(true);
+
+    db.close();
+  });
 });
