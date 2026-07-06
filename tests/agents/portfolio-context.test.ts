@@ -26,6 +26,12 @@ describe('portfolio-context', () => {
     expect(isAllocationInstrument('INFY')).toBe(false);
   });
 
+  it('isAllocationInstrument catches SGB variants by prefix', () => {
+    expect(isAllocationInstrument('SGBJUN31I-GB')).toBe(true);
+    expect(isAllocationInstrument('SGBDE31III')).toBe(true);
+    expect(isAllocationInstrument('SGBSOMETHING')).toBe(true);
+  });
+
   it('computeInvestedPortfolioWeights excludes LIQUIDCASE from denominator', () => {
     const holdings = [
       holding(CASH_PROXY_SYMBOL, 100, 100),

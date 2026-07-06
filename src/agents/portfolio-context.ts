@@ -24,7 +24,10 @@ const PERCENT_DISPLAY_COLUMNS = new Set([
 const ALLOCATION_INSTRUMENTS = new Set(loadEtfExclusions().map((s) => s.toUpperCase()));
 
 export function isAllocationInstrument(symbol: string): boolean {
-  return ALLOCATION_INSTRUMENTS.has(symbol.toUpperCase());
+  const s = symbol.toUpperCase();
+  // Catch SGB variants (e.g. SGBJUN31I-GB) that may carry
+  // an exchange suffix not present in the static exclusion list.
+  return ALLOCATION_INSTRUMENTS.has(s) || s.startsWith('SGB');
 }
 
 function holdingValueInr(h: PortfolioHoldingRow): number {
