@@ -3,7 +3,7 @@
 **Gate:** No strategy moves to implementation until overall paper trade expectancy is positive over 30+ deduped closed
 trades. Currently NOT met.
 
-**Built:** Market Regime Filter · Adaptive Trailing Stop · Multi-Factor Momentum (momentum_mf) · Quality-GARP (`quality_garp`, v2) · Catalyst-Driven Entry (`catalyst_entry`, v1)
+**Built:** Market Regime Filter · Adaptive Trailing Stop · Multi-Factor Momentum (momentum_mf) · Quality-GARP (`quality_garp`, v3) · Catalyst-Driven Entry (`catalyst_entry`, v1)
 
 **Fundamentals backfill:** COMPLETE (2026-06-06). 241 symbols annual, Yahoo snapshot + screener refresh via `pnpm fundamentals:refresh`. **Quarterly fundamentals** backfill COMPLETE (2026-06-29): `revenue`, `operating_profit`, `opm_pct`, `net_profit`, `eps`, `operating_cash_flow`, `free_cash_flow` from Screener.in `#quarters` + `#cash-flow` tables for 166 symbols (3,222 rows). Backfill: `pnpm backfill:quarterly`.
 
@@ -66,7 +66,55 @@ evaluateQualityGarpSymbol, `qds`/`qds_warning`/`qds_skipped` funnel counters.
 
 ---
 
+---
+
+## Shipped — Regime-aware GARP thresholds (Item 1a, 2026-07-06)
+
+**Architecture shipped (zero behaviour change):** `GarpThresholds` interface + `resolveGarpThresholds(regime?)` in
+`quality-garp.ts`; all threshold constants threaded through `evaluateQualityGarpSymbol` via thresholds struct.
+`regime_thresholds` persisted to `matched_criteria` JSON on every pass. 6 tests in
+`tests/analysers/quality-garp-thresholds.test.ts` (all passing).
+
+**CHOPPY branch returns existing constants** — production behaviour unchanged.
+
+**Item 1b (calibration) deferred:** BULL/BEAR/CRISIS threshold values are placeholder hypotheses. Requires running
+`pnpm cli fundamental-screen-audit` across 6 months of screen history segmented by regime before filling in real numbers.
+Gate: ≥30 post-fix paper trades closed first (need enough BULL days to measure pass-rate sensitivity).
+
+---
+
+## Shipped — ftinvstr cross-validation in briefing (Item 3, 2026-07-06)
+
+**Live:** GARP screen passes annotated with `[ext: confirmed by DCF_Compounder_Stack]` when symbol appears in
+`ext_signal_holdings` within a 3-day window. Ingest stage already runs daily. Graceful degradation when table empty.
+Arch: briefing composer queries `ext_signal_holdings` directly — no writes to `screens.matched_criteria`.
+
+**Active strategy:** `DCF_Compounder_Stack` only. Holdings verified 2026-07-06: TCS, INFY, ITC, BAJAJ-AUTO,
+HDFCBANK, WIPRO — all large-cap liquid.
+
+**HUNT2_FCF_Acceleration excluded permanently:** Holdings contained penny stocks (BESTAGRO ₹15.98, RAJMET ₹3.69,
+KHANDSE ₹17.65) — verified 2026-07-05. Any new strategy addition requires manual `get_holdings` check first.
+Trigger for next ext-signal review: 90 days (2026-09-28) or DCF_Compounder DD >15% from 2026-07-06 level.
+
+---
+
 **Backlog:**
+
+### B-ENG-13: Infra — rebuild better-sqlite3 for Node 26
+
+`quality-decay-score.test.ts` fails with `NODE_MODULE_VERSION 127 vs 147` because `better-sqlite3` was compiled
+against Node 22. Fix: `pnpm rebuild better-sqlite3` on the dev machine (not the Oracle VM which stays on Node 22).
+Not a logic bug — gate logic is correct, only test harness affected.
+
+### B-ENG-14: Clean stale HUNT2 rows from ext_signal_holdings
+
+```sql
+DELETE FROM ext_signal_holdings WHERE strategy_name = 'HUNT2_FCF_Acceleration';
+```
+
+Run this before GARP starts passing symbols regularly (currently 0 passes/day in CHOPPY).
+Stale July 3rd HUNT2 rows won't show in briefing today (GARP passed 0), but will when a
+GARP symbol overlaps with HUNT2's prior holdings within the 3-day window.
 
 ### B-ENG-12: EPS momentum factor upgrade — REJECTED (2026-06-30)
 
@@ -202,14 +250,18 @@ High alpha potential, medium data engineering effort.
 
 ---
 
-## Build Priority Order (updated 2026-06-30)
+## Build Priority Order (updated 2026-07-06)
 
-| Priority | Strategy                                | Status             | Blocker                                     |
-|----------|-----------------------------------------|--------------------|---------------------------------------------|
-| 1        | Quality-GARP v2 (OPM gate)                 | **Shipped v3**  | —                                           |
-| 2        | Catalyst-Driven Entry (v2: session hold) | **Shipped v1**     | Calendar-day hold → trading-session count   |
-| 3        | yahoo_snapshot daily refresh monitoring | Operational        | Watch 429 rate first week                   |
-| 4        | Dynamic Position Sizer                  | **In build**       | Weights stamped on insert; GTT reads unweighted until cohort flip |
-| 5        | Concall Intelligence Engine             | Blocked            | BSE/Screener PDF scraper needed             |
-| 6        | Earnings Reversal Play                  | Blocked            | Quarterly EPS data + concall engine         |
-| 7        | Sector Rotation                         | Blocked            | Sector-level FII flow data source           |
+| Priority | Item                                           | Status                  | Blocker / Next action                                        |
+|----------|------------------------------------------------|-------------------------|--------------------------------------------------------------|
+| 1        | Quality-GARP v3 (QDS + regime thresholds)      | **Shipped** (PRs 144/151/152) | Item 1b calibration after 30+ post-fix closed trades    |
+| 2        | Infra: `pnpm rebuild better-sqlite3` (Node 26) | **Needed now**          | Test suite failures (B-ENG-13)                               |
+| 3        | Clean stale HUNT2 rows                         | **Needed now**          | `DELETE FROM ext_signal_holdings WHERE strategy_name='HUNT2_FCF_Acceleration'` (B-ENG-14) |
+| 4        | Pledge gate activation (`QUALITY_GARP_PLEDGE_GATE=1`) | **Shadow mode** | Wait for ≥30 post-fix closed trades + BULL_TRENDING cycle |
+| 5        | Catalyst-Driven Entry v2 (trading-session hold) | **Backlog**            | Calendar-day hold → trading-session count via `quotes`       |
+| 6        | Item 1b: regime threshold calibration          | **Blocked**             | Need 30+ post-fix trades, 6-mo screen history audit by regime |
+| 7        | ftinvstr Slot 6 backtest (Aug)                 | **Reserve**             | Do not spend until August; see IMPLEMENTATION-PLAN.md        |
+| 8        | Dynamic Position Sizer (add-tranche/GTT wiring) | **Partial**            | Vol-target sizing shipped; GTT wiring after GTT gate opens   |
+| 9        | Concall Intelligence Engine                    | **Blocked**             | BSE/Screener PDF scraper needed                              |
+| 10       | Earnings Reversal Play                         | **Blocked**             | Quarterly EPS + estimate-revision feed + concall engine      |
+| 11       | Sector Rotation                                | **Blocked**             | Sector-level FII flow data source                            |
