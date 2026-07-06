@@ -11,7 +11,7 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { loadScreens, loadWatchlist } from '../config/loaders.js';
 import { getDb, getSizeMultiplier, isStrategyAllowed } from '../db/index.js';
-import { upsertScreenResults } from '../db/queries.js';
+import { replaceScreenResultsForDate } from '../db/queries.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 import type { ScreenDefinition, ScreenResult } from '../types/domain.js';
@@ -124,21 +124,27 @@ export function runScreenEngine(
   }
 
   if (persist) {
-    const passing = evaluations
-      .filter((e) => e.passed)
-      .map((e) => {
-        const base = toScreenResult(e);
-        if (opts.regime == null) return base;
-        return applyRegimeMetaToResult(base, opts.regime, db);
-      });
-    const written = upsertScreenResults(passing, db);
+    // Group by screen name so each screen's results are replaced atomically
+    const byScreen = new Map<string, ScreenResult[]>();
+    for (const e of evaluations) {
+      if (!e.passed) continue;
+      const base = toScreenResult(e);
+      const result = opts.regime == null ? base : applyRegimeMetaToResult(base, opts.regime, db);
+      const existing = byScreen.get(result.screenName) ?? [];
+      existing.push(result);
+      byScreen.set(result.screenName, existing);
+    }
+    let written = 0;
+    for (const [screenName, results] of byScreen) {
+      written += replaceScreenResultsForDate(results, date, screenName, db);
+    }
     log.info(
       {
         date,
         screens: screens.length,
         symbols: symbols.length,
         evaluations: evaluations.length,
-        matched: passing.length,
+        matched: [...byScreen.values()].reduce((s, a) => s + a.length, 0),
         written,
       },
       'screen engine run complete',
