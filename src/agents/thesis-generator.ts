@@ -54,8 +54,9 @@ RULES:
    - 7–8: strong alignment between technicals and fundamentals or clear catalyst path.
    - 9–10: reserved for exceptional multi-signal, high-conviction setups only.
 5. timeHorizon: "short" (1-4 weeks), "medium" (1-3 months), "long" (3-12 months).
-6. triggerScreen: describe what signal/pattern triggered this analysis.
+6. triggerScreen: Use ONLY the screen names listed in "## Screen matches today" (if that section is present). Do NOT claim "fundamental screener" or "quality screener" unless quality_garp is explicitly listed. For a golden_cross-only match, describe the trigger as "trend-following / technical confirmation", not as a fundamental screener.
 7. Always provide at least 1 bull case and 1 bear case.
+8. If the latest close price (from "## Recent Price Action" data) is ABOVE the entryZone you proposed AND RSI is above 65 (from "## Technical Signals"), describe the thesis as "pullback entry watch" in triggerScreen, not "breakout entry".
 
 RUBRIC (optional but strongly encouraged): Score each qualitative dimension 0-10
 using ONLY the provided context. If the context contains no evidence for a
@@ -871,6 +872,22 @@ export function buildStockContext(
   }
 
   if (variant === 'thesis') {
+    // Fired screens context — tells LLM which screens actually matched today
+    const firedScreens = db
+      .prepare(`
+      SELECT screen_name AS screenName FROM screens
+      WHERE symbol = ? AND date = ?
+      ORDER BY screen_name
+    `)
+      .all(symbol.toUpperCase(), date) as Array<{ screenName: string }>;
+
+    if (firedScreens.length > 0) {
+      sections.push('\n## Screen matches today');
+      sections.push(
+        `Fired screens for ${symbol.toUpperCase()} on ${date}: ${firedScreens.map((s) => s.screenName).join(', ')}.`,
+      );
+    }
+
     const fiiDii = db
       .prepare(
         `
