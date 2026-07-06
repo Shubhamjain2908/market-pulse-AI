@@ -1,0 +1,48 @@
+name: Jules Code Review
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: google-labs-code/jules-invoke@v1
+        with:
+          prompt: |
+            Review this PR for the market-pulse-ai stock analysis pipeline.
+            
+            Focus areas (based on AGENTS.md):
+            1. **Architecture & Design**: Does the change align with the pipeline stages (ingest → enrich → regime → screen → briefing)?
+            2. **Data Integrity**: Check quotes/fundamentals/signals database writes for atomicity and consistency.
+            3. **LLM Integration**: If touching LLM calls, verify provider abstraction is respected (factory pattern).
+            4. **Regime Gating**: If changing screen/thesis/strategy, verify regime_strategy_gate is honored.
+            5. **Code Quality**: TypeScript types, error handling, no hardcoded env values.
+            6. **Testing**: Ensure test coverage for new logic; LLM_PROVIDER=mock for tests.
+            7. **Performance**: Spot check for N+1 queries or unnecessary DB/API calls.
+            8. **Documentation**: Update architecture-v2.md, db-schema.md, guardrails.md if schema/behavior changes.
+            
+            Rules:
+            - Flag any hardcoded secrets or credentials immediately
+            - Verify prepared statements are used for all DB queries (no string concatenation)
+            - Check that migrations are append-only and don't modify historical files
+            - Ensure error messages are helpful and don't leak sensitive info
+            
+            Post findings as a PR comment with severity levels: CRITICAL, HIGH, MEDIUM, LOW.
+            Be constructive and reference specific lines when possible.
+          starting_branch: ${{ github.head_ref }}
+          include_last_commit: true
+          jules_api_key: ${{ secrets.JULES_API_KEY }}
