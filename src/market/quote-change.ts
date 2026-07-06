@@ -48,6 +48,11 @@ export function sessionChangeVsPriorClose(
     )
     .get(symbol, latest.date) as { close: number } | undefined;
   if (!prev || prev.close <= 0) return { changePct: 0, asOf: latest.date };
-  const changePct = ((latest.close - prev.close) / prev.close) * 100;
+  const changePct = pnlPctLong(prev.close, latest.close);
   return { changePct, asOf: latest.date };
+}
+
+/** Percentage return for a long position: ((exit - entry) / entry) * 100. */
+export function pnlPctLong(entry: number, exit: number): number {
+  return ((exit - entry) / entry) * 100;
 }

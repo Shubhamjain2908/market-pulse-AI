@@ -12,7 +12,6 @@ import {
   insertPaperTradeIfAbsent,
   type PaperTradeHorizon,
   type PaperTradeInsertRow,
-  type PaperTradeSignalType,
 } from '../db/queries.js';
 import { child } from '../logger.js';
 import {
@@ -27,13 +26,6 @@ import { parseInrPriceMidpoint } from './paper-trade-parsers.js';
 import type { PortfolioSummary, ThesisCard } from './template.js';
 
 const log = child({ component: 'paper-trade-writer' });
-
-function horizonToDays(horizon: string): { horizon: PaperTradeHorizon; maxHoldDays: number } {
-  const h = horizon.toLowerCase().trim();
-  if (h === 'short') return { horizon: 'short', maxHoldDays: 30 };
-  if (h === 'long') return { horizon: 'long', maxHoldDays: 252 };
-  return { horizon: 'medium', maxHoldDays: 90 };
-}
 
 function isValidLongLevel(entry: number, stop: number, target: number): boolean {
   if (!(entry > 0 && stop > 0 && target > 0)) return false;
@@ -88,19 +80,6 @@ export interface PaperTradeRecordResult {
   sameDayReentryBlocked: number;
   blockedAiPick: number;
   blockedPortfolioAdd: number;
-}
-
-function blockIfOpenPaperTradeExists(
-  symbol: string,
-  signalType: PaperTradeSignalType,
-  db: DatabaseType,
-): boolean {
-  if (!hasOpenPaperTradeForSymbol(symbol, db)) return false;
-  log.info(
-    { symbol, signalType, blockReason: 'open_in_other_strategy' },
-    'paper trade dedup — symbol already open under different signal',
-  );
-  return true;
 }
 
 export interface SizedPaperTradeInsertResult {
@@ -200,7 +179,15 @@ export function recordPaperTrades(
         continue;
       }
       const maxHoldDays = Math.max(1, Math.trunc(catalystCriteria.days_to_earnings) + 2);
-      if (blockIfOpenPaperTradeExists(t.symbol, 'catalyst_entry', db)) {
+      if (hasOpenPaperTradeForSymbol(t.symbol, db)) {
+        log.info(
+          {
+            symbol: t.symbol,
+            signalType: 'catalyst_entry' as const,
+            blockReason: 'open_in_other_strategy',
+          },
+          'paper trade dedup — symbol already open under different signal',
+        );
         crossStrategyBlocked++;
         continue;
       }
@@ -318,8 +305,15 @@ export function recordPaperTrades(
       );
     }
 
-    const { horizon, maxHoldDays } = horizonToDays(t.timeHorizon ?? 'medium');
-    if (blockIfOpenPaperTradeExists(t.symbol, 'AI_PICK', db)) {
+    const h = (t.timeHorizon ?? 'medium').toLowerCase().trim();
+    const horizon = (h === 'short' || h === 'long' ? h : 'medium') as PaperTradeHorizon;
+    const maxHoldDays = horizon === 'short' ? 30 : horizon === 'long' ? 252 : 90;
+
+    if (hasOpenPaperTradeForSymbol(t.symbol, db)) {
+      log.info(
+        { symbol: t.symbol, signalType: 'AI_PICK' as const, blockReason: 'open_in_other_strategy' },
+        'paper trade dedup — symbol already open under different signal',
+      );
       crossStrategyBlocked++;
       continue;
     }
@@ -384,7 +378,15 @@ export function recordPaperTrades(
         continue;
       }
 
-      if (blockIfOpenPaperTradeExists(p.symbol, 'PORTFOLIO_ADD', db)) {
+      if (hasOpenPaperTradeForSymbol(p.symbol, db)) {
+        log.info(
+          {
+            symbol: p.symbol,
+            signalType: 'PORTFOLIO_ADD' as const,
+            blockReason: 'open_in_other_strategy',
+          },
+          'paper trade dedup — symbol already open under different signal',
+        );
         crossStrategyBlocked++;
         continue;
       }

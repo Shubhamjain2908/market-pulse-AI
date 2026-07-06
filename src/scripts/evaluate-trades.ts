@@ -32,6 +32,7 @@ import {
 import { isoDateIst, parseIsoDate } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 import { NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
+import { pnlPctLong } from '../market/quote-change.js';
 import { nextOpenOnOrAfter } from '../market/trading-days.js';
 import type { ExitReason } from '../types/trailing-stop.js';
 import { GAP_DOWN_THROUGH_STOP_NOTE } from '../types/trailing-stop.js';
@@ -106,10 +107,6 @@ function getSymbolBars(
   `,
     )
     .all(symbol, sourceDate, asOf) as OhlcBar[];
-}
-
-function pnlPctLong(entry: number, exit: number): number {
-  return ((exit - entry) / entry) * 100;
 }
 
 /** Spec / momentum-config `hard_stop_pct` (e.g. -8 → floor at 92% of entry for longs). */
