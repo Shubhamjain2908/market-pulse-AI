@@ -289,6 +289,11 @@ export async function runDailyWorkflow(
             category: 'Concall coverage',
             message: `Found ${r.transcriptsFound} potential transcript PDFs but extracted 0 usable ones — likely invites/outcome sheets (${r.skipped} skipped as too short / duplicate).`,
           });
+        } else if (r.transcriptsFound > 0 && r.extracted < r.transcriptsFound) {
+          warnings.push({
+            category: 'Concall coverage',
+            message: `Partial extraction: ${r.extracted}/${r.transcriptsFound} PDFs extracted (${r.skipped} skipped as too short / duplicate, ${r.failed} failed).`,
+          });
         } else if (r.symbolsChecked > 0 && r.transcriptsFound === 0) {
           warnings.push({
             category: 'Concall coverage',
