@@ -340,40 +340,6 @@ export function evaluateAiPickEligibility(
     return { eligible: false, reasons: ['false_momentum_flag'], facts };
   }
 
-  // ---- Operating quality guard (PR 3: IDEA 2026-07-06) ----
-  // Blocks AI_PICK when the symbol has structurally impaired operating quality
-  // even if the momentum false-flag mechanism did not fire (e.g. exceptional
-  // one-off profit flipped net_profit_ttm positive while operations remain weak).
-  const fundamentals = getLatestFundamentals(sym, sourceDate, db);
-  const operatingQualityReasons: string[] = [];
-
-  if (fundamentals) {
-    if (fundamentals.roce != null && fundamentals.roce < 0) {
-      operatingQualityReasons.push('negative_roce');
-    }
-    if (fundamentals.pb == null && fundamentals.roe == null) {
-      operatingQualityReasons.push('missing_equity_quality');
-    }
-  }
-  // Exceptional-profit-flip: net_profit_ttm went from deeply negative to large positive
-  // while roce is negative (indicating operations are still loss-making).
-  if (
-    fundamentals &&
-    fundamentals.roce != null &&
-    fundamentals.roce < 0 &&
-    fundamentals.netProfitTtm != null &&
-    fundamentals.netProfitTtm > 0
-  ) {
-    operatingQualityReasons.push('exceptional_profit_flip');
-  }
-
-  facts.operatingQualityBlocked = operatingQualityReasons.length > 0;
-  facts.operatingQualityReasons = operatingQualityReasons;
-
-  if (operatingQualityReasons.length > 0) {
-    return { eligible: false, reasons: ['operating_quality'], facts };
-  }
-
   const screens = getSameDayScreens(sym, sourceDate, db);
   facts.screens = screens;
   const hasGoldenCross = screens.includes('golden_cross');
@@ -396,6 +362,45 @@ export function evaluateAiPickEligibility(
       path: 'path_b_alert_breakout',
       facts,
     };
+  }
+
+  // ---- Operating quality guard (golden_cross paths only) ----
+  // Only applies to momentum-based golden_cross admissions, not to Path A/B.
+  // Blocks when structural operating metrics are impaired even if momentum flags didn't fire.
+  // Example: IDEA 2026-07-06 had exceptional-profit-flip (TTM positive, ROCE negative).
+  // Per guardrails.md line 47, this guard restricts `mom_rank`-based paths.
+  if (hasGoldenCross) {
+    const fundamentals = getLatestFundamentals(sym, sourceDate, db);
+    const operatingQualityReasons: string[] = [];
+
+    if (fundamentals) {
+      if (fundamentals.roce != null && fundamentals.roce < 0) {
+        operatingQualityReasons.push('negative_roce');
+      }
+      // Financial-sector exemption: many financials report D/E and PB differently.
+      // Only block when BOTH pb and roe are null (indicating data unavailability),
+      // not when they are legitimately zero or low.
+      if (fundamentals.pb == null && fundamentals.roe == null) {
+        operatingQualityReasons.push('missing_equity_quality');
+      }
+    }
+    // Exceptional-profit-flip: net_profit_ttm went positive while roce is negative
+    if (
+      fundamentals &&
+      fundamentals.roce != null &&
+      fundamentals.roce < 0 &&
+      fundamentals.netProfitTtm != null &&
+      fundamentals.netProfitTtm > 0
+    ) {
+      operatingQualityReasons.push('exceptional_profit_flip');
+    }
+
+    facts.operatingQualityBlocked = operatingQualityReasons.length > 0;
+    facts.operatingQualityReasons = operatingQualityReasons;
+
+    if (operatingQualityReasons.length > 0) {
+      return { eligible: false, reasons: ['operating_quality'], facts };
+    }
   }
 
   if (regime === 'CHOPPY' && hasGoldenCross) {

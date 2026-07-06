@@ -651,9 +651,10 @@ describe('recordPaperTrades', () => {
     expect(getOpenPaperTrades(db)).toHaveLength(1);
   });
 
-  it('blocks AI_PICK same-day reentry when a CLOSED trade has the same outcome_date', () => {
+  it('allows AI_PICK same-day reentry when a CLOSED trade exited on the same date', () => {
     seedPathAScreen('ADANIENSOL', '2026-07-06');
-    // Prior AI_PICK that hit target on 2026-07-06
+    // Prior AI_PICK that hit target on 2026-07-06; per guardrails.md line 48,
+    // closed trades do not block entry (no same-day cooldown for CLOSED status).
     db.prepare(
       `
       INSERT INTO paper_trades (
@@ -683,17 +684,11 @@ describe('recordPaperTrades', () => {
       db,
     );
 
-    expect(r.insertedAiPick).toBe(0);
-    expect(r.sameDayReentryBlocked).toBe(1);
-    expect(getOpenPaperTrades(db)).toHaveLength(0);
-    expect(mockInfo).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'paper_trade_same_day_reentry_blocked',
-        symbol: 'ADANIENSOL',
-        sourceDate: '2026-07-06',
-      }),
-      'AI_PICK blocked by same-day re-entry cooldown',
-    );
+    // CLOSED trades do not block per guardrails; only OPEN trades do
+    expect(r.insertedAiPick).toBe(1);
+    const openTrades = getOpenPaperTrades(db);
+    expect(openTrades).toHaveLength(1);
+    expect(openTrades[0]?.symbol).toBe('ADANIENSOL');
   });
 
   it('allows AI_PICK when prior paper trade closed on a different date', () => {
@@ -728,13 +723,12 @@ describe('recordPaperTrades', () => {
     );
 
     expect(r.insertedAiPick).toBe(1);
-    expect(r.sameDayReentryBlocked).toBe(0);
     expect(getOpenPaperTrades(db)).toHaveLength(1);
   });
 
-  it('blocks PORTFOLIO_ADD same-day reentry when a CLOSED trade has the same outcome_date', () => {
+  it('allows PORTFOLIO_ADD even when a CLOSED trade exited on the same date', () => {
     portfolioAddPaperTrades.value = '1';
-    // ADANIENSOL closed on 2026-07-06
+    // ADANIENSOL closed on 2026-07-06; per guardrails.md, closed trades do not block
     db.prepare(
       `
       INSERT INTO paper_trades (
@@ -773,14 +767,8 @@ describe('recordPaperTrades', () => {
     };
 
     const r = recordPaperTrades('2026-07-06', [], portfolio, db);
-    expect(r.insertedPortfolioAdd).toBe(0);
-    expect(r.sameDayReentryBlocked).toBe(1);
-    expect(mockInfo).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event: 'paper_trade_same_day_reentry_blocked',
-        symbol: 'ADANIENSOL',
-      }),
-      'PORTFOLIO_ADD blocked by same-day re-entry cooldown',
-    );
+    // CLOSED trades do not block per guardrails; only OPEN trades do
+    expect(r.insertedPortfolioAdd).toBe(1);
+    expect(getOpenPaperTrades(db)).toHaveLength(1);
   });
 });
