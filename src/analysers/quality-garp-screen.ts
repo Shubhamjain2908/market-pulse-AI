@@ -13,22 +13,15 @@ import type { Regime } from '../types/regime.js';
 import type { ScreenEngineResult } from './engine.js';
 import {
   createEmptyQualityGarpFunnel,
-  OPM_STD_DEV_MAX_PCT,
+  type GarpThresholds,
   PROMOTER_PLEDGE_MAX_PCT,
   persistQualityGarpFunnel,
-  QUALITY_GARP_DE_MAX,
-  QUALITY_GARP_PB_MAX,
-  QUALITY_GARP_PE_MAX,
-  QUALITY_GARP_PEG_MAX,
-  QUALITY_GARP_ROCE_MIN,
-  QUALITY_GARP_ROE_MIN,
-  QUALITY_GARP_RSI_MAX,
   QUALITY_GARP_SCREEN,
-  QUALITY_GARP_SMA50_PCT_MAX,
   QUALITY_GARP_TOTAL_GATES,
   type QualityGarpFailGate,
   type QualityGarpFunnelCounts,
   recordQualityGarpFunnelFailure,
+  resolveGarpThresholds,
   resolveQualityGarpSymbols,
 } from './quality-garp.js';
 import type { SignalProvider } from './signal-provider.js';
@@ -56,6 +49,12 @@ interface QualityGarpMatchedCriteria {
   qds_score?: number;
   qds_warning?: boolean;
   qds_signals?: Record<string, boolean>;
+  regime_thresholds?: {
+    rsiMax: number;
+    sma50PctMax: number;
+    peMax: number;
+    pegMax: number;
+  };
 }
 
 interface QualityGarpEvaluation {
@@ -104,6 +103,7 @@ export function runQualityGarpScreen(
 
   const results: ScreenResult[] = [];
   const evaluations: ScreenEngineResult['evaluations'] = [];
+  const thresholds = resolveGarpThresholds(regime);
   let matches = 0;
 
   for (const symbol of symbols) {
@@ -122,6 +122,7 @@ export function runQualityGarpScreen(
       opmStdDev,
       db,
       regime,
+      thresholds,
     );
     const totalCriteria = QUALITY_GARP_TOTAL_GATES;
 
@@ -219,7 +220,8 @@ function evaluateQualityGarpSymbol(
   etfExclusions: Set<string>,
   opmStdDev: number | null,
   db: DatabaseType,
-  regime?: Regime,
+  regime: Regime | undefined,
+  thresholds: GarpThresholds,
 ): QualityGarpEvaluation {
   let matchedCount = 0;
 
@@ -252,7 +254,7 @@ function evaluateQualityGarpSymbol(
   }
   matchedCount++;
 
-  if (fundamentals.pe > QUALITY_GARP_PE_MAX || fundamentals.pb > QUALITY_GARP_PB_MAX) {
+  if (fundamentals.pe > thresholds.peMax || fundamentals.pb > thresholds.pbMax) {
     return {
       passed: false,
       score: gateScore(matchedCount),
@@ -266,9 +268,9 @@ function evaluateQualityGarpSymbol(
     fundamentals.latestRoe == null ||
     fundamentals.prevRoe == null ||
     fundamentals.thirdRoe == null ||
-    fundamentals.latestRoe < QUALITY_GARP_ROE_MIN ||
-    fundamentals.prevRoe < QUALITY_GARP_ROE_MIN ||
-    fundamentals.thirdRoe < QUALITY_GARP_ROE_MIN
+    fundamentals.latestRoe < thresholds.roeMin ||
+    fundamentals.prevRoe < thresholds.roeMin ||
+    fundamentals.thirdRoe < thresholds.roeMin
   ) {
     return {
       passed: false,
@@ -279,7 +281,7 @@ function evaluateQualityGarpSymbol(
   }
   matchedCount++;
 
-  if (fundamentals.latestRoce == null || fundamentals.latestRoce < QUALITY_GARP_ROCE_MIN) {
+  if (fundamentals.latestRoce == null || fundamentals.latestRoce < thresholds.roceMin) {
     return {
       passed: false,
       score: gateScore(matchedCount),
@@ -289,7 +291,7 @@ function evaluateQualityGarpSymbol(
   }
   matchedCount++;
 
-  if (fundamentals.debtToEquity == null || fundamentals.debtToEquity >= QUALITY_GARP_DE_MAX) {
+  if (fundamentals.debtToEquity == null || fundamentals.debtToEquity >= thresholds.deMax) {
     return {
       passed: false,
       score: gateScore(matchedCount),
@@ -307,7 +309,7 @@ function evaluateQualityGarpSymbol(
       failedGate: 'peg_null',
     };
   }
-  if (fundamentals.peg >= QUALITY_GARP_PEG_MAX) {
+  if (fundamentals.peg >= thresholds.pegMax) {
     return {
       passed: false,
       score: gateScore(matchedCount),
@@ -318,7 +320,7 @@ function evaluateQualityGarpSymbol(
   matchedCount++;
 
   const rsi14 = provider.get(symbol, date, 'rsi_14');
-  if (rsi14 == null || rsi14 >= QUALITY_GARP_RSI_MAX) {
+  if (rsi14 == null || rsi14 >= thresholds.rsiMax) {
     return {
       passed: false,
       score: gateScore(matchedCount),
@@ -339,7 +341,7 @@ function evaluateQualityGarpSymbol(
     };
   }
   const pctFromSma50 = Math.abs(((close - sma50) / sma50) * 100);
-  if (pctFromSma50 > QUALITY_GARP_SMA50_PCT_MAX) {
+  if (pctFromSma50 > thresholds.sma50PctMax) {
     return {
       passed: false,
       score: gateScore(matchedCount),
@@ -381,7 +383,7 @@ function evaluateQualityGarpSymbol(
   }
 
   if (opmStdDev !== null) {
-    if (opmStdDev > OPM_STD_DEV_MAX_PCT) {
+    if (opmStdDev > thresholds.opmStdDevMax) {
       return {
         passed: false,
         score: gateScore(matchedCount),
@@ -456,6 +458,12 @@ function evaluateQualityGarpSymbol(
             qds_signals: qdsSignals,
           }
         : {}),
+      regime_thresholds: {
+        rsiMax: thresholds.rsiMax,
+        sma50PctMax: thresholds.sma50PctMax,
+        peMax: thresholds.peMax,
+        pegMax: thresholds.pegMax,
+      },
     },
   };
 }
