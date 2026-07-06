@@ -65,7 +65,7 @@ export function resolveQualityGarpWatchlistSymbols(): QualityGarpSymbolResolutio
 /** Shared Quality-GARP v2 gate thresholds (screener + audit). */
 
 export const QUALITY_GARP_SCREEN = 'quality_garp';
-export const QUALITY_GARP_TOTAL_GATES = 12;
+export const QUALITY_GARP_TOTAL_GATES = 13;
 export const PROMOTER_PLEDGE_MAX_PCT = 15;
 export const QUALITY_GARP_PE_MAX = 35;
 export const QUALITY_GARP_PB_MAX = 6;
@@ -97,7 +97,8 @@ export type QualityGarpFailGate =
   | 'sma50'
   | 'promoter'
   | 'pledge'
-  | 'opm_stability';
+  | 'opm_stability'
+  | 'qds';
 
 /** Per-gate elimination counts (one bucket per symbol). */
 export interface QualityGarpFunnelCounts {
@@ -120,6 +121,9 @@ export interface QualityGarpFunnelCounts {
   pledge_skipped: number;
   opm_stability: number;
   opm_skipped: number;
+  qds: number;
+  qds_warning: number;
+  qds_skipped: number;
   passed: number;
 }
 
@@ -159,6 +163,9 @@ export function createEmptyQualityGarpFunnel(): QualityGarpFunnelCounts {
     pledge_skipped: 0,
     opm_stability: 0,
     opm_skipped: 0,
+    qds: 0,
+    qds_warning: 0,
+    qds_skipped: 0,
     passed: 0,
   };
 }
@@ -220,11 +227,16 @@ export function formatQualityGarpFunnelSummary(
     funnel.opm_skipped > 0
       ? `OPM ${funnel.opm_stability} fail, ${funnel.opm_skipped} skipped`
       : `OPM ${funnel.opm_stability}`;
+  const qdsSummary =
+    funnel.qds_skipped > 0
+      ? `QDS ${funnel.qds} fail, ${funnel.qds_warning} warn, ${funnel.qds_skipped} skipped`
+      : `QDS ${funnel.qds} fail, ${funnel.qds_warning} warn`;
   return [
     `Quality-GARP: 0 matches (${funnel.candidates_pe_pb} PE/PB candidates${scopeLabel}).`,
     `Pre-RSI eliminations: valuation ${funnel.valuation}, 3yr ROE ${funnel.roe_3yr},`,
     `ROCE ${funnel.roce}, D/E ${funnel.debt}, PEG null ${funnel.peg_null}, PEG fail ${funnel.peg}.`,
     `Technical: RSI ${funnel.rsi}, SMA50 ${funnel.sma50}, promoter ${funnel.promoter}, pledge ${funnel.pledge} (${funnel.pledge_shadow} shadow), ${opmSummary}.`,
+    `QDS: ${qdsSummary}.`,
     `Passed all gates: ${funnel.passed} (pre-RSI survivors: ${preRsi}).`,
   ].join(' ');
 }

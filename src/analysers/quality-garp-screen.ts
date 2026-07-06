@@ -3,6 +3,7 @@ import { config } from '../config/env.js';
 import { getSizeMultiplier, isStrategyAllowed } from '../db/index.js';
 import {
   getPromoterPledgeSnapshot,
+  getQualityDecayScore,
   getQualityGarpFundamentals,
   getTrailingOpmStdDev,
   upsertScreenResults,
@@ -52,6 +53,9 @@ interface QualityGarpMatchedCriteria {
   pct_from_sma50: number;
   opm_std_dev: number | null;
   pledge_pct: number | null;
+  qds_score?: number;
+  qds_warning?: boolean;
+  qds_signals?: Record<string, boolean>;
 }
 
 interface QualityGarpEvaluation {
@@ -62,6 +66,8 @@ interface QualityGarpEvaluation {
   matchedCriteria?: QualityGarpMatchedCriteria;
   pledgeGateSkipped?: boolean;
   pledgeShadowHit?: boolean;
+  qdsSkipped?: boolean;
+  qdsWarning?: boolean;
 }
 
 export function runQualityGarpScreen(
@@ -115,6 +121,7 @@ export function runQualityGarpScreen(
       etfExclusions,
       opmStdDev,
       db,
+      regime,
     );
     const totalCriteria = QUALITY_GARP_TOTAL_GATES;
 
@@ -134,6 +141,12 @@ export function runQualityGarpScreen(
     }
     if (evaluation.pledgeShadowHit) {
       funnel.pledge_shadow++;
+    }
+    if (evaluation.qdsSkipped && !evaluation.failedGate) {
+      funnel.qds_skipped++;
+    }
+    if (evaluation.qdsWarning) {
+      funnel.qds_warning++;
     }
 
     evaluations.push({
@@ -206,6 +219,7 @@ function evaluateQualityGarpSymbol(
   etfExclusions: Set<string>,
   opmStdDev: number | null,
   db: DatabaseType,
+  regime?: Regime,
 ): QualityGarpEvaluation {
   let matchedCount = 0;
 
@@ -378,12 +392,44 @@ function evaluateQualityGarpSymbol(
     matchedCount++;
   }
 
+  // Gate 13: Quality Decay Score
+  // Bypass entirely in CRISIS (known deterioration is expected).
+  let qdsScore: number | undefined;
+  let evaluationQdsWarning = false;
+  let qdsSignals: Record<string, boolean> | undefined;
+  let qdsSkipped = false;
+
+  if (regime !== 'CRISIS') {
+    const qdsResult = getQualityDecayScore(symbol, date, db);
+    if (qdsResult == null) {
+      qdsSkipped = true; // fail-open: insufficient data
+    } else if (qdsResult.score <= 3) {
+      return {
+        passed: false,
+        score: gateScore(matchedCount),
+        matchedCount,
+        failedGate: 'qds',
+      };
+    } else {
+      matchedCount++;
+      qdsScore = qdsResult.score;
+      qdsSignals = qdsResult.signals;
+      if (qdsResult.score === 4) {
+        evaluationQdsWarning = true;
+      }
+    }
+  } else {
+    qdsSkipped = true;
+  }
+
   return {
     passed: true,
     score: gateScore(matchedCount),
     matchedCount,
     pledgeGateSkipped,
     pledgeShadowHit,
+    qdsSkipped,
+    qdsWarning: evaluationQdsWarning,
     matchedCriteria: {
       latest_roe: fundamentals.latestRoe,
       prev_roe: fundamentals.prevRoe,
@@ -403,6 +449,13 @@ function evaluateQualityGarpSymbol(
       pct_from_sma50: pctFromSma50,
       opm_std_dev: opmStdDev,
       pledge_pct: pledgePct,
+      ...(qdsScore != null
+        ? {
+            qds_score: qdsScore,
+            qds_warning: evaluationQdsWarning,
+            qds_signals: qdsSignals,
+          }
+        : {}),
     },
   };
 }

@@ -36,6 +36,36 @@ Fail-open when <4 quarters of `quarterly_fundamentals.opm_pct` data.
 - Distribution: median 2.33%, P75 4.21% — 5.0× is 1.7× median, not aggressive
 - Implementation: `getTrailingOpmStdDev` in `queries.ts`, gate 11 in `evaluateQualityGarpSymbol`
 
+---
+
+## Shipped — Quality Decay Score gate (QDS, 2026-07-06)
+
+**Gate added (gate 13):** 6-signal Piotroski-style Quality Decay Score (0–6) computed
+from `quarterly_fundamentals` at screen time. Hard block at QDS ≤ 3 (P10 of distribution).
+Soft warning at QDS = 4 (passes with `qds_warning: true` flag in matched criteria).
+Fail-open when <5 quarters of data available. Bypassed entirely in CRISIS regime.
+
+**Threshold calibration:**
+- Audit script: `scripts/audit-qds-coverage.mts` — 131/241 symbols (54.4%) with ≥5 quarters
+- Distribution: median 5, mean 4.66, P10 at score 3
+- Hard block: ≤ 3 (blocks ~18.3% of scored = ~10% of total universe, matching OPM's P80 precedent)
+- Soft warn: score = 4
+
+**The 6 signals:**
+| Signal | Condition | Data source |
+|---|---|---|
+| P1: Net profit positive | `net_profit_latest > 0` | `quarterly_fundamentals.net_profit` |
+| P2: Net profit improving | `net_profit_latest > net_profit_4ago` | same |
+| P3: OCF positive | `operating_cash_flow_latest > 0` | `quarterly_fundamentals.operating_cash_flow` |
+| P4: OCF > Net profit | `ocf_latest > net_profit_latest` | same |
+| P5: OPM improving | `opm_pct_latest > opm_pct_4ago` | `quarterly_fundamentals.opm_pct` |
+| P6: Revenue improving | `revenue_latest > revenue_4ago` | `quarterly_fundamentals.revenue` |
+
+**Implementation:** `getQualityDecayScore` in `src/db/queries.ts`, gate 13 in
+evaluateQualityGarpSymbol, `qds`/`qds_warning`/`qds_skipped` funnel counters.
+
+---
+
 **Backlog:**
 
 ### B-ENG-12: EPS momentum factor upgrade — REJECTED (2026-06-30)
