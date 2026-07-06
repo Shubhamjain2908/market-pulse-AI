@@ -9,6 +9,10 @@ import type { Database as DatabaseType } from 'better-sqlite3';
 
 import { getMomentumUniverseSymbols } from '../../config/loaders.js';
 import { getTodayRegime } from '../../db/regime-queries.js';
+import {
+  computeWeinsteinStage,
+  WEINSTEIN_STAGE,
+} from '../../enrichers/technical/weinstein-stage.js';
 import { NIFTY_BENCHMARK_SYMBOL } from '../../market/benchmarks.js';
 import { addCalendarDaysIst } from '../../market/trading-days.js';
 import { buildTrade } from '../metrics.js';
@@ -17,6 +21,7 @@ import type { OptionARegimeSource, RegimeProxyMap } from '../regime-proxy.js';
 import { computeSignalsForLastBar, type OHLCVBar, SIGNAL_WINDOW_LEN } from '../signals.js';
 import type { BacktestExitReason, ClosedSimTrade } from '../types.js';
 import { filterOptionAUniverse } from '../universe-filter.js';
+import type { StageGateMode } from './momentum-mf.js';
 
 const HOLD_DAYS = 20;
 /** Aligns with `momentum-config` portfolio_slots (live book breadth). */
@@ -40,6 +45,8 @@ export interface AiPickBacktestOpts {
   db: DatabaseType;
   regimeSource: OptionARegimeSource;
   regimeProxyByDate?: RegimeProxyMap;
+  /** Weinstein stage gate for entries. 'off' (default) = no filter. */
+  stageGate?: StageGateMode;
 }
 
 function regimeForDay(D: string, opts: AiPickBacktestOpts): string | null {
@@ -103,6 +110,23 @@ export function runAiPickBacktest(opts: AiPickBacktestOpts): ClosedSimTrade[] {
     for (const sym of universe) {
       const barsAll = ohlcv.get(sym);
       if (!barsAll) continue;
+
+      // Stage gate: filter candidates by Weinstein stage
+      if (opts.stageGate != null && opts.stageGate !== 'off') {
+        const closes = barsThroughDate(barsAll, D).map((b) => b.close);
+        if (closes.length >= 50) {
+          const stageResult = computeWeinsteinStage(closes, closes.length - 1);
+          if (
+            opts.stageGate === 'stage2' &&
+            stageResult.stageCode !== WEINSTEIN_STAGE.STAGE_2A &&
+            stageResult.stageCode !== WEINSTEIN_STAGE.STAGE_2B
+          )
+            continue;
+          if (opts.stageGate === 'exclude4' && stageResult.stageCode === WEINSTEIN_STAGE.STAGE_4)
+            continue;
+        }
+      }
+
       const win = sliceWindowEndingAt(barsAll, D, SIGNAL_WINDOW_LEN);
       const sig = computeSignalsForLastBar(win);
       if (!sig || !passesAiPickProxy(sig)) continue;

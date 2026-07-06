@@ -546,6 +546,86 @@ export function upsertQuarterlyFundamentals(
 }
 
 // ---------------------------------------------------------------------------
+// Quality Decay Score (QDS) — 6-signal Piotroski-style trajectory check
+// ---------------------------------------------------------------------------
+
+export interface QualityDecayResult {
+  score: number; // 0–6
+  signals: {
+    netProfitPositive: boolean;
+    netProfitImproving: boolean;
+    ocfPositive: boolean;
+    ocfExceedsNetProfit: boolean;
+    opmImproving: boolean;
+    revenueImproving: boolean;
+  };
+  quartersAvailable: number;
+}
+
+/**
+ * Computes QDS for a symbol at a given asOf date.
+ * Returns null when <5 quarters of quarterly_fundamentals data available (fail-open).
+ * Matches the audit script used for P10 threshold calibration.
+ */
+export function getQualityDecayScore(
+  symbol: string,
+  asOf: string,
+  db: DatabaseType = getDb(),
+): QualityDecayResult | null {
+  const rows = db
+    .prepare(
+      `
+      SELECT quarter_end, net_profit, operating_cash_flow, opm_pct, revenue
+      FROM quarterly_fundamentals
+      WHERE symbol = ? AND quarter_end <= ?
+      ORDER BY quarter_end DESC
+      LIMIT 5
+    `,
+    )
+    .all(symbol.toUpperCase(), asOf) as Array<{
+    quarter_end: string;
+    net_profit: number | null;
+    operating_cash_flow: number | null;
+    opm_pct: number | null;
+    revenue: number | null;
+  }>;
+
+  if (rows.length < 5) return null;
+
+  const latest = rows[0];
+  const yearAgo = rows[4];
+  if (!latest || !yearAgo) return null;
+
+  const netProfitPositive = latest.net_profit != null && latest.net_profit > 0;
+  const netProfitImproving =
+    latest.net_profit != null && yearAgo.net_profit != null
+      ? latest.net_profit > yearAgo.net_profit
+      : false;
+  const ocfPositive = latest.operating_cash_flow != null && latest.operating_cash_flow > 0;
+  const ocfExceedsNetProfit =
+    latest.operating_cash_flow != null && latest.net_profit != null
+      ? latest.operating_cash_flow > latest.net_profit
+      : false;
+  const opmImproving =
+    latest.opm_pct != null && yearAgo.opm_pct != null ? latest.opm_pct > yearAgo.opm_pct : false;
+  const revenueImproving =
+    latest.revenue != null && yearAgo.revenue != null ? latest.revenue > yearAgo.revenue : false;
+
+  const signals = {
+    netProfitPositive,
+    netProfitImproving,
+    ocfPositive,
+    ocfExceedsNetProfit,
+    opmImproving,
+    revenueImproving,
+  };
+
+  const score = Object.values(signals).filter(Boolean).length;
+
+  return { score, signals, quartersAvailable: rows.length };
+}
+
+// ---------------------------------------------------------------------------
 // Trailing quarterly EPS growth — null if < 5 quarters (T vs T-4)
 // ---------------------------------------------------------------------------
 

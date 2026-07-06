@@ -4,14 +4,6 @@
     {
       "name": "DCF_Compounder_Stack",
       "display_name": "DCF Compounder Stack"
-    },
-    {
-      "name": "HUNT2_FCF_Acceleration",
-      "display_name": "FCF Acceleration Compounder"
-    },
-    {
-      "name": "Quality4_Momentum_Blend_u1",
-      "display_name": "Quality Compounders + Momentum"
     }
   ]
 }

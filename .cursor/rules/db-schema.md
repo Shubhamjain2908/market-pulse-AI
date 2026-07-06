@@ -153,6 +153,7 @@ CREATE TABLE screens (
 CREATE INDEX idx_screens_date_screen ON screens(date, screen_name);
 -- Custom screen dispatchers store rich JSON in screens.matched_criteria (not DSL criteria arrays):
 -- quality_garp: latest/prev/third ROE, latest ROCE, pe/pb/peg, debt_to_equity, promoter fields, pledge_pct, rsi/sma50/close, optional __regime_meta
+--              optional qds_score (0-6), qds_warning (bool), qds_signals ({signals object})
 -- catalyst_entry: earnings date, days_to_earnings, atr_14, news/sentiment fields, optional __regime_meta
 CREATE TABLE portfolio (
   symbol     TEXT    NOT NULL,
