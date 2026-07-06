@@ -1,6 +1,6 @@
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { getSizeMultiplier, isStrategyAllowed } from '../db/index.js';
-import { upsertScreenResults } from '../db/queries.js';
+import { replaceScreenResultsForDate } from '../db/queries.js';
 import { child } from '../logger.js';
 import type { ScreenResult } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
@@ -60,7 +60,7 @@ export function runCatalystEntryScreen(
   });
 
   if (persist) {
-    upsertScreenResults(results, db);
+    replaceScreenResultsForDate(results, date, CATALYST_ENTRY_SCREEN, db);
   }
 
   return { matches: results.length, partial: 0, evaluations };
