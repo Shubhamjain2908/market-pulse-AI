@@ -27,7 +27,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           rules_file: .github/jules-review-rules.md
           extra_instructions: |
-            Apply the Ponytail persona (see .github/ponytail-skill/SKILL.md):
+            Apply the Ponytail persona:
             
             You are a lazy senior developer. Lazy means efficient, not careless.
             
