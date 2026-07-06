@@ -23,8 +23,15 @@ const PERCENT_DISPLAY_COLUMNS = new Set([
 
 const ALLOCATION_INSTRUMENTS = new Set(loadEtfExclusions().map((s) => s.toUpperCase()));
 
+// NSE SGB format: SGB{3-letter-month}{2-digit-year}{roman-series} optionally followed by
+// an exchange suffix like "-GB". E.g. SGBJUN31I-GB, SGBDE31III.
+// The pattern anchors on "SGB" + at least 3 alphanumeric chars to avoid false-positives
+// on hypothetical equity tickers like "SGBTECH".
+const SGB_PATTERN = /^SGB[A-Z0-9]{3}/;
+
 export function isAllocationInstrument(symbol: string): boolean {
-  return ALLOCATION_INSTRUMENTS.has(symbol.toUpperCase());
+  const s = symbol.toUpperCase();
+  return ALLOCATION_INSTRUMENTS.has(s) || SGB_PATTERN.test(s);
 }
 
 function holdingValueInr(h: PortfolioHoldingRow): number {
