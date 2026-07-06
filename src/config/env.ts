@@ -148,6 +148,11 @@ const EnvSchema = z.object({
   CONCALL_MAX_PER_RUN: z.coerce.number().int().min(1).max(25).default(5),
   /** Days of lookback for fetching NSE announcements. */
   CONCALL_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(30).default(10),
+
+  /** Screener.in minimum delay (ms) between requests. Default 1200 ≈ 0.83 req/s. */
+  SCREENER_MIN_DELAY_MS: z.coerce.number().int().min(200).max(10_000).default(1_200),
+  /** Screener.in max retries per failed symbol. Default 5. */
+  SCREENER_MAX_RETRIES: z.coerce.number().int().min(1).max(10).default(5),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
