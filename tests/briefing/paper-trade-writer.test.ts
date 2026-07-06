@@ -650,4 +650,137 @@ describe('recordPaperTrades', () => {
     expect(recordPaperTrades('2026-05-01', theses, undefined, db).insertedAiPick).toBe(0);
     expect(getOpenPaperTrades(db)).toHaveLength(1);
   });
+
+  it('blocks AI_PICK same-day reentry when a CLOSED trade has the same outcome_date', () => {
+    seedPathAScreen('ADANIENSOL', '2026-07-06');
+    // Prior AI_PICK that hit target on 2026-07-06
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status, outcome_date, exit_price, pnl_pct
+      ) VALUES ('ADANIENSOL', 'AI_PICK', '2026-07-03', 100, 92, 115, 'medium', 90, 'CLOSED_WIN', '2026-07-06', 115, 15)
+    `,
+    ).run();
+
+    const r = recordPaperTrades(
+      '2026-07-06',
+      [
+        {
+          symbol: 'ADANIENSOL',
+          thesis: 'x',
+          bullCase: ['a'],
+          bearCase: ['b'],
+          entryZone: '₹105',
+          stopLoss: '₹98',
+          target: '₹125',
+          timeHorizon: 'short',
+          confidence: 7,
+          triggerReason: 'momentum',
+        },
+      ],
+      undefined,
+      db,
+    );
+
+    expect(r.insertedAiPick).toBe(0);
+    expect(r.sameDayReentryBlocked).toBe(1);
+    expect(getOpenPaperTrades(db)).toHaveLength(0);
+    expect(mockInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'paper_trade_same_day_reentry_blocked',
+        symbol: 'ADANIENSOL',
+        sourceDate: '2026-07-06',
+      }),
+      'AI_PICK blocked by same-day re-entry cooldown',
+    );
+  });
+
+  it('allows AI_PICK when prior paper trade closed on a different date', () => {
+    seedPathAScreen('DIFFDATE', '2026-05-01');
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status, outcome_date, exit_price, pnl_pct
+      ) VALUES ('DIFFDATE', 'AI_PICK', '2026-04-01', 100, 92, 115, 'medium', 90, 'CLOSED_WIN', '2026-04-15', 115, 15)
+    `,
+    ).run();
+
+    const r = recordPaperTrades(
+      '2026-05-01',
+      [
+        {
+          symbol: 'DIFFDATE',
+          thesis: 'x',
+          bullCase: ['a'],
+          bearCase: ['b'],
+          entryZone: '₹105',
+          stopLoss: '₹98',
+          target: '₹125',
+          timeHorizon: 'short',
+          confidence: 7,
+          triggerReason: 'momentum',
+        },
+      ],
+      undefined,
+      db,
+    );
+
+    expect(r.insertedAiPick).toBe(1);
+    expect(r.sameDayReentryBlocked).toBe(0);
+    expect(getOpenPaperTrades(db)).toHaveLength(1);
+  });
+
+  it('blocks PORTFOLIO_ADD same-day reentry when a CLOSED trade has the same outcome_date', () => {
+    portfolioAddPaperTrades.value = '1';
+    // ADANIENSOL closed on 2026-07-06
+    db.prepare(
+      `
+      INSERT INTO paper_trades (
+        symbol, signal_type, source_date, entry_price, stop_loss, target,
+        time_horizon, max_hold_days, status, outcome_date, exit_price, pnl_pct
+      ) VALUES ('ADANIENSOL', 'AI_PICK', '2026-07-03', 100, 92, 115, 'medium', 90, 'CLOSED_WIN', '2026-07-06', 115, 15)
+    `,
+    ).run();
+
+    const portfolio: PortfolioSummary = {
+      totalValue: 1,
+      totalPnl: 0,
+      totalPnlPct: 0,
+      dayChange: null,
+      dayChangePct: null,
+      source: 'manual',
+      positions: [
+        {
+          symbol: 'ADANIENSOL',
+          qty: 10,
+          avgPrice: 100,
+          lastPrice: 105,
+          pnl: 50,
+          pnlPct: 5,
+          dayChangePct: null,
+          action: 'ADD',
+          conviction: 0.7,
+          thesis: null,
+          triggerReason: null,
+          bullPoints: [],
+          bearPoints: [],
+          suggestedStop: 98,
+          suggestedTarget: 120,
+        },
+      ],
+    };
+
+    const r = recordPaperTrades('2026-07-06', [], portfolio, db);
+    expect(r.insertedPortfolioAdd).toBe(0);
+    expect(r.sameDayReentryBlocked).toBe(1);
+    expect(mockInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'paper_trade_same_day_reentry_blocked',
+        symbol: 'ADANIENSOL',
+      }),
+      'PORTFOLIO_ADD blocked by same-day re-entry cooldown',
+    );
+  });
 });

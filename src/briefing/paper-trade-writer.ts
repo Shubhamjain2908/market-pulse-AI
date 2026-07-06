@@ -8,6 +8,7 @@ import { loadMomentumConfig, loadSectorMap } from '../config/loaders.js';
 import { resolveBookValueInr } from '../db/index.js';
 import {
   hasOpenPaperTradeForSymbol,
+  hasPaperTradeClosedForSymbolOnDate,
   insertPaperTradeIfAbsent,
   type PaperTradeHorizon,
   type PaperTradeInsertRow,
@@ -83,6 +84,8 @@ export interface PaperTradeRecordResult {
   crossStrategyBlocked: number;
   /** Shadow: aggregate sector cap would block at next cohort boundary; insert still proceeds. */
   sectorCapExceeded: number;
+  /** Blocked same-day re-entry after a symbol's paper trade closed on the same source_date. */
+  sameDayReentryBlocked: number;
   blockedAiPick: number;
   blockedPortfolioAdd: number;
 }
@@ -169,6 +172,7 @@ export function recordPaperTrades(
   let insertedCatalystEntry = 0;
   let crossStrategyBlocked = 0;
   let sectorCapExceeded = 0;
+  let sameDayReentryBlocked = 0;
   let blockedAiPick = 0;
   let blockedPortfolioAdd = 0;
 
@@ -247,6 +251,16 @@ export function recordPaperTrades(
       log.error(
         { symbol: t.symbol, stopLoss: stop, entryPrice: entry },
         'AI_PICK paper trade rejected: stopLoss >= entryPrice',
+      );
+      continue;
+    }
+
+    // Same-day re-entry cooldown: block if a paper trade for this symbol closed on the same date
+    if (hasPaperTradeClosedForSymbolOnDate(t.symbol, sourceDate, db)) {
+      sameDayReentryBlocked++;
+      log.info(
+        { event: 'paper_trade_same_day_reentry_blocked', symbol: t.symbol, sourceDate },
+        'AI_PICK blocked by same-day re-entry cooldown',
       );
       continue;
     }
@@ -360,6 +374,16 @@ export function recordPaperTrades(
         );
         continue;
       }
+      // Same-day re-entry cooldown (applies to PORTFOLIO_ADD as well)
+      if (hasPaperTradeClosedForSymbolOnDate(p.symbol, sourceDate, db)) {
+        sameDayReentryBlocked++;
+        log.info(
+          { event: 'paper_trade_same_day_reentry_blocked', symbol: p.symbol, sourceDate },
+          'PORTFOLIO_ADD blocked by same-day re-entry cooldown',
+        );
+        continue;
+      }
+
       if (blockIfOpenPaperTradeExists(p.symbol, 'PORTFOLIO_ADD', db)) {
         crossStrategyBlocked++;
         continue;
@@ -396,6 +420,7 @@ export function recordPaperTrades(
     insertedCatalystEntry,
     crossStrategyBlocked,
     sectorCapExceeded,
+    sameDayReentryBlocked,
     blockedAiPick,
     blockedPortfolioAdd,
   };
