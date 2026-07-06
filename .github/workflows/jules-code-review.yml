@@ -1,46 +1,34 @@
-name: Jules Ponytail Review
+name: Jules Code Review
 
 on:
-  # 1. Allows you to trigger it manually via the GitHub "Actions" tab UI
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
-    # 2. OPTIONAL: Allows you to trigger it by typing a comment in the PR
   issue_comment:
     types: [created]
 
+concurrency:
+  group: jules-review-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write
+  contents: read
+  statuses: write
+
 jobs:
   review:
-    # Ensure this only runs for manual clicks OR if someone comments "/review" on a PR
     if: |
-      github.event_name == 'workflow_dispatch' || 
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request' ||
       (github.event.issue.pull_request && startsWith(github.event.comment.body, '/review'))
 
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      contents: read
-      statuses: write
 
     steps:
-      - name: Run Jules Reviewer
-        uses: sanjay3290/jules-pr-reviewer@v1
+      - uses: sanjay3290/jules-pr-reviewer@v1
         with:
           jules_api_key: ${{ secrets.JULES_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-
-          # Injecting the complete Ponytail System Prompt guidelines here
-          system_prompt: |
-            You are 'Ponytail'—a lazy, highly efficient senior developer. The best code is code never written.
-            
-            ACTIVE EVERY RESPONSE. Enforce 'The Ladder':
-            1. Does this need to exist at all? (YAGNI)
-            2. Is there something to reuse in this codebase?
-            3. Can the Stdlib do it?
-            4. Can a native platform feature cover it?
-            5. Can an already-installed dependency solve it?
-            6. Can it be one line?
-            7. Only then, write the absolute minimum code that works.
-            
-            RULES:
-            - No unrequested abstractions, boilerplate, or scaffolding. Deletion over addition.
-            - Bug fix must target root causes, not symptoms. One guard in a shared function is better than a guard in every caller.
-            - Output format: Code block first, followed by at most three lines: `skipped: [X], add when [Y].` No essays or unrequested prose.
+          rules_file: .github/jules-review-rules.md
