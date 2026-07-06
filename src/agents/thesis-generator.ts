@@ -732,7 +732,13 @@ function getExtSignalContext(db: DatabaseType, symbol: string, asOf: string): st
     if (rows.length === 0) return null;
 
     const config = loadExtSignalConfig();
-    const lines = rows.map((r) => {
+    const activeStratNames = new Set(config.strategies.map((s) => s.name));
+    // Filter to only actively configured strategies; stale rows (e.g. HUNT2_FCF_Acceleration)
+    // from deactivated strategies should not appear in theses context.
+    const active = rows.filter((r) => activeStratNames.has(r.strategy_name));
+    if (active.length === 0) return null;
+
+    const lines = active.map((r) => {
       const strat = config.strategies.find((s) => s.name === r.strategy_name);
       const label = strat?.display_name ?? r.strategy_name;
       return `${label} (${r.weight_pct.toFixed(1)}% weight)`;
