@@ -72,6 +72,28 @@ describe('evaluator: between', () => {
     ).toBe(true);
   });
 
+  it('fails for fractional value just above upper bound (NYKAA 2026-07-06)', () => {
+    expect(
+      evaluateCriterion(
+        { signal: 'rsi_14', op: 'between', value: [45, 70] },
+        symbol,
+        date,
+        provider({ rsi_14: 70.528 }),
+      ).matched,
+    ).toBe(false);
+  });
+
+  it('passes at exact upper bound', () => {
+    expect(
+      evaluateCriterion(
+        { signal: 'rsi_14', op: 'between', value: [45, 70] },
+        symbol,
+        date,
+        provider({ rsi_14: 70 }),
+      ).matched,
+    ).toBe(true);
+  });
+
   it('fails outside range', () => {
     expect(
       evaluateCriterion(
@@ -79,6 +101,17 @@ describe('evaluator: between', () => {
         symbol,
         date,
         provider({ x: 9.99 }),
+      ).matched,
+    ).toBe(false);
+  });
+
+  it('fails for value one microstep above upper bound', () => {
+    expect(
+      evaluateCriterion(
+        { signal: 'x', op: 'between', value: [10, 20] },
+        symbol,
+        date,
+        provider({ x: 20.0001 }),
       ).matched,
     ).toBe(false);
   });

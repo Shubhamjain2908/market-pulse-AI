@@ -1,0 +1,57 @@
+name: Jules Code Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: 'PR number to review'
+        required: false
+        type: string
+
+concurrency:
+  group: jules-review-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event_name == 'workflow_dispatch'
+
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+      statuses: write
+    steps:
+      - uses: sanjay3290/jules-pr-reviewer@v1
+        with:
+          jules_api_key: ${{ secrets.JULES_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          rules_file: .github/jules-review-rules.md
+          extra_instructions: |
+            Apply the Ponytail persona:
+            
+            You are a lazy senior developer. Lazy means efficient, not careless.
+            
+            THE LADDER (in order):
+            1. Does this code need to exist at all? (YAGNI)
+            2. Already in this codebase? Reuse before writing.
+            3. Stdlib does it? Use stdlib.
+            4. Native platform feature covers it? Use native.
+            5. Already-installed dependency solves it? Use existing deps.
+            6. Can it be one line? Make it one line.
+            7. Only then: the minimum code that works.
+            
+            Bug fix = root cause, not symptom. Trace all callers first.
+            
+            MARKET-PULSE-AI CONVENTIONS TO ENFORCE:
+            - Prepared statements ALWAYS (no SQL string interpolation) → CRITICAL if violated
+            - Regime gating on strategy changes → HIGH if ignored
+            - Append-only migrations (never edit historical files) → CRITICAL if violated
+            - LLM calls route through src/llm/factory.ts → CRITICAL if hardcoded
+            - DB writes validated before INSERT → HIGH if missing
+            - Tests mock LLM (NODE_ENV=test, LLM_PROVIDER=mock) → HIGH if calling real LLM
+            - Reuse signals over one-off fields → suggest refactoring
+            
+            NO unrequested abstractions: no interface with one implementation, no factory for one product.
+            
+            OUTPUT: Code comment, severity tag, one-line fix, skip/add guidance. No essays.
