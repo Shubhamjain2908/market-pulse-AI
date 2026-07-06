@@ -80,6 +80,87 @@ export const QUALITY_GARP_SMA50_PCT_MAX = 5;
 export const OPM_STD_DEV_MAX_PCT = 5.0;
 
 // ---------------------------------------------------------------------------
+// Regime-aware threshold resolution (ITEM 1a)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-regime threshold overrides for the quality_garp screen.
+ * Only threshold-sensitive timing gates are varied by regime.
+ * Fundamental quality floors (ROE, ROCE, D/E, PB, OPM stddev) remain constant.
+ */
+export interface GarpThresholds {
+  peMax: number;
+  pbMax: number;
+  roeMin: number;
+  roceMin: number;
+  deMax: number;
+  pegMax: number;
+  rsiMax: number;
+  sma50PctMax: number;
+  opmStdDevMax: number;
+}
+
+/**
+ * Resolves gate thresholds based on market regime.
+ * CHOPPY (default) returns existing hardcoded constants — zero behaviour change.
+ * Bypass in CRISIS: CRISIS entries are already blocked at the strategy-gate level,
+ * but we provide tight thresholds as a safety net.
+ */
+export function resolveGarpThresholds(regime?: Regime): GarpThresholds {
+  switch (regime) {
+    case 'BULL_TRENDING':
+      return {
+        peMax: 40,
+        pbMax: QUALITY_GARP_PB_MAX,
+        roeMin: QUALITY_GARP_ROE_MIN,
+        roceMin: QUALITY_GARP_ROCE_MIN,
+        deMax: QUALITY_GARP_DE_MAX,
+        pegMax: 1.4,
+        rsiMax: 55,
+        sma50PctMax: 8,
+        opmStdDevMax: OPM_STD_DEV_MAX_PCT,
+      };
+    case 'BEAR_TRENDING':
+      return {
+        peMax: 28,
+        pbMax: QUALITY_GARP_PB_MAX,
+        roeMin: QUALITY_GARP_ROE_MIN,
+        roceMin: QUALITY_GARP_ROCE_MIN,
+        deMax: QUALITY_GARP_DE_MAX,
+        pegMax: 1.0,
+        rsiMax: 40,
+        sma50PctMax: 3,
+        opmStdDevMax: OPM_STD_DEV_MAX_PCT,
+      };
+    case 'CRISIS':
+      return {
+        peMax: 22,
+        pbMax: QUALITY_GARP_PB_MAX,
+        roeMin: QUALITY_GARP_ROE_MIN,
+        roceMin: QUALITY_GARP_ROCE_MIN,
+        deMax: QUALITY_GARP_DE_MAX,
+        pegMax: 0.9,
+        rsiMax: 35,
+        sma50PctMax: 0,
+        opmStdDevMax: OPM_STD_DEV_MAX_PCT,
+      };
+    default:
+      // CHOPPY or undefined — existing behaviour, unchanged constants
+      return {
+        peMax: QUALITY_GARP_PE_MAX,
+        pbMax: QUALITY_GARP_PB_MAX,
+        roeMin: QUALITY_GARP_ROE_MIN,
+        roceMin: QUALITY_GARP_ROCE_MIN,
+        deMax: QUALITY_GARP_DE_MAX,
+        pegMax: QUALITY_GARP_PEG_MAX,
+        rsiMax: QUALITY_GARP_RSI_MAX,
+        sma50PctMax: QUALITY_GARP_SMA50_PCT_MAX,
+        opmStdDevMax: OPM_STD_DEV_MAX_PCT,
+      };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Funnel types
 // ---------------------------------------------------------------------------
 
