@@ -229,4 +229,58 @@ describe('evaluateAiPickEligibility', () => {
     expect(r.path).toBe('path_b_alert_breakout');
     expect(r.facts.falseFlagFresh).toBe(false);
   });
+
+  it('blocks IDEA 2026-07-06 scenario — operating quality guard', () => {
+    insertRegimeChoppy(SOURCE_DATE);
+    screen('IDEA', SOURCE_DATE, 'golden_cross');
+    sig('IDEA', SOURCE_DATE, 'mom_rank', 4);
+    sig('IDEA', SOURCE_DATE, 'mom_false_flag', 0);
+    sig('IDEA', SOURCE_DATE, 'mom_relative_strength_ba', 0.5);
+    // Fundamentals: poor operating quality despite recent exceptional profit
+    db.prepare(
+      `INSERT INTO fundamentals (symbol, as_of, roce, roe, pb, net_profit_ttm, profit_growth_yoy, source)
+       VALUES ('IDEA', ?, -1.6, NULL, NULL, 34552, 13, 'yahoo_snapshot')`,
+    ).run(SOURCE_DATE);
+
+    const r = evaluateAiPickEligibility('IDEA', SOURCE_DATE, thesis(8), db);
+    expect(r.eligible).toBe(false);
+    expect(r.reasons).toContain('operating_quality');
+    expect(r.facts.operatingQualityBlocked).toBe(true);
+    expect(r.facts.operatingQualityReasons).toContain('negative_roce');
+    expect(r.facts.operatingQualityReasons).toContain('missing_equity_quality');
+    expect(r.facts.operatingQualityReasons).toContain('exceptional_profit_flip');
+  });
+
+  it('does not block high-quality momentum names with good fundamentals', () => {
+    insertRegimeChoppy(SOURCE_DATE);
+    const sym = 'TATASTEEL';
+    screen(sym, SOURCE_DATE, 'rsi_oversold_bounce');
+    // Good fundamentals: positive ROCE, PB present, ROE present
+    db.prepare(
+      `INSERT INTO fundamentals (symbol, as_of, roce, roe, pb, net_profit_ttm, profit_growth_yoy, source)
+       VALUES (?, ?, 12.5, 15.2, 2.1, 5000, 18, 'yahoo_snapshot')`,
+    ).run(sym, SOURCE_DATE);
+
+    const r = evaluateAiPickEligibility(sym, SOURCE_DATE, thesis(7), db);
+    expect(r.eligible).toBe(true);
+    expect(r.path).toBe('path_a_non_generic_screen');
+    expect(r.facts.operatingQualityBlocked).toBe(false);
+    expect(r.facts.operatingQualityReasons).toEqual([]);
+  });
+
+  it('does not block financial sector names with different semantics', () => {
+    insertRegimeChoppy(SOURCE_DATE);
+    const sym = 'HDFCBANK';
+    screen(sym, SOURCE_DATE, 'rsi_oversold_bounce');
+    // Bank: has roce but roe present and pb present — passes quality check
+    db.prepare(
+      `INSERT INTO fundamentals (symbol, as_of, roce, roe, pb, net_profit_ttm, profit_growth_yoy, source)
+       VALUES (?, ?, 5.2, 14.1, 2.8, 80000, 12, 'yahoo_snapshot')`,
+    ).run(sym, SOURCE_DATE);
+
+    const r = evaluateAiPickEligibility(sym, SOURCE_DATE, thesis(7), db);
+    expect(r.eligible).toBe(true);
+    expect(r.path).toBe('path_a_non_generic_screen');
+    expect(r.facts.operatingQualityBlocked).toBe(false);
+  });
 });
