@@ -2,8 +2,11 @@ name: Jules Code Review
 
 on:
   workflow_dispatch:
-  issue_comment:
-    types: [created]
+    inputs:
+      pull_request_number:
+        description: 'PR number to review'
+        required: false
+        type: string
 
 concurrency:
   group: jules-review-${{ github.event.pull_request.number || github.run_id }}
@@ -11,9 +14,7 @@ concurrency:
 
 jobs:
   review:
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.issue.pull_request && startsWith(github.event.comment.body, '/review'))
+    if: github.event_name == 'workflow_dispatch'
 
     runs-on: ubuntu-latest
     permissions:
