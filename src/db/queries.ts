@@ -1373,6 +1373,24 @@ export function hasOpenPaperTradeForSymbol(symbol: string, db: DatabaseType = ge
   return row != null;
 }
 
+/** True when any CLOSED paper trade exists for `symbol` with the given `outcome_date`. */
+export function hasPaperTradeClosedForSymbolOnDate(
+  symbol: string,
+  date: string,
+  db: DatabaseType = getDb(),
+): boolean {
+  const row = db
+    .prepare(
+      `
+      SELECT 1 FROM paper_trades
+      WHERE symbol = ? AND outcome_date = ? AND status LIKE 'CLOSED%'
+      LIMIT 1
+    `,
+    )
+    .get(symbol.toUpperCase(), date);
+  return row != null;
+}
+
 /** Distinct symbols with at least one OPEN `paper_trades` row (any `signal_type`). */
 export function getDistinctOpenPaperTradeSymbols(db: DatabaseType = getDb()): string[] {
   const rows = db
