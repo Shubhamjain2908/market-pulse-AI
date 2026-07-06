@@ -346,6 +346,10 @@ export function evaluateAiPickEligibility(
   const hasNonGeneric = evaluatePathA(screens);
   const goldenCrossOnly = hasGoldenCross && !hasNonGeneric;
 
+  // Initialize operating quality facts (only gated for golden_cross, but always reported for transparency)
+  facts.operatingQualityBlocked = false;
+  facts.operatingQualityReasons = [];
+
   if (hasNonGeneric) {
     return {
       eligible: true,
