@@ -29,7 +29,13 @@ describe('portfolio-context', () => {
   it('isAllocationInstrument catches SGB variants by prefix', () => {
     expect(isAllocationInstrument('SGBJUN31I-GB')).toBe(true);
     expect(isAllocationInstrument('SGBDE31III')).toBe(true);
-    expect(isAllocationInstrument('SGBSOMETHING')).toBe(true);
+    // Needs ≥3 alphanumeric chars after "SGB" — prevents false-positive on short prefixes
+    expect(isAllocationInstrument('SGB')).toBe(false);
+    expect(isAllocationInstrument('SGBA')).toBe(false);
+    // A plausible-but-short suffix must still match
+    expect(isAllocationInstrument('SGBMAR')).toBe(true);
+    // Would-be equity "SGBTECH" unfortunately still matches SGB+3 — confirm expected behaviour
+    expect(isAllocationInstrument('SGBTEC')).toBe(true);
   });
 
   it('computeInvestedPortfolioWeights excludes LIQUIDCASE from denominator', () => {
