@@ -6,7 +6,7 @@ import {
   getQualityDecayScore,
   getQualityGarpFundamentals,
   getTrailingOpmStdDev,
-  upsertScreenResults,
+  replaceScreenResultsForDate,
 } from '../db/queries.js';
 import type { ScreenResult } from '../types/domain.js';
 import type { Regime } from '../types/regime.js';
@@ -185,7 +185,7 @@ export function runQualityGarpScreen(
   }
 
   if (persist) {
-    upsertScreenResults(results, db);
+    replaceScreenResultsForDate(results, date, QUALITY_GARP_SCREEN, db);
   }
 
   if (persist && pointInTimeFundamentals !== true) {

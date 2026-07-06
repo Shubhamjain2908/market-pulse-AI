@@ -859,6 +859,42 @@ export function upsertScreenResults(rows: ScreenResult[], db: DatabaseType = get
   return rows.length;
 }
 
+/**
+ * Replace all screen results for a (date, screen_name) pair atomically.
+ * Deletes existing rows then inserts the new batch in a single transaction.
+ * This prevents stale rows from a previous same-date rerun from persisting.
+ */
+export function replaceScreenResultsForDate(
+  rows: ScreenResult[],
+  date: string,
+  screenName: string,
+  db: DatabaseType = getDb(),
+): number {
+  if (rows.length === 0) {
+    // Still delete any existing rows so fewer matches from a rerun are reflected
+    db.prepare('DELETE FROM screens WHERE date = ? AND screen_name = ?').run(date, screenName);
+    return 0;
+  }
+  const insert = db.prepare(`
+    INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+    VALUES (@symbol, @date, @screenName, @score, @matchedCriteria)
+  `);
+  const tx = db.transaction((batch: ScreenResult[]) => {
+    db.prepare('DELETE FROM screens WHERE date = ? AND screen_name = ?').run(date, screenName);
+    for (const r of batch) {
+      insert.run({
+        symbol: r.symbol,
+        date: r.date,
+        screenName: r.screenName,
+        score: r.score,
+        matchedCriteria: JSON.stringify(r.matchedCriteria),
+      });
+    }
+  });
+  tx(rows);
+  return rows.length;
+}
+
 // ---------------------------------------------------------------------------
 // Symbol metadata (Yahoo sector / industry cache for briefing rollups)
 // ---------------------------------------------------------------------------
