@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: google-labs-code/jules-invoke@v1
+      - uses: google-labs-code/julius-action@main
         with:
           prompt: |
             Review this PR for the market-pulse-ai stock analysis pipeline.
