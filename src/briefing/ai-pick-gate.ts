@@ -17,7 +17,8 @@ export type AiPickBlockReason =
   | 'golden_cross_stale_rank'
   | 'golden_cross_rejected'
   | 'rubric_low'
-  | 'no_confirmation_path';
+  | 'no_confirmation_path'
+  | 'operating_quality';
 
 export type AiPickConfirmPath =
   | 'path_a_non_generic_screen'
@@ -84,6 +85,51 @@ function getClose(symbol: string, sourceDate: string, db: DatabaseType): number 
     .prepare(`SELECT close FROM quotes WHERE symbol = ? AND exchange = 'NSE' AND date = ?`)
     .get(symbol.toUpperCase(), sourceDate) as { close: number } | undefined;
   return row?.close ?? null;
+}
+
+/**
+ * Load latest fundamentals row for operating quality check.
+ * Returns null when no fundamentals exist for the symbol.
+ */
+function getLatestFundamentals(
+  symbol: string,
+  asOf: string,
+  db: DatabaseType,
+): {
+  roce: number | null;
+  roe: number | null;
+  pb: number | null;
+  netProfitTtm: number | null;
+  profitGrowthYoy: number | null;
+} | null {
+  const row = db
+    .prepare(
+      `SELECT roce, roe, pb, net_profit_ttm AS netProfitTtm, profit_growth_yoy AS profitGrowthYoy
+       FROM fundamentals
+       WHERE symbol = ? AND as_of <= ?
+       ORDER BY as_of DESC LIMIT 1`,
+    )
+    .get(symbol.toUpperCase(), asOf) as
+    | {
+        roce: number | null;
+        roe: number | null;
+        pb: number | null;
+        netProfitTtm: number | null;
+        profitGrowthYoy: number | null;
+      }
+    | undefined;
+  if (!row) return null;
+  return {
+    roce: row.roce != null && Number.isFinite(row.roce) ? row.roce : null,
+    roe: row.roe != null && Number.isFinite(row.roe) ? row.roe : null,
+    pb: row.pb != null && Number.isFinite(row.pb) ? row.pb : null,
+    netProfitTtm:
+      row.netProfitTtm != null && Number.isFinite(row.netProfitTtm) ? row.netProfitTtm : null,
+    profitGrowthYoy:
+      row.profitGrowthYoy != null && Number.isFinite(row.profitGrowthYoy)
+        ? row.profitGrowthYoy
+        : null,
+  };
 }
 
 function getSameDayScreens(symbol: string, sourceDate: string, db: DatabaseType): string[] {
@@ -292,6 +338,40 @@ export function evaluateAiPickEligibility(
 
   if (falseFlagFresh && falseFlagSig != null && falseFlagSig.value === 1) {
     return { eligible: false, reasons: ['false_momentum_flag'], facts };
+  }
+
+  // ---- Operating quality guard (PR 3: IDEA 2026-07-06) ----
+  // Blocks AI_PICK when the symbol has structurally impaired operating quality
+  // even if the momentum false-flag mechanism did not fire (e.g. exceptional
+  // one-off profit flipped net_profit_ttm positive while operations remain weak).
+  const fundamentals = getLatestFundamentals(sym, sourceDate, db);
+  const operatingQualityReasons: string[] = [];
+
+  if (fundamentals) {
+    if (fundamentals.roce != null && fundamentals.roce < 0) {
+      operatingQualityReasons.push('negative_roce');
+    }
+    if (fundamentals.pb == null && fundamentals.roe == null) {
+      operatingQualityReasons.push('missing_equity_quality');
+    }
+  }
+  // Exceptional-profit-flip: net_profit_ttm went from deeply negative to large positive
+  // while roce is negative (indicating operations are still loss-making).
+  if (
+    fundamentals &&
+    fundamentals.roce != null &&
+    fundamentals.roce < 0 &&
+    fundamentals.netProfitTtm != null &&
+    fundamentals.netProfitTtm > 0
+  ) {
+    operatingQualityReasons.push('exceptional_profit_flip');
+  }
+
+  facts.operatingQualityBlocked = operatingQualityReasons.length > 0;
+  facts.operatingQualityReasons = operatingQualityReasons;
+
+  if (operatingQualityReasons.length > 0) {
+    return { eligible: false, reasons: ['operating_quality'], facts };
   }
 
   const screens = getSameDayScreens(sym, sourceDate, db);
