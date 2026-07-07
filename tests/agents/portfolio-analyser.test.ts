@@ -399,6 +399,110 @@ describe('portfolio analyser', () => {
     expect(row?.triggerReason).toContain('1 open trades for INFY');
   });
 
+  it('shadows ADD in Stage 4 with annotation but does not change action', async () => {
+    upsertSignals(
+      [
+        {
+          symbol: 'INFY',
+          date: '2026-04-29',
+          name: 'weinstein_stage_code',
+          value: 4,
+          source: 'technical',
+        },
+      ],
+      db,
+    );
+
+    const addLlm = {
+      name: 'test-add',
+      model: 'test-add',
+      async generateText() {
+        return { text: 'unused', model: 'test-add', usage: { durationMs: 1 } };
+      },
+      async generateJson() {
+        return {
+          data: {
+            symbol: 'INFY',
+            action: 'ADD',
+            conviction: 0.7,
+            thesis: 'Infosys at support with strong tech stack for a sustained recovery period.',
+            bullPoints: ['Value'],
+            bearPoints: ['FX headwind'],
+            triggerReason: 'Adding on dip after strong results.',
+            suggestedStop: 1500,
+            suggestedTarget: 1750,
+          },
+          raw: '{}',
+          model: 'test-add',
+          usage: { durationMs: 1 },
+        };
+      },
+    };
+
+    const result = await analysePortfolio(
+      { date, symbols: ['INFY'] },
+      db,
+      addLlm as unknown as LlmProvider,
+    );
+    const row = result.rows.find((r) => r.symbol === 'INFY');
+    // Action unchanged — shadow only
+    expect(row?.action).toBe('ADD');
+    // Annotation present
+    expect(row?.triggerReason).toContain('[shadow: ADD recommended in Weinstein Stage 4]');
+  });
+
+  it('does not shadow ADD when stage_code is 22 (Stage 2B)', async () => {
+    upsertSignals(
+      [
+        {
+          symbol: 'INFY',
+          date: '2026-04-29',
+          name: 'weinstein_stage_code',
+          value: 22,
+          source: 'technical',
+        },
+      ],
+      db,
+    );
+
+    const addLlm = {
+      name: 'test-add',
+      model: 'test-add',
+      async generateText() {
+        return { text: 'unused', model: 'test-add', usage: { durationMs: 1 } };
+      },
+      async generateJson() {
+        return {
+          data: {
+            symbol: 'INFY',
+            action: 'ADD',
+            conviction: 0.7,
+            thesis: 'Infosys at support with strong tech stack for a sustained recovery period.',
+            bullPoints: ['Value'],
+            bearPoints: ['FX headwind'],
+            triggerReason: 'Adding on dip after strong results.',
+            suggestedStop: 1500,
+            suggestedTarget: 1750,
+          },
+          raw: '{}',
+          model: 'test-add',
+          usage: { durationMs: 1 },
+        };
+      },
+    };
+
+    const result = await analysePortfolio(
+      { date, symbols: ['INFY'] },
+      db,
+      addLlm as unknown as LlmProvider,
+    );
+    const row = result.rows.find((r) => r.symbol === 'INFY');
+    // Action still ADD
+    expect(row?.action).toBe('ADD');
+    // No Stage 4 annotation
+    expect(row?.triggerReason).not.toContain('Stage 4');
+  });
+
   it('does not apply RSI ADD guardrail for excluded ETF/SGB symbols', () => {
     const out = applyPortfolioAddGuardrails(
       { ...baseAction(), symbol: 'GOLDBEES', triggerReason: 'ETF add test.' },
