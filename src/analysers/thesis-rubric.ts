@@ -16,6 +16,8 @@ import { getLatestSignalsMap } from '../agents/portfolio-trigger.js';
 // Public types
 // ---------------------------------------------------------------------------
 
+export type ValuationBasis = 'pe_percentile' | 'peg' | null;
+
 export interface RubricAnchors {
   /** Earnings trajectory from quarterly_fundamentals PAT YoY. 0–10, null when < 2 quarters available. */
   earningsTrajectory: number | null;
@@ -23,6 +25,137 @@ export interface RubricAnchors {
   balanceSheet: number | null;
   /** Weinstein stage score from signals (already 0/8/15/25/30 → mapped to 0–30). Null if absent or code = 0. */
   technicalStage: number | null;
+  /** Valuation percentile vs own trailing P/E history. 0–10, null when insufficient data and no PEG fallback. */
+  valuation: number | null;
+  /** Which valuation path was used — recorded for calibration. */
+  valuationBasis: ValuationBasis;
+}
+
+// ---------------------------------------------------------------------------
+// Valuation: percentile rank vs own trailing P/E (Rec 2)
+// ---------------------------------------------------------------------------
+
+interface PeRow {
+  asOf: string;
+  pe: number;
+}
+
+/**
+ * PEG-only fallback path: score valuation from PEG ratio.
+ * Called when P/E percentile path is unavailable.
+ */
+function pegFallback(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+): { score: number | null; basis: ValuationBasis } {
+  const pegRow = db
+    .prepare(
+      `SELECT peg
+       FROM fundamentals
+       WHERE symbol = ? AND as_of <= ? AND peg IS NOT NULL AND peg > 0
+       ORDER BY as_of DESC
+       LIMIT 1`,
+    )
+    .get(symbol, date) as { peg: number } | undefined;
+
+  if (pegRow && Number.isFinite(pegRow.peg) && pegRow.peg > 0) {
+    const peg = pegRow.peg;
+    let score: number;
+    if (peg <= 1) score = 8;
+    else if (peg <= 2) score = 5;
+    else score = 2;
+    return { score, basis: 'peg' };
+  }
+
+  return { score: null, basis: null };
+}
+
+/**
+ * Score valuation on a 0–10 scale using percentile rank vs own trailing P/E.
+ *
+ * 1. Fetch the genuinely latest fundamentals row (unfiltered P/E). If that row's
+ *    P/E is null/negative/non-finite → PEG/null fallback immediately. This
+ *    prevents scoring a newly loss-making company on a months-old positive P/E.
+ * 2. Only if current P/E is valid, fetch history for percentile computation.
+ * 3. History sufficiency: ≥ 8 distinct rows AND span ≥ 180 days → use P/E percentile.
+ * 4. `pct` = fraction of historical values < current P/E (strict less-than; current row included).
+ * 5. Score bands:
+ *    ≤ 0.10 → 10, ≤ 0.25 → 8, ≤ 0.50 → 6, ≤ 0.75 → 4, ≤ 0.90 → 2, > 0.90 → 0
+ *
+ * Fallback (when P/E path unavailable):
+ *   1. Try PEG from latest fundamentals with finite `peg > 0`: ≤ 1 → 8, ≤ 2 → 5, > 2 → 2.
+ *   2. Else → null.
+ *
+ * Returns { score, basis } where basis records the path taken.
+ */
+function scoreValuation(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+): { score: number | null; basis: ValuationBasis } {
+  const sym = symbol.toUpperCase();
+
+  // Step 1: Fetch the genuinely latest P/E (unfiltered — includes null/negative rows)
+  const latestRow = db
+    .prepare(
+      `SELECT pe
+       FROM fundamentals
+       WHERE symbol = ? AND as_of <= ?
+       ORDER BY as_of DESC
+       LIMIT 1`,
+    )
+    .get(sym, date) as { pe: number | null } | undefined;
+
+  // Step 2: If latest P/E is not valid → fallback (stale/null/negative P/E guard)
+  if (!latestRow || latestRow.pe == null || !Number.isFinite(latestRow.pe) || latestRow.pe <= 0) {
+    return pegFallback(sym, date, db);
+  }
+
+  const currentPe = latestRow.pe;
+
+  // Step 3: Fetch P/E history for percentile (only valid positive values)
+  const peRows = db
+    .prepare(
+      `SELECT as_of AS asOf, pe
+       FROM fundamentals
+       WHERE symbol = ? AND as_of <= ? AND as_of >= date(?, '-3 years')
+         AND pe IS NOT NULL AND pe > 0
+       ORDER BY as_of ASC`,
+    )
+    .all(sym, date, date) as PeRow[];
+
+  // Step 4: History sufficiency — must have >= 8 rows AND >= 180 day span
+  if (peRows.length < 8) {
+    return pegFallback(sym, date, db);
+  }
+
+  const first = peRows[0];
+  const last = peRows[peRows.length - 1];
+  if (!first || !last) {
+    return pegFallback(sym, date, db);
+  }
+
+  const spanMs = new Date(last.asOf).getTime() - new Date(first.asOf).getTime();
+  const spanDays = spanMs / (1000 * 60 * 60 * 24);
+  if (spanDays < 180) {
+    return pegFallback(sym, date, db);
+  }
+
+  // Step 5: Percentile = fraction of values < current P/E (strict less-than)
+  const countBelow = peRows.filter((r) => r.pe < currentPe).length;
+  const total = peRows.length;
+  const pct = total > 0 ? countBelow / total : 0;
+
+  let score: number;
+  if (pct <= 0.1) score = 10;
+  else if (pct <= 0.25) score = 8;
+  else if (pct <= 0.5) score = 6;
+  else if (pct <= 0.75) score = 4;
+  else if (pct <= 0.9) score = 2;
+  else score = 0;
+
+  return { score, basis: 'pe_percentile' };
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +318,9 @@ export function computeRubricAnchors(
 ): RubricAnchors {
   const sym = symbol.toUpperCase();
 
+  // ---- Valuation ----
+  const { score: valuation, basis: valuationBasis } = scoreValuation(sym, date, db);
+
   // ---- Earnings trajectory ----
   const qfRows = db
     .prepare(
@@ -222,22 +358,23 @@ export function computeRubricAnchors(
   const signals = getLatestSignalsMap(sym, date, db);
   const technicalStage = scoreTechnicalStage(signals);
 
-  return { earningsTrajectory, balanceSheet, technicalStage };
+  return { earningsTrajectory, balanceSheet, technicalStage, valuation, valuationBasis };
 }
 
 /**
- * Compute the composite rubric total on a 0–90 scale.
+ * Compute the composite rubric total on a 0–100 scale.
  *
  * Formula:
  *   earningsTrajectory (0–10, null→4)
  *   + balanceSheet (0–10, null→4)
+ *   + valuation (0–10, null→4)
  *   + moat (0–10, null→4)
  *   + sectorTailwind (0–10, null→4)
  *   + competitivePosition (0–10, null→4)
  *   + newsCatalyst (0–10, null→4)
- *   = 0–60 subtotal
+ *   = 0–70 subtotal
  *   + technicalStage (0–30, null→15)
- *   = 0–90 total
+ *   = 0–100 total
  */
 export function computeRubricTotal(
   anchors: RubricAnchors,
@@ -257,6 +394,7 @@ export function computeRubricTotal(
   const subtotal =
     neutral4(anchors.earningsTrajectory) +
     neutral4(anchors.balanceSheet) +
+    neutral4(anchors.valuation) +
     neutral4(llmRubric?.moat) +
     neutral4(llmRubric?.sectorTailwind) +
     neutral4(llmRubric?.competitivePosition) +

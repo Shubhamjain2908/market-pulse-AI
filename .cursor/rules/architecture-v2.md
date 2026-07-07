@@ -136,7 +136,7 @@ exit_price = bar.open < stop_loss ? bar.open : stop_loss
 ### 3.3 Paper Trades Ledger
 
 **Signal types currently active:**
-- `AI_PICK` — from thesis generator on screened candidates. **Admission gate** ([`ai-pick-gate.ts`](src/briefing/ai-pick-gate.ts)): deterministic eligibility before `paper_trades` insert (`confidence ≥ 6`, or `rubricTotal ≥ AI_PICK_RUBRIC_MIN` when `AI_PICK_RUBRIC_GATE=1`; fresh false-momentum flag is not set, confirmation path). The rubric is a composite 0–90 score combining deterministic anchors (earnings trajectory, balance sheet, Weinstein stage) with LLM-scored qualitative dimensions (moat, sector tailwind, competitive position, news catalyst). Stale false-flag values are logged as facts and do not overblock Path A/B; rank-dependent `golden_cross` tiers still fail closed on stale/missing rank or false-flag data. **Stop distance** ([`ai-pick-stop.ts`](src/briefing/ai-pick-stop.ts)): normalize-then-kill — widen stops tighter than `max(2%, 1×ATR)`; block when that minimum exceeds 8% risk; emit `ai_pick_stop_floor_applied` when the final 8% floor changes an overly wide thesis stop. Thesis cards still appear in briefing when blocked. Reject when `stopLoss ≥ entryPrice` (`log.error`).
+- `AI_PICK` — from thesis generator on screened candidates. **Admission gate** ([`ai-pick-gate.ts`](src/briefing/ai-pick-gate.ts)): deterministic eligibility before `paper_trades` insert (`confidence ≥ 6`, or `rubricTotal ≥ AI_PICK_RUBRIC_MIN` when `AI_PICK_RUBRIC_GATE=1`; fresh false-momentum flag is not set, confirmation path). The rubric is a composite 0–100 score combining deterministic anchors (earnings trajectory, balance sheet, valuation percentile, Weinstein stage) with LLM-scored qualitative dimensions (moat, sector tailwind, competitive position, news catalyst). Stale false-flag values are logged as facts and do not overblock Path A/B; rank-dependent `golden_cross` tiers still fail closed on stale/missing rank or false-flag data. **Stop distance** ([`ai-pick-stop.ts`](src/briefing/ai-pick-stop.ts)): normalize-then-kill — widen stops tighter than `max(2%, 1×ATR)`; block when that minimum exceeds 8% risk; emit `ai_pick_stop_floor_applied` when the final 8% floor changes an overly wide thesis stop. Thesis cards still appear in briefing when blocked. Reject when `stopLoss ≥ entryPrice` (`log.error`).
 - `PORTFOLIO_ADD` — from portfolio analyser ADD recommendations
 - `momentum_mf` — from Sunday momentum rebalance (**requires `atr_14` at entry**; no 2% proxy)
 - `catalyst_entry` — from catalyst-driven screen hits (fixed stop)
@@ -226,6 +226,22 @@ Status: **v3 shipped (2026-07-06)** — `pnpm fundamentals:refresh` orchestrates
 | **Fundamentals percent normalization** | Yahoo snapshot stores `roe` / `roce` / `dividend_yield` as decimals; Screener as percent. `normalizeFundamentalForScreen` in `DbSignalProvider` scales `|v| < 1` × 100 at read time so screen DSL thresholds (e.g. `roe >= 15`) evaluate correctly across mixed `fundamentals.source` rows. | `analysers/signal-provider.ts`, `scripts/fundamental-screen-audit.ts` |
 
 ---
+
+## 10. Advice-Accuracy Scorer (`advice-review`)
+
+**OBSERVE-SAFE diagnostic** — read-only CLI command that scores past `portfolio_analysis` HOLD/ADD/TRIM/EXIT calls against forward returns from `quotes`. Zero LLM, zero schema change, zero gating impact.
+
+**Methodology (`src/analysers/advice-review.ts`):**
+1. Loads `portfolio_analysis` rows with `date <= asOf`
+2. Deduplicates to action-transitions (first call of a streak per symbol — repeated HOLDs collapsed)
+3. For each transition computes 30/60/90-calendar-day raw and excess returns vs NIFTY_50
+4. Entry price = first NSE `close` on or after call date (within 7 calendar days)
+5. Horizon close = latest NSE `close` on or before `callDate + H`; horizon is `pending` when target date exceeds symbol's latest quote date
+6. Correctness rules: EXIT/TRIM correct when x90<0, ADD correct when x90>0, HOLD correct when x90>-5
+
+**Output:** by-action stats table, conviction-band cuts (90d hit rate by `{<0.5, 0.5–0.7, >0.7}`), 10 worst calls. `--json` for machine consumption. ADD row annotated as advisory only.
+
+**CLI:** `pnpm cli advice-review [-d YYYY-MM-DD] [--json]`. No persistence — rerunnable, same DB state → same output.
 
 ## 5. Key SQLite Tables
 
