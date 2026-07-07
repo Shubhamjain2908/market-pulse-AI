@@ -61,8 +61,8 @@ import {
 import { getStageHistory } from './db/pipeline-queries.js';
 import { enrichSentiment } from './enrichers/sentiment/enricher.js';
 import { isoDateIst, optionalCliIsoDate } from './ingestors/base/dates.js';
+import { fetchConcallTranscripts } from './ingestors/bse/concall-fetcher.js';
 import { runKiteLogin } from './ingestors/kite/auth.js';
-import { fetchConcallTranscripts } from './ingestors/nse/announcements-fetcher.js';
 import { logger } from './logger.js';
 import {
   defaultIngestSymbolUniverse,
@@ -422,7 +422,7 @@ program
 
 program
   .command('concall')
-  .description('fetch and analyse NSE concall transcripts for holdings/watchlist')
+  .description('fetch and analyse BSE concall transcripts for holdings/watchlist')
   .option('--symbol <symbol>', 'restrict to a single symbol')
   .option('--skip-fetch', 'skip PDF download, only run LLM analysis on existing transcripts')
   .action(async (opts: { symbol?: string; reanalyse?: boolean; skipFetch?: boolean }) => {

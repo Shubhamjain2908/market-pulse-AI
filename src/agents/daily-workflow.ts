@@ -13,10 +13,10 @@ import { getDb } from '../db/index.js';
 import { recordPipelineStage } from '../db/pipeline-queries.js';
 import { enrichSentiment } from '../enrichers/sentiment/enricher.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
+import { fetchConcallTranscripts } from '../ingestors/bse/concall-fetcher.js';
 import { applyCorporateActionsFromYahooSplits } from '../ingestors/corporate-actions.js';
 import { runExtSignalHoldingsIngestor } from '../ingestors/ext-signal-holdings-ingestor.js';
 import { fetchInavSnapshots } from '../ingestors/inav-fetcher.js';
-import { fetchConcallTranscripts } from '../ingestors/nse/announcements-fetcher.js';
 import { fetchPromoterPledge } from '../ingestors/nse/pledge-fetcher.js';
 import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { ingestYahooSnapshots } from '../ingestors/yahoo-snapshot-ingestor.js';
@@ -279,35 +279,34 @@ export async function runDailyWorkflow(
         if (r.transcriptsFound > 0) {
           log.info(
             { transcriptsFound: r.transcriptsFound, extracted: r.extracted },
-            'concall transcript ingest complete',
+            'bse concall transcript ingest complete',
           );
         }
-        // Surfacing concall coverage gaps: when we found PDFs but none were extractable,
-        // or when we checked symbols but found no transcripts at all.
+        // Surfacing concall coverage gaps
         if (r.transcriptsFound > 0 && r.extracted === 0) {
           warnings.push({
             category: 'Concall coverage',
-            message: `Found ${r.transcriptsFound} potential transcript PDFs but extracted 0 usable ones — likely invites/outcome sheets (${r.skipped} skipped as too short / duplicate).`,
+            message: `Found ${r.transcriptsFound} potential BSE transcript PDFs but extracted 0 usable ones (${r.skipped} skipped as too short / duplicate).`,
           });
         } else if (r.transcriptsFound > 0 && r.extracted < r.transcriptsFound) {
           warnings.push({
             category: 'Concall coverage',
-            message: `Partial extraction: ${r.extracted}/${r.transcriptsFound} PDFs extracted (${r.skipped} skipped as too short / duplicate, ${r.failed} failed).`,
+            message: `Partial BSE extraction: ${r.extracted}/${r.transcriptsFound} PDFs extracted (${r.skipped} skipped, ${r.failed} failed).`,
           });
         } else if (r.symbolsChecked > 0 && r.transcriptsFound === 0) {
           warnings.push({
             category: 'Concall coverage',
-            message: `Checked ${r.symbolsChecked} symbols but found 0 concall announcements in the lookback window.`,
+            message: `BSE: checked ${r.symbolsChecked} symbols but found 0 concall announcements.`,
           });
         }
       } else {
         warnings.push({
           category: 'Concall',
-          message: `Concall transcript fetch failed: ${concallFetchStage.message}`,
+          message: `BSE concall transcript fetch failed: ${concallFetchStage.message}`,
         });
         log.warn(
           { err: concallFetchStage.error },
-          'concall: fetch failed — transcripts unavailable',
+          'bse concall: fetch failed — transcripts unavailable',
         );
       }
     }
