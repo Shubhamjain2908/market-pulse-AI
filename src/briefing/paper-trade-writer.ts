@@ -27,13 +27,6 @@ import type { PortfolioSummary, ThesisCard } from './template.js';
 
 const log = child({ component: 'paper-trade-writer' });
 
-function horizonToDays(horizon: string): { horizon: PaperTradeHorizon; maxHoldDays: number } {
-  const h = horizon.toLowerCase().trim();
-  if (h === 'short') return { horizon: 'short', maxHoldDays: 30 };
-  if (h === 'long') return { horizon: 'long', maxHoldDays: 252 };
-  return { horizon: 'medium', maxHoldDays: 90 };
-}
-
 function isValidLongLevel(entry: number, stop: number, target: number): boolean {
   if (!(entry > 0 && stop > 0 && target > 0)) return false;
   if (target <= entry) return false;
@@ -85,19 +78,6 @@ export interface PaperTradeRecordResult {
   sectorCapExceeded: number;
   blockedAiPick: number;
   blockedPortfolioAdd: number;
-}
-
-function blockIfOpenPaperTradeExists(
-  symbol: string,
-  signalType: PaperTradeSignalType,
-  db: DatabaseType,
-): boolean {
-  if (!hasOpenPaperTradeForSymbol(symbol, db)) return false;
-  log.info(
-    { symbol, signalType, blockReason: 'open_in_other_strategy' },
-    'paper trade dedup — symbol already open under different signal',
-  );
-  return true;
 }
 
 export interface SizedPaperTradeInsertResult {
@@ -178,6 +158,22 @@ export function recordPaperTrades(
   const sectorCounts = openSectorCounts(db, sectorMap);
   const bookValueInr = resolveBookValueInr(db).bookValueInr;
 
+  function blockIfOpenPaperTradeExists(
+    symbol: string,
+    signalType: PaperTradeSignalType,
+    db: DatabaseType,
+  ): boolean {
+    if (hasOpenPaperTradeForSymbol(symbol, db)) {
+      log.info(
+        { symbol, signalType, blockReason: 'open_in_other_strategy' },
+        'paper trade dedup — symbol already open under different signal',
+      );
+      crossStrategyBlocked++;
+      return true;
+    }
+    return false;
+  }
+
   for (const t of theses) {
     const entry = parseInrPriceMidpoint(t.entryZone);
     const stop = parseInrPriceMidpoint(t.stopLoss);
@@ -196,10 +192,7 @@ export function recordPaperTrades(
         continue;
       }
       const maxHoldDays = Math.max(1, Math.trunc(catalystCriteria.days_to_earnings) + 2);
-      if (blockIfOpenPaperTradeExists(t.symbol, 'catalyst_entry', db)) {
-        crossStrategyBlocked++;
-        continue;
-      }
+      if (blockIfOpenPaperTradeExists(t.symbol, 'catalyst_entry', db)) continue;
       const catalystInsert = insertSizedPaperTrade(
         {
           symbol: t.symbol,
@@ -307,11 +300,11 @@ export function recordPaperTrades(
       );
     }
 
-    const { horizon, maxHoldDays } = horizonToDays(t.timeHorizon ?? 'medium');
-    if (blockIfOpenPaperTradeExists(t.symbol, 'AI_PICK', db)) {
-      crossStrategyBlocked++;
-      continue;
-    }
+    const h = (t.timeHorizon ?? 'medium').toLowerCase().trim();
+    const horizon = (h === 'short' || h === 'long' ? h : 'medium') as PaperTradeHorizon;
+    const maxHoldDays = horizon === 'short' ? 30 : horizon === 'long' ? 252 : 90;
+
+    if (blockIfOpenPaperTradeExists(t.symbol, 'AI_PICK', db)) continue;
     const aiPickInsert = insertSizedPaperTrade(
       {
         symbol: t.symbol,
@@ -366,10 +359,7 @@ export function recordPaperTrades(
       // Cross-strategy dedup: only OPEN paper trades block new entries (guardrails.md line 48).
       // Closed trades do not block per principle, even same-day.
 
-      if (blockIfOpenPaperTradeExists(p.symbol, 'PORTFOLIO_ADD', db)) {
-        crossStrategyBlocked++;
-        continue;
-      }
+      if (blockIfOpenPaperTradeExists(p.symbol, 'PORTFOLIO_ADD', db)) continue;
       const addInsert = insertSizedPaperTrade(
         {
           symbol: p.symbol,

@@ -27,6 +27,7 @@ import { getAtr14 } from '../db/trailing-stop-queries.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
+import { pnlPctLong } from '../market/quote-change.js';
 import { lastOpenOnOrBefore } from '../market/trading-days.js';
 import { runMomentumRanker } from '../rankers/momentum-ranker.js';
 import { type Thesis, ThesisSchema } from '../types/domain.js';
@@ -39,10 +40,6 @@ import {
 } from './position-sizer.js';
 
 const log = child({ component: 'momentum-rebalance' });
-
-function pnlPctLong(entry: number, exit: number): number {
-  return ((exit - entry) / entry) * 100;
-}
 
 function closeManualAtSession(
   trade: PaperTradeRow,

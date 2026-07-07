@@ -5,6 +5,7 @@
 
 import type { Database as DatabaseType } from 'better-sqlite3';
 
+import { pnlPctLong } from '../market/quote-change.js';
 import { exitPriceWhenStopHit } from '../scripts/evaluate-trades.js';
 import type { BacktestExitReason } from './types.js';
 
@@ -61,10 +62,6 @@ export interface LongTrailState {
   initialSetupComplete: boolean;
   /** Worst (most negative) close-based return vs entry during the hold. */
   maxDrawdownPct: number;
-}
-
-function pnlPctLong(entry: number, exit: number): number {
-  return ((exit - entry) / entry) * 100;
 }
 
 /** Round-trip bps charged once on exit (plan: single multiplier on exit price). */
