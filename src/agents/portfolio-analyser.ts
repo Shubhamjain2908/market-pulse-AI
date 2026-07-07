@@ -18,6 +18,7 @@ import {
   type PortfolioHoldingRow,
   upsertPortfolioAnalysis,
 } from '../db/index.js';
+import { WEINSTEIN_STAGE } from '../enrichers/technical/weinstein-stage.js';
 import { isoDateIst } from '../ingestors/base/dates.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
@@ -210,6 +211,38 @@ export function applyPortfolioAddGuardrails(
   }
 
   return action;
+}
+
+/**
+ * Shadow annotation for ADD-on-Stage-4 (Rec 3b).
+ *
+ * When the final action is ADD and the symbol's latest weinstein_stage_code
+ * signal equals STAGE_4, append a shadow annotation to trigger_reason and
+ * log.warn. Does NOT change the action — evidence base for Rec 3a hard cap.
+ */
+function applyStage4AddShadow(
+  action: PortfolioAction,
+  signals: Record<string, number>,
+): PortfolioAction {
+  if (action.action !== 'ADD') return action;
+  const stageCode = signals.weinstein_stage_code;
+  if (stageCode !== WEINSTEIN_STAGE.STAGE_4) return action;
+
+  const annotation = '[shadow: ADD recommended in Weinstein Stage 4]';
+  log.warn(
+    {
+      symbol: action.symbol,
+      weinsteinStageCode: stageCode,
+      action: action.action,
+      stage4AddShadow: true,
+    },
+    `Stage-4 ADD shadow: ${action.symbol} — ${annotation}`,
+  );
+
+  return {
+    ...action,
+    triggerReason: truncateTriggerReason(`${action.triggerReason} ${annotation}`),
+  };
 }
 
 function applyOpenPaperTradeAddBlock(action: PortfolioAction, openCount: number): PortfolioAction {
@@ -504,16 +537,17 @@ function buildLitePortfolioRow(
     guardCtx,
   );
   const enriched = enrichActionWithStructureContext(g, signals);
+  const shadowed = applyStage4AddShadow(enriched, signals);
 
   return {
     symbol: h.symbol,
     date,
-    action: enriched.action,
-    conviction: enriched.conviction,
-    thesis: enriched.thesis,
-    bullPoints: enriched.bullPoints,
-    bearPoints: enriched.bearPoints,
-    triggerReason: enriched.triggerReason,
+    action: shadowed.action,
+    conviction: shadowed.conviction,
+    thesis: shadowed.thesis,
+    bullPoints: shadowed.bullPoints,
+    bearPoints: shadowed.bearPoints,
+    triggerReason: shadowed.triggerReason,
     suggestedStop: g.suggestedStop ?? null,
     suggestedTarget: g.suggestedTarget ?? null,
     pnlPct: h.pnlPct ?? null,
@@ -585,16 +619,17 @@ async function analyseOne(
     guardCtx,
   );
   const enriched = enrichActionWithStructureContext(a, signals);
+  const shadowed = applyStage4AddShadow(enriched, signals);
 
   return {
     symbol: h.symbol,
     date,
-    action: enriched.action,
-    conviction: enriched.conviction,
-    thesis: enriched.thesis,
-    bullPoints: enriched.bullPoints,
-    bearPoints: enriched.bearPoints,
-    triggerReason: enriched.triggerReason,
+    action: shadowed.action,
+    conviction: shadowed.conviction,
+    thesis: shadowed.thesis,
+    bullPoints: shadowed.bullPoints,
+    bearPoints: shadowed.bearPoints,
+    triggerReason: shadowed.triggerReason,
     suggestedStop: a.suggestedStop ?? null,
     suggestedTarget: a.suggestedTarget ?? null,
     pnlPct: h.pnlPct ?? null,
