@@ -12,6 +12,7 @@ import {
   insertPaperTradeIfAbsent,
   type PaperTradeHorizon,
   type PaperTradeInsertRow,
+  type PaperTradeSignalType,
 } from '../db/queries.js';
 import { child } from '../logger.js';
 import {
@@ -161,6 +162,22 @@ export function recordPaperTrades(
   const sectorCounts = openSectorCounts(db, sectorMap);
   const bookValueInr = resolveBookValueInr(db).bookValueInr;
 
+  function blockIfOpenPaperTradeExists(
+    symbol: string,
+    signalType: PaperTradeSignalType,
+    db: DatabaseType,
+  ): boolean {
+    if (hasOpenPaperTradeForSymbol(symbol, db)) {
+      log.info(
+        { symbol, signalType, blockReason: 'open_in_other_strategy' },
+        'paper trade dedup — symbol already open under different signal',
+      );
+      crossStrategyBlocked++;
+      return true;
+    }
+    return false;
+  }
+
   for (const t of theses) {
     const entry = parseInrPriceMidpoint(t.entryZone);
     const stop = parseInrPriceMidpoint(t.stopLoss);
@@ -179,18 +196,7 @@ export function recordPaperTrades(
         continue;
       }
       const maxHoldDays = Math.max(1, Math.trunc(catalystCriteria.days_to_earnings) + 2);
-      if (hasOpenPaperTradeForSymbol(t.symbol, db)) {
-        log.info(
-          {
-            symbol: t.symbol,
-            signalType: 'catalyst_entry' as const,
-            blockReason: 'open_in_other_strategy',
-          },
-          'paper trade dedup — symbol already open under different signal',
-        );
-        crossStrategyBlocked++;
-        continue;
-      }
+      if (blockIfOpenPaperTradeExists(t.symbol, 'catalyst_entry', db)) continue;
       const catalystInsert = insertSizedPaperTrade(
         {
           symbol: t.symbol,
@@ -309,14 +315,7 @@ export function recordPaperTrades(
     const horizon = (h === 'short' || h === 'long' ? h : 'medium') as PaperTradeHorizon;
     const maxHoldDays = horizon === 'short' ? 30 : horizon === 'long' ? 252 : 90;
 
-    if (hasOpenPaperTradeForSymbol(t.symbol, db)) {
-      log.info(
-        { symbol: t.symbol, signalType: 'AI_PICK' as const, blockReason: 'open_in_other_strategy' },
-        'paper trade dedup — symbol already open under different signal',
-      );
-      crossStrategyBlocked++;
-      continue;
-    }
+    if (blockIfOpenPaperTradeExists(t.symbol, 'AI_PICK', db)) continue;
     const aiPickInsert = insertSizedPaperTrade(
       {
         symbol: t.symbol,
@@ -378,18 +377,7 @@ export function recordPaperTrades(
         continue;
       }
 
-      if (hasOpenPaperTradeForSymbol(p.symbol, db)) {
-        log.info(
-          {
-            symbol: p.symbol,
-            signalType: 'PORTFOLIO_ADD' as const,
-            blockReason: 'open_in_other_strategy',
-          },
-          'paper trade dedup — symbol already open under different signal',
-        );
-        crossStrategyBlocked++;
-        continue;
-      }
+      if (blockIfOpenPaperTradeExists(p.symbol, 'PORTFOLIO_ADD', db)) continue;
       const addInsert = insertSizedPaperTrade(
         {
           symbol: p.symbol,
