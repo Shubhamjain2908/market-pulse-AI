@@ -45,6 +45,7 @@ import { runRegimeAgent } from './agents/regime-agent.js';
 import { runSignalEnricher } from './agents/signal-enricher.js';
 import { runStockScreener } from './agents/stock-screener.js';
 import { generateTheses } from './agents/thesis-generator.js';
+import { printAdviceReview, runAdviceReview } from './analysers/advice-review.js';
 import { runBacktest } from './backtest/harness.js';
 import { deliverBriefing } from './briefing/dispatch.js';
 import { config } from './config/env.js';
@@ -724,6 +725,20 @@ program
     const rows = getStageHistory(stage, opts.days ? Number(opts.days) : undefined, getDb());
     const effectiveDays = opts.days ? Number(opts.days) : 7;
     console.log(JSON.stringify({ stage, days: effectiveDays, runs: rows.length, rows }, null, 2));
+    closeDb();
+  });
+
+program
+  .command('advice-review')
+  .description(
+    'score past portfolio_analysis HOLD/ADD/TRIM/EXIT calls against forward returns from quotes',
+  )
+  .option('--json', 'output raw JSON (no table formatting)')
+  .action(async (opts: { json?: boolean }) => {
+    ensureDb();
+    const date = optionalCliIsoDate(program.opts().date);
+    const result = runAdviceReview({ date, json: Boolean(opts.json) });
+    printAdviceReview(result, Boolean(opts.json));
     closeDb();
   });
 
