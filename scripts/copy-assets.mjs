@@ -14,6 +14,7 @@ const root = dirname(here);
 const ASSETS = [
   { from: 'src/db/schema.sql', to: 'dist/db/schema.sql' },
   { from: 'src/db/migrations', to: 'dist/db/migrations', optional: true },
+  { from: 'scripts/fetch-bse-concall.py', to: 'dist/scripts/fetch-bse-concall.py' },
 ];
 
 let copied = 0;
