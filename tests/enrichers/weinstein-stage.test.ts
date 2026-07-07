@@ -19,6 +19,34 @@ function peakThenPullbackCloses(flatBars: number, flatPx: number, dropBars: numb
   return [...flat, ...pullback];
 }
 
+/**
+ * Generate a close series from a normalized shape scaled by a multiplier.
+ * Used by the scale-invariance test — the same shape at different price
+ * magnitudes should produce identical stage classifications because all
+ * thresholds are ratio-based (close/sma200, slope200/ma200, etc.).
+ */
+function scaleSeries(normalized: number[], scale: number): number[] {
+  return normalized.map((v) => v * scale);
+}
+
+/**
+ * A 260-bar shape with a gentle upward drift (slope200 > 0 but small) followed
+ * by a flat plateau near the 200DMA. This exercises the normalized-slope
+ * threshold `abs(slope200/ma200) < 0.005` used in Stage 1 detection.
+ */
+function normalizedShape(): number[] {
+  const closes: number[] = [];
+  // Gentle rise: 100 → 103 over 200 bars (~1.5% slope over SMA200)
+  for (let i = 0; i < 200; i++) {
+    closes.push(100 + i * (3 / 200));
+  }
+  // Flat plateau for 60 bars: holds near the 200DMA
+  for (let i = 0; i < 60; i++) {
+    closes.push(103);
+  }
+  return closes;
+}
+
 describe('computeWeinsteinStage', () => {
   it('returns insufficient when fewer than 50 bars', () => {
     const r = computeWeinsteinStage(uptrendCloses(40), 39);
@@ -50,6 +78,22 @@ describe('computeWeinsteinStage', () => {
     expect([WEINSTEIN_STAGE.STAGE_3, WEINSTEIN_STAGE.STAGE_4]).toContain(r.stageCode);
     expect(r.pctAboveSma200).not.toBeNull();
     if (r.pctAboveSma200 != null) expect(r.pctAboveSma200).toBeLessThan(0);
+  });
+
+  it('is scale-invariant: identical stageCode for 50 vs 3000 price bases', () => {
+    const normalized = normalizedShape();
+    // 60× price difference: ₹52 (0.5×) vs ₹3,090 (30×)
+    const cheap = scaleSeries(normalized, 0.5);
+    const expensive = scaleSeries(normalized, 30);
+
+    // Test across multiple indices in the lookback window
+    const indices = [259, 240, 220, 200, 180, 150, 100, 80, 60, 51];
+    for (const idx of indices) {
+      const r1 = computeWeinsteinStage(cheap, idx);
+      const r2 = computeWeinsteinStage(expensive, idx);
+      expect(r1.stageCode).toBe(r2.stageCode);
+      expect(r1.stageScore).toBe(r2.stageScore);
+    }
   });
 
   it('maps stage codes to labels', () => {
