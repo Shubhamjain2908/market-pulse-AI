@@ -227,6 +227,22 @@ Status: **v3 shipped (2026-07-06)** — `pnpm fundamentals:refresh` orchestrates
 
 ---
 
+## 10. Advice-Accuracy Scorer (`advice-review`)
+
+**OBSERVE-SAFE diagnostic** — read-only CLI command that scores past `portfolio_analysis` HOLD/ADD/TRIM/EXIT calls against forward returns from `quotes`. Zero LLM, zero schema change, zero gating impact.
+
+**Methodology (`src/analysers/advice-review.ts`):**
+1. Loads `portfolio_analysis` rows with `date <= asOf`
+2. Deduplicates to action-transitions (first call of a streak per symbol — repeated HOLDs collapsed)
+3. For each transition computes 30/60/90-calendar-day raw and excess returns vs NIFTY_50
+4. Entry price = first NSE `close` on or after call date (within 7 calendar days)
+5. Horizon close = latest NSE `close` on or before `callDate + H`; horizon is `pending` when target date exceeds symbol's latest quote date
+6. Correctness rules: EXIT/TRIM correct when x90<0, ADD correct when x90>0, HOLD correct when x90>-5
+
+**Output:** by-action stats table, conviction-band cuts (90d hit rate by `{<0.5, 0.5–0.7, >0.7}`), 10 worst calls. `--json` for machine consumption. ADD row annotated as advisory only.
+
+**CLI:** `pnpm cli advice-review [-d YYYY-MM-DD] [--json]`. No persistence — rerunnable, same DB state → same output.
+
 ## 5. Key SQLite Tables
 
 ### Core market data

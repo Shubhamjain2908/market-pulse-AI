@@ -228,6 +228,8 @@ pnpm cli schedule          # start built-in croner schedule (Asia/Kolkata):
                            # Sunday 08:00 (momentum rank + rebalance + skip-AI briefing w/ rebalance summary + deliver)
 pnpm cli schedule --run-now
 
+pnpm cli advice-review     # score past portfolio_analysis calls against forward returns
+pnpm cli advice-review --json  # raw JSON output (no table formatting)
 pnpm cli doctor            # config diagnostics (no secrets)
 pnpm cli ext-signal-smoke  # live ftInvstr holdings ingest + overlap smoke
 pnpm cli fundamental-screen-audit  # quality_at_value / dividend_compounder gate bottlenecks
