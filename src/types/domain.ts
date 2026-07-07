@@ -326,13 +326,27 @@ export const ConcallIntelSchema = z.object({
     .optional(),
   deflections: z
     .preprocess((v) => {
-      if (Array.isArray(v)) return v.map(String);
+      if (Array.isArray(v)) {
+        // Handle array of objects like {question, response} or {topic, detail}
+        return v
+          .map((item: unknown) => {
+            if (typeof item === 'string') return item;
+            if (item && typeof item === 'object') {
+              const vals = Object.values(item as Record<string, unknown>).filter(
+                (x): x is string => typeof x === 'string' && x.length > 0,
+              );
+              return vals.length > 0 ? vals.join(': ') : String(item);
+            }
+            return String(item);
+          })
+          .filter(Boolean);
+      }
       if (typeof v === 'string') return [v];
       if (v && typeof v === 'object') return Object.values(v).map(String);
       return [];
     }, z.array(z.string()))
     .optional(),
-  summary: z.string().max(600).catch('Summary unavailable'), // <=120 words ≈ 600 chars max
+  summary: z.string().max(1200).catch('Summary unavailable'), // <=200 words ≈ 1200 chars max
 });
 export type ConcallIntel = z.infer<typeof ConcallIntelSchema>;
 
