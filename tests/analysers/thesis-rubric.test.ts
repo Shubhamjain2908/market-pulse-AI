@@ -32,6 +32,8 @@ function createTestDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS fundamentals (
       symbol          TEXT NOT NULL,
       as_of           TEXT NOT NULL,
+      pe              REAL,
+      peg             REAL,
       debt_to_equity  REAL,
       roe             REAL,
       source          TEXT NOT NULL,
@@ -57,23 +59,20 @@ function createTestDb(): Database.Database {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/** Symbol with strong earnings (4 quarters positive YoY PAT, accelerating). */
 function seedStrongEarnings(db: Database.Database): void {
   const stmt = db.prepare(
     `INSERT INTO quarterly_fundamentals (symbol, quarter_end, net_profit, source) VALUES (?, ?, ?, 'screener')`,
   );
-  // Growth rates (oldest to newest): 67%, 75%, 80%, 100% — monotonically accelerating
-  stmt.run('STRONG', '2026-06-30', 1200); // vs 600 = +100%
-  stmt.run('STRONG', '2026-03-31', 900); // vs 500 = +80%
-  stmt.run('STRONG', '2025-12-31', 700); // vs 400 = +75%
-  stmt.run('STRONG', '2025-09-30', 500); // vs 300 = +67%
+  stmt.run('STRONG', '2026-06-30', 1200);
+  stmt.run('STRONG', '2026-03-31', 900);
+  stmt.run('STRONG', '2025-12-31', 700);
+  stmt.run('STRONG', '2025-09-30', 500);
   stmt.run('STRONG', '2025-06-30', 600);
   stmt.run('STRONG', '2025-03-31', 500);
   stmt.run('STRONG', '2024-12-31', 400);
   stmt.run('STRONG', '2024-09-30', 300);
 }
 
-/** Symbol with mixed earnings (2 positive, 2 negative). */
 function seedMixedEarnings(db: Database.Database): void {
   const stmt = db.prepare(
     `INSERT INTO quarterly_fundamentals (symbol, quarter_end, net_profit, source) VALUES (?, ?, ?, 'screener')`,
@@ -82,13 +81,12 @@ function seedMixedEarnings(db: Database.Database): void {
   stmt.run('MIXED', '2026-03-31', -100);
   stmt.run('MIXED', '2025-12-31', 700);
   stmt.run('MIXED', '2025-09-30', -50);
-  stmt.run('MIXED', '2025-06-30', 500); // T-4 for 2026-06-30: 500→800 positive
-  stmt.run('MIXED', '2025-03-31', 200); // T-4 for 2026-03-31: 200→-100 negative
-  stmt.run('MIXED', '2024-12-31', 400); // T-4 for 2025-12-31: 400→700 positive
-  stmt.run('MIXED', '2024-09-30', 100); // T-4 for 2025-09-30: 100→-50 negative
+  stmt.run('MIXED', '2025-06-30', 500);
+  stmt.run('MIXED', '2025-03-31', 200);
+  stmt.run('MIXED', '2024-12-31', 400);
+  stmt.run('MIXED', '2024-09-30', 100);
 }
 
-/** Symbol with declining earnings (3+ consecutive YoY declines). */
 function seedDecliningEarnings(db: Database.Database): void {
   const stmt = db.prepare(
     `INSERT INTO quarterly_fundamentals (symbol, quarter_end, net_profit, source) VALUES (?, ?, ?, 'screener')`,
@@ -97,23 +95,180 @@ function seedDecliningEarnings(db: Database.Database): void {
   stmt.run('DECLINE', '2026-03-31', 300);
   stmt.run('DECLINE', '2025-12-31', 400);
   stmt.run('DECLINE', '2025-09-30', 500);
-  stmt.run('DECLINE', '2025-06-30', 600); // 600→200 = negative
-  stmt.run('DECLINE', '2025-03-31', 700); // 700→300 = negative
-  stmt.run('DECLINE', '2024-12-31', 800); // 800→400 = negative
-  stmt.run('DECLINE', '2024-09-30', 200); // 200→500 = positive
+  stmt.run('DECLINE', '2025-06-30', 600);
+  stmt.run('DECLINE', '2025-03-31', 700);
+  stmt.run('DECLINE', '2024-12-31', 800);
+  stmt.run('DECLINE', '2024-09-30', 200);
 }
 
-/** Symbol with < 2 quarters (should produce null). */
 function seedInsufficientEarnings(db: Database.Database): void {
   const stmt = db.prepare(
     `INSERT INTO quarterly_fundamentals (symbol, quarter_end, net_profit, source) VALUES (?, ?, ?, 'screener')`,
   );
   stmt.run('INSUF', '2026-06-30', 100);
-  // Only 1 quarter — need at least 5 for YoY comparison
+}
+
+/**
+ * Seed P/E history using INSERT OR REPLACE to allow later PEG updates.
+ */
+function seedPeHistory(
+  db: Database.Database,
+  symbol: string,
+  values: Array<{ asOf: string; pe: number | null }>,
+): void {
+  const stmt = db.prepare(
+    `INSERT OR REPLACE INTO fundamentals (symbol, as_of, pe, debt_to_equity, roe, source) VALUES (?, ?, ?, 0.5, 15, 'test')`,
+  );
+  for (const v of values) {
+    stmt.run(symbol.toUpperCase(), v.asOf, v.pe);
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Tests: Valuation
+// ---------------------------------------------------------------------------
+
+describe('computeRubricAnchors - valuation', () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = createTestDb();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('percentile bands: current P/E at min of history → score 10', () => {
+    // 12 rows across 2 years. P/E DECREASES over time so current (latest) = min.
+    const rows: Array<{ asOf: string; pe: number | null }> = [];
+    for (let month = 0; month < 12; month++) {
+      const d = new Date(2024, month, 1);
+      const iso = d.toISOString().slice(0, 10);
+      rows.push({ asOf: iso, pe: 42 - month * 2 }); // 42, 40, 38, ... 20
+    }
+    // Current P/E = 20 (lowest) → percentile ≈ 0/12 = 0 ≤ 0.10 → score 10
+    seedPeHistory(db, 'CHEAP', rows);
+
+    const anchors = computeRubricAnchors('CHEAP', '2026-01-01', db);
+    expect(anchors.valuation).toBe(10);
+    expect(anchors.valuationBasis).toBe('pe_percentile');
+  });
+
+  it('percentile bands: current P/E at max of history → score 0', () => {
+    // P/E INCREASES over time so current (latest) = max.
+    const rows: Array<{ asOf: string; pe: number | null }> = [];
+    for (let month = 0; month < 12; month++) {
+      const d = new Date(2024, month, 1);
+      const iso = d.toISOString().slice(0, 10);
+      rows.push({ asOf: iso, pe: 20 + month * 2 }); // 20, 22, 24, ... 42
+    }
+    // Current P/E = 42 (highest) → percentile ≈ 11/12 = 0.917 > 0.90 → score 0
+    seedPeHistory(db, 'DEAR', rows);
+
+    const anchors = computeRubricAnchors('DEAR', '2026-01-01', db);
+    expect(anchors.valuation).toBe(0);
+    expect(anchors.valuationBasis).toBe('pe_percentile');
+  });
+
+  it('percentile bands: current P/E at median → score 6', () => {
+    // P/E goes up then down, ending near the middle.
+    const rows: Array<{ asOf: string; pe: number | null }> = [];
+    const peValues = [20, 25, 30, 35, 40, 35, 30, 25, 30, 28, 26, 30];
+    for (let month = 0; month < 12; month++) {
+      const d = new Date(2024, month, 1);
+      const iso = d.toISOString().slice(0, 10);
+      const v = peValues[month];
+      if (v == null) continue;
+      rows.push({ asOf: iso, pe: v });
+    }
+    // Current P/E = 30. Values < 30: 20,25,25,28 = 4. total=12, pct≈0.333 ≤0.50 → 6
+    seedPeHistory(db, 'MID', rows);
+
+    const anchors = computeRubricAnchors('MID', '2026-01-01', db);
+    expect(anchors.valuation).toBe(6);
+    expect(anchors.valuationBasis).toBe('pe_percentile');
+  });
+
+  it('insufficient history (5 rows) with valid PEG → scores 8 via peg basis', () => {
+    // Only 5 rows, span < 180 days → P/E percentile fails
+    seedPeHistory(db, 'PEGSYM', [
+      { asOf: '2025-12-01', pe: 20 },
+      { asOf: '2025-12-08', pe: 22 },
+      { asOf: '2025-12-15', pe: 19 },
+      { asOf: '2025-12-22', pe: 21 },
+      { asOf: '2025-12-29', pe: 23 },
+    ]);
+    // Use a different date so INSERT OR REPLACE adds a separate row with peg
+    db.prepare(
+      `INSERT OR REPLACE INTO fundamentals (symbol, as_of, peg, debt_to_equity, roe, source) VALUES (?, ?, ?, 0.5, 15, 'test')`,
+    ).run('PEGSYM', '2025-12-30', 0.9);
+
+    const anchors = computeRubricAnchors('PEGSYM', '2025-12-31', db);
+    expect(anchors.valuation).toBe(8);
+    expect(anchors.valuationBasis).toBe('peg');
+  });
+
+  it('insufficient history (90-day span, >8 rows) with valid PEG → scores via peg', () => {
+    // > 8 rows but span only ~89 days → P/E percentile fails
+    seedPeHistory(db, 'SHORTSPAN', [
+      { asOf: '2025-10-01', pe: 20 },
+      { asOf: '2025-10-15', pe: 19 },
+      { asOf: '2025-11-01', pe: 21 },
+      { asOf: '2025-11-15', pe: 22 },
+      { asOf: '2025-12-01', pe: 20 },
+      { asOf: '2025-12-08', pe: 19 },
+      { asOf: '2025-12-15', pe: 21 },
+      { asOf: '2025-12-22', pe: 22 },
+      { asOf: '2025-12-29', pe: 23 },
+    ]);
+    // Separate row for PEG (different date from the P/E rows)
+    db.prepare(
+      `INSERT OR REPLACE INTO fundamentals (symbol, as_of, peg, debt_to_equity, roe, source) VALUES (?, ?, ?, 0.5, 15, 'test')`,
+    ).run('SHORTSPAN', '2025-12-30', 1.5);
+
+    const anchors = computeRubricAnchors('SHORTSPAN', '2025-12-31', db);
+    // PEG = 1.5 → ≤ 2 → score 5
+    expect(anchors.valuation).toBe(5);
+    expect(anchors.valuationBasis).toBe('peg');
+  });
+
+  it('negative/null P/E and no PEG → null valuation', () => {
+    // Only negative and null P/E rows → no valid pe > 0 rows → no PEG → null
+    seedPeHistory(db, 'NOPEG', [
+      { asOf: '2023-01-01', pe: -10 },
+      { asOf: '2024-01-01', pe: -5 },
+    ]);
+    // No PEG either
+    const anchors = computeRubricAnchors('NOPEG', '2026-01-01', db);
+    expect(anchors.valuation).toBeNull();
+    expect(anchors.valuationBasis).toBeNull();
+  });
+
+  it('point-in-time: rows with as_of > date are excluded from distribution', () => {
+    // Seed history through end of 2024
+    const rows: Array<{ asOf: string; pe: number | null }> = [];
+    for (let month = 0; month < 12; month++) {
+      const d = new Date(2024, month, 1);
+      const iso = d.toISOString().slice(0, 10);
+      rows.push({ asOf: iso, pe: 20 + month * 2 }); // 20, 22, ... 42
+    }
+    seedPeHistory(db, 'PIT', rows);
+    // Future row with lower P/E — should be excluded from distribution
+    db.prepare(
+      `INSERT OR REPLACE INTO fundamentals (symbol, as_of, pe, debt_to_equity, roe, source) VALUES (?, ?, ?, 0.5, 15, 'test')`,
+    ).run('PIT', '2026-06-01', 10);
+
+    // Analyze as of 2026-01-01 — future row excluded
+    // Current P/E = 42 (last of 12 rows, highest) → score 0
+    const anchors = computeRubricAnchors('PIT', '2026-01-01', db);
+    expect(anchors.valuation).toBe(0);
+    expect(anchors.valuationBasis).toBe('pe_percentile');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: Earnings trajectory
 // ---------------------------------------------------------------------------
 
 describe('computeRubricAnchors - earningsTrajectory', () => {
@@ -136,7 +291,6 @@ describe('computeRubricAnchors - earningsTrajectory', () => {
   it('scores 5 for 2 positive quarters', () => {
     seedMixedEarnings(db);
     const anchors = computeRubricAnchors('MIXED', '2026-07-01', db);
-    // 2 positive out of 4 → 5
     expect(anchors.earningsTrajectory).toBe(5);
   });
 
@@ -153,14 +307,15 @@ describe('computeRubricAnchors - earningsTrajectory', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Tests: Balance sheet
+// ---------------------------------------------------------------------------
+
 describe('computeRubricAnchors - balanceSheet', () => {
   let db: Database.Database;
 
   beforeEach(() => {
     db = createTestDb();
-    db.prepare(
-      `INSERT INTO fundamentals (symbol, as_of, debt_to_equity, roe, source) VALUES (?, ?, ?, ?, ?)`,
-    );
   });
 
   afterEach(() => {
@@ -229,6 +384,10 @@ describe('computeRubricAnchors - balanceSheet', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Tests: Technical stage
+// ---------------------------------------------------------------------------
+
 describe('computeRubricAnchors - technicalStage', () => {
   let db: Database.Database;
 
@@ -242,10 +401,10 @@ describe('computeRubricAnchors - technicalStage', () => {
 
   it('returns score from weinstein_stage_score when code is non-zero', () => {
     db.prepare(
-      `INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, ?)`,
+      'INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, ?)',
     ).run('STAGE2B', '2026-07-01', 'weinstein_stage_code', 22, 'technical');
     db.prepare(
-      `INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, ?)`,
+      'INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, ?)',
     ).run('STAGE2B', '2026-07-01', 'weinstein_stage_score', 30, 'technical');
     const anchors = computeRubricAnchors('STAGE2B', '2026-07-01', db);
     expect(anchors.technicalStage).toBe(30);
@@ -253,10 +412,10 @@ describe('computeRubricAnchors - technicalStage', () => {
 
   it('returns null when weinstein_stage_code is 0 (insufficient data)', () => {
     db.prepare(
-      `INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, ?)`,
+      'INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, ?)',
     ).run('INSUF', '2026-07-01', 'weinstein_stage_code', 0, 'technical');
     db.prepare(
-      `INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, ?)`,
+      'INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, ?)',
     ).run('INSUF', '2026-07-01', 'weinstein_stage_score', 15, 'technical');
     const anchors = computeRubricAnchors('INSUF', '2026-07-01', db);
     expect(anchors.technicalStage).toBeNull();
@@ -269,10 +428,10 @@ describe('computeRubricAnchors - technicalStage', () => {
 
   it('returns Stage 4 score of 0', () => {
     db.prepare(
-      `INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, ?)`,
+      'INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, ?)',
     ).run('STAGE4', '2026-07-01', 'weinstein_stage_code', 4, 'technical');
     db.prepare(
-      `INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, ?)`,
+      'INSERT INTO signals (symbol, date, name, value, source) VALUES (?, ?, ?, ?, ?)',
     ).run('STAGE4', '2026-07-01', 'weinstein_stage_score', 0, 'technical');
     const anchors = computeRubricAnchors('STAGE4', '2026-07-01', db);
     expect(anchors.technicalStage).toBe(0);
@@ -280,15 +439,17 @@ describe('computeRubricAnchors - technicalStage', () => {
 });
 
 // ---------------------------------------------------------------------------
-// computeRubricTotal
+// computeRubricTotal (0–100 scale after valuation dimension added)
 // ---------------------------------------------------------------------------
 
 describe('computeRubricTotal', () => {
-  it('computes correct total when all values present', () => {
+  it('computes correct total when all values present (0–100 scale)', () => {
     const anchors: RubricAnchors = {
       earningsTrajectory: 10,
       balanceSheet: 10,
-      technicalStage: 30, // Stage 2B
+      valuation: 10,
+      valuationBasis: 'pe_percentile',
+      technicalStage: 30,
     };
     const llmRubric = {
       moat: 8,
@@ -296,24 +457,28 @@ describe('computeRubricTotal', () => {
       competitivePosition: 9,
       newsCatalyst: 6,
     };
-    // Subtotals: 10+10+8+7+9+6 = 50, + technical 30 = 80
-    expect(computeRubricTotal(anchors, llmRubric)).toBe(80);
+    // 10+10+10+8+7+9+6 = 60 subtotal, + 30 technical = 90
+    expect(computeRubricTotal(anchors, llmRubric)).toBe(90);
   });
 
   it('uses neutral defaults (4) for null anchors and null LLM rubric', () => {
     const anchors: RubricAnchors = {
       earningsTrajectory: null,
       balanceSheet: null,
+      valuation: null,
+      valuationBasis: null,
       technicalStage: null,
     };
-    // Subtotal: 4+4+4+4+4+4 = 24, + technical neutral 15 = 39
-    expect(computeRubricTotal(anchors, null)).toBe(39);
+    // 7×4 = 28 subtotal, + 15 technical = 43
+    expect(computeRubricTotal(anchors, null)).toBe(43);
   });
 
   it('uses neutral defaults for partial anchors', () => {
     const anchors: RubricAnchors = {
       earningsTrajectory: 8,
       balanceSheet: null,
+      valuation: null,
+      valuationBasis: null,
       technicalStage: 15,
     };
     const llmRubric = {
@@ -322,14 +487,16 @@ describe('computeRubricTotal', () => {
       competitivePosition: null as unknown as number,
       newsCatalyst: null as unknown as number,
     };
-    // Subtotal: 8+4+7+6+4+4 = 33, + technical 15 = 48
-    expect(computeRubricTotal(anchors, llmRubric)).toBe(48);
+    // 8+4+4+7+6+4+4 = 37 subtotal, + 15 technical = 52
+    expect(computeRubricTotal(anchors, llmRubric)).toBe(52);
   });
 
   it('handles edge case: all zeros for anchors', () => {
     const anchors: RubricAnchors = {
       earningsTrajectory: 0,
       balanceSheet: 0,
+      valuation: 0,
+      valuationBasis: null,
       technicalStage: 0,
     };
     const llmRubric = {
@@ -338,7 +505,25 @@ describe('computeRubricTotal', () => {
       competitivePosition: 0,
       newsCatalyst: 0,
     };
-    // Subtotal: 0+0+0+0+0+0 = 0, + technical 0 = 0
+    // 0+0+0+0+0+0+0 = 0 subtotal, + 0 technical = 0
     expect(computeRubricTotal(anchors, llmRubric)).toBe(0);
+  });
+
+  it('handles max possible score: all 10s + stage 30', () => {
+    const anchors: RubricAnchors = {
+      earningsTrajectory: 10,
+      balanceSheet: 10,
+      valuation: 10,
+      valuationBasis: 'pe_percentile',
+      technicalStage: 30,
+    };
+    const llmRubric = {
+      moat: 10,
+      sectorTailwind: 10,
+      competitivePosition: 10,
+      newsCatalyst: 10,
+    };
+    // 10+10+10+10+10+10+10 = 70 subtotal, + 30 technical = 100
+    expect(computeRubricTotal(anchors, llmRubric)).toBe(100);
   });
 });

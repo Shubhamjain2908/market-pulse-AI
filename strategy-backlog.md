@@ -83,6 +83,19 @@ Gate: ≥30 post-fix paper trades closed first (need enough BULL days to measure
 
 ---
 
+## Shipped — AI_PICK confidence rubric (shadow, 2026-07-07)
+
+**Live (shadow):** `computeRubricTotal` expanded from 0–90 to 0–100 with a new `valuation` anchor scoring percentile rank vs own trailing P/E history, with PEG fallback. `AI_PICK_RUBRIC_MIN` moved 54→60 (same 60% ratio). `valuationBasis` (`'pe_percentile' | 'peg' | null`) recorded in `rubric_json.anchors` for calibration separation.
+
+**4 gate-boundary preconditions** before `AI_PICK_RUBRIC_GATE` can flip from 0 to 1:
+
+1. **Calibration cohort:** ≥ 30 shadow-logged theses with rubric totals for calibration.
+2. **Fundamentals coverage:** < 30% of thesis candidates with `earningsTrajectory = null`.
+3. **Stage-4 hard cap:** when the gate goes live, an AI_PICK with `weinstein_stage_code = 4` (Stage 4; `WEINSTEIN_STAGE.STAGE_4` constant) must be rejected regardless of `rubricTotal` — **GATING-CHANGE, do not build now**.
+4. **Clean cohort boundary:** flip only at next BULL_TRENDING / GTT re-baseline.
+
+---
+
 ## Shipped — ftinvstr cross-validation in briefing (Item 3, 2026-07-06)
 
 **Live:** GARP screen passes annotated with `[ext: confirmed by DCF_Compounder_Stack]` when symbol appears in
