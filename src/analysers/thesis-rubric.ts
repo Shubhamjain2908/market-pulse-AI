@@ -74,10 +74,11 @@ function pegFallback(
 /**
  * Score valuation on a 0–10 scale using percentile rank vs own trailing P/E.
  *
- * 1. Fetch `pe` from `fundamentals` with `as_of <= date AND as_of >= date(?, '-3 years')`,
- *    keep only finite `pe > 0`.
- * 2. History sufficiency: ≥ 8 distinct rows AND span ≥ 180 days → use P/E percentile.
- * 3. Current P/E = latest row with `as_of <= date` (must be finite > 0, else fallback).
+ * 1. Fetch the genuinely latest fundamentals row (unfiltered P/E). If that row's
+ *    P/E is null/negative/non-finite → PEG/null fallback immediately. This
+ *    prevents scoring a newly loss-making company on a months-old positive P/E.
+ * 2. Only if current P/E is valid, fetch history for percentile computation.
+ * 3. History sufficiency: ≥ 8 distinct rows AND span ≥ 180 days → use P/E percentile.
  * 4. `pct` = fraction of historical values < current P/E (strict less-than; current row included).
  * 5. Score bands:
  *    ≤ 0.10 → 10, ≤ 0.25 → 8, ≤ 0.50 → 6, ≤ 0.75 → 4, ≤ 0.90 → 2, > 0.90 → 0
@@ -95,7 +96,25 @@ function scoreValuation(
 ): { score: number | null; basis: ValuationBasis } {
   const sym = symbol.toUpperCase();
 
-  // ---- P/E percentile path ----
+  // Step 1: Fetch the genuinely latest P/E (unfiltered — includes null/negative rows)
+  const latestRow = db
+    .prepare(
+      `SELECT pe
+       FROM fundamentals
+       WHERE symbol = ? AND as_of <= ?
+       ORDER BY as_of DESC
+       LIMIT 1`,
+    )
+    .get(sym, date) as { pe: number | null } | undefined;
+
+  // Step 2: If latest P/E is not valid → fallback (stale/null/negative P/E guard)
+  if (!latestRow || latestRow.pe == null || !Number.isFinite(latestRow.pe) || latestRow.pe <= 0) {
+    return pegFallback(sym, date, db);
+  }
+
+  const currentPe = latestRow.pe;
+
+  // Step 3: Fetch P/E history for percentile (only valid positive values)
   const peRows = db
     .prepare(
       `SELECT as_of AS asOf, pe
@@ -106,38 +125,37 @@ function scoreValuation(
     )
     .all(sym, date, date) as PeRow[];
 
-  if (peRows.length >= 8) {
-    const lastIdx = peRows.length - 1;
-    const first = peRows[0];
-    const last = peRows[lastIdx];
-    if (first && last) {
-      const spanMs = new Date(last.asOf).getTime() - new Date(first.asOf).getTime();
-      const spanDays = spanMs / (1000 * 60 * 60 * 24);
-
-      if (spanDays >= 180) {
-        const currentPe = last.pe;
-        if (currentPe > 0 && Number.isFinite(currentPe)) {
-          // Percentile = fraction of values < current P/E (strict less-than, current row included)
-          const countBelow = peRows.filter((r) => r.pe < currentPe).length;
-          const total = peRows.length;
-          const pct = total > 0 ? countBelow / total : 0;
-
-          let score: number;
-          if (pct <= 0.1) score = 10;
-          else if (pct <= 0.25) score = 8;
-          else if (pct <= 0.5) score = 6;
-          else if (pct <= 0.75) score = 4;
-          else if (pct <= 0.9) score = 2;
-          else score = 0;
-
-          return { score, basis: 'pe_percentile' };
-        }
-      }
-    }
+  // Step 4: History sufficiency — must have >= 8 rows AND >= 180 day span
+  if (peRows.length < 8) {
+    return pegFallback(sym, date, db);
   }
 
-  // ---- PEG fallback ----
-  return pegFallback(sym, date, db);
+  const first = peRows[0];
+  const last = peRows[peRows.length - 1];
+  if (!first || !last) {
+    return pegFallback(sym, date, db);
+  }
+
+  const spanMs = new Date(last.asOf).getTime() - new Date(first.asOf).getTime();
+  const spanDays = spanMs / (1000 * 60 * 60 * 24);
+  if (spanDays < 180) {
+    return pegFallback(sym, date, db);
+  }
+
+  // Step 5: Percentile = fraction of values < current P/E (strict less-than)
+  const countBelow = peRows.filter((r) => r.pe < currentPe).length;
+  const total = peRows.length;
+  const pct = total > 0 ? countBelow / total : 0;
+
+  let score: number;
+  if (pct <= 0.1) score = 10;
+  else if (pct <= 0.25) score = 8;
+  else if (pct <= 0.5) score = 6;
+  else if (pct <= 0.75) score = 4;
+  else if (pct <= 0.9) score = 2;
+  else score = 0;
+
+  return { score, basis: 'pe_percentile' };
 }
 
 // ---------------------------------------------------------------------------
