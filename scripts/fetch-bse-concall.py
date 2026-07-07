@@ -7,12 +7,11 @@ Usage:
 
 Outputs JSON to stdout: {success, symbol, scrip, date, attachment, pdf_path, size, subject, error}
 
-Implementation:
-  1. Gets BSE scrip code for the symbol (with manual fallback for known symbols)
-  2. Fetches corporate announcements for the trailing 12 months
-  3. Filters to "Earnings Call Transcript" by SUBCATNAME
-  4. Downloads the latest transcript PDF via AttachLive/{ATTACHMENTNAME}
-  5. Saves to output dir, prints JSON result
+Download strategy (3 tiers):
+  1. AttachLive/{UUID} — current filings (primary)
+  2. AttachHis/{UUID} — historical archive (fallback if primary 404s)
+  3. Company IR website from IR_URL_MAP — direct company-hosted PDF (last resort)
+  Each tier is tried for every concall found, not just the latest.
 """
 import sys, json, warnings, os
 warnings.filterwarnings("ignore")
@@ -21,9 +20,19 @@ from bse import BSE
 from datetime import datetime, timedelta
 
 # Known BSE scrip codes for symbols that don't resolve via getScripCode
+# Add symbols here when BseIndiaApi's getScripCode() returns 404 inconsistently
+# Company IR website URLs for symbols where BSE AttachLive/AttachHis fail.
+# Scraped for PDF links matching the concall announcement date.
+IR_URL_MAP = {
+    # Add entries here as needed (e.g., 'KVB': 'https://www.kvbbank.com/investors')
+}
+
 MANUAL_SCRIP_CODES = {
     'KIRLOSENG': 533293,
     'BSE': 532155,
+    'ABCAPITAL': 540691,
+    'AIAENG': 532683,
+    'ANGELONE': 543235,
 }
 
 def main():
@@ -119,54 +128,98 @@ def main():
                 }))
                 return
 
-            # Step 4: Download the latest concall PDF
-            latest = concalls[0]
-            attachment = latest.get('ATTACHMENTNAME', '')
-            dt = (latest.get('DT_TM', '') or '')[:10]
-            subject = (latest.get('NEWSSUB', '') or '')[:300]
+            # Step 4: Try to download a concall PDF (iterate through all concalls)
+            # Try each concall's PDF through multiple URL patterns until one works
+            last_error = "No concall transcripts found"
 
-            if not attachment:
-                print(json.dumps({
-                    "success": False,
-                    "symbol": symbol,
-                    "scrip": scrip,
-                    "error": "Latest concall has no ATTACHMENTNAME",
-                }))
-                return
+            for concall in concalls:
+                attachment = concall.get('ATTACHMENTNAME', '')
+                dt = (concall.get('DT_TM', '') or '')[:10]
+                subject = (concall.get('NEWSSUB', '') or '')[:300]
 
-            pdf_url = f"https://www.bseindia.com/xml-data/corpfiling/AttachLive/{attachment}"
-            pdf_path = os.path.join(output_dir, f'{symbol}_{attachment}')
+                if not attachment:
+                    continue
 
-            r = bse._BSE__req(pdf_url)
-            content = r.content
+                # Tier 1: AttachLive (current filings — works for most)
+                # Tier 2: AttachHis (historical archive — fallback when file was moved)
+                for endpoint in ['AttachLive', 'AttachHis']:
+                    pdf_url = f"https://www.bseindia.com/xml-data/corpfiling/{endpoint}/{attachment}"
+                    pdf_path = os.path.join(output_dir, f'{symbol}_{endpoint}_{attachment}')
 
-            if content[:4] != b'%PDF':
-                print(json.dumps({
-                    "success": False,
-                    "symbol": symbol,
-                    "scrip": scrip,
-                    "error": f"Not a PDF (starts with {content[:20].hex()})",
-                }))
-                return
+                    try:
+                        r = bse._BSE__req(pdf_url, timeout=10)
+                        content = r.content
 
-            with open(pdf_path, 'wb') as f:
-                f.write(content)
+                        if content[:4] == b'%PDF':
+                            with open(pdf_path, 'wb') as f:
+                                f.write(content)
 
-            # Step 5: Determine subject category
-            subcat_name = (latest.get('SUBCATNAME', '') or '').lower()
-            kind = 'transcript' if 'transcript' in subcat_name else 'invite'
+                            subcat_name = (concall.get('SUBCATNAME', '') or '').lower()
+                            kind = 'transcript' if 'transcript' in subcat_name else 'invite'
 
+                            print(json.dumps({
+                                "success": True,
+                                "symbol": symbol,
+                                "scrip": scrip,
+                                "date": dt,
+                                "attachment": attachment,
+                                "pdf_path": pdf_path,
+                                "size": len(content),
+                                "subject": subject,
+                                "subcategory": subcat_name,
+                                "kind": kind,
+                            }))
+                            return  # Success — exit early
+                    except Exception as e:
+                        last_error = f"{endpoint}: {type(e).__name__}: {str(e)[:200]}"
+                        continue
+
+                # Tier 3: Company IR website (for symbols in the known map)
+                ir_url = IR_URL_MAP.get(symbol)
+                if ir_url:
+                    try:
+                        import requests as req
+                        ir_resp = req.get(ir_url, timeout=10, headers={
+                            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+                        })
+                        if ir_resp.status_code == 200:
+                            # Look for PDF links matching the concall date
+                            import re
+                            pdf_hrefs = re.findall(r'href=[\'"]([^\'"]+\.pdf)[\'"]', ir_resp.text, re.I)
+                            date_slug = dt.replace('-', '') if dt else ''
+                            for href in pdf_hrefs:
+                                if date_slug and date_slug[:6] in href:
+                                    # Found a matching PDF — download it
+                                    full_url = href if href.startswith('http') else ir_url.rstrip('/') + '/' + href.lstrip('/')
+                                    pdf_resp = req.get(full_url, timeout=10)
+                                    if pdf_resp.content[:4] == b'%PDF':
+                                        ir_path = os.path.join(output_dir, f'{symbol}_ir_{os.path.basename(href)}')
+                                        with open(ir_path, 'wb') as f:
+                                            f.write(pdf_resp.content)
+                                        print(json.dumps({
+                                            "success": True,
+                                            "symbol": symbol,
+                                            "scrip": scrip,
+                                            "date": dt,
+                                            "attachment": attachment,
+                                            "pdf_path": ir_path,
+                                            "size": len(pdf_resp.content),
+                                            "subject": subject + ' [company IR fallback]',
+                                            "subcategory": 'earnings call transcript',
+                                            "kind": 'transcript',
+                                        }))
+                                        return
+                    except Exception:
+                        pass
+
+            # All concalls and fallbacks failed
             print(json.dumps({
-                "success": True,
+                "success": False,
                 "symbol": symbol,
                 "scrip": scrip,
-                "date": dt,
-                "attachment": attachment,
-                "pdf_path": pdf_path,
-                "size": len(content),
-                "subject": subject,
-                "subcategory": subcat_name,
-                "kind": kind,
+                "total_announcements": len(table),
+                "concalls_found": len(concalls),
+                "error": f"Download failed: {last_error}",
             }))
 
     except Exception as e:
