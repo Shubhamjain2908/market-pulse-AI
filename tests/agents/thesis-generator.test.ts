@@ -346,6 +346,32 @@ describe('thesis generator', () => {
     expect(stored[0]?.confidence).toBe(5);
   });
 
+  it('includes fired screens in thesis context when screen matches exist', () => {
+    db.prepare(
+      `INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+       VALUES ('RELIANCE', ?, 'golden_cross', 1, '{}')`,
+    ).run(today);
+    const ctx = buildStockContext('RELIANCE', today, db, 'thesis');
+    expect(ctx).toContain('## Screen matches today');
+    expect(ctx).toContain('golden_cross');
+    expect(ctx).not.toContain('quality_garp');
+  });
+
+  it('includes fired screens in context for quality_garp screen hit', () => {
+    db.prepare(
+      `INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+       VALUES ('RELIANCE', ?, 'quality_garp', 9, '{}')`,
+    ).run(today);
+    const ctx = buildStockContext('RELIANCE', today, db, 'thesis');
+    expect(ctx).toContain('## Screen matches today');
+    expect(ctx).toContain('quality_garp');
+  });
+
+  it('omits screen matches section when no screens fired for the symbol', () => {
+    const ctx = buildStockContext('RELIANCE', today, db, 'thesis');
+    expect(ctx).not.toContain('## Screen matches today');
+  });
+
   it('clamps confidenceScore to 6 for catalyst_entry context', async () => {
     db.prepare(
       `

@@ -99,6 +99,7 @@ export function runScreenEngine(
   const evaluations: ScreenEvaluation[] = [];
   const matchesByScreen: Record<string, number> = {};
   const partialByScreen: Record<string, number> = {};
+  const screensToReplace: string[] = []; // Track all screens that need replacement
 
   for (const screen of screens) {
     if (opts.regime != null && !isStrategyAllowed(screen.name, opts.regime, db)) {
@@ -108,6 +109,7 @@ export function runScreenEngine(
       );
       matchesByScreen[screen.name] = 0;
       partialByScreen[screen.name] = 0;
+      screensToReplace.push(screen.name); // Mark for deletion of stale rows
       continue;
     }
 
@@ -121,6 +123,7 @@ export function runScreenEngine(
     }
     matchesByScreen[screen.name] = passed;
     partialByScreen[screen.name] = partial;
+    screensToReplace.push(screen.name); // Mark all screens for rerun safety
   }
 
   if (persist) {
@@ -135,7 +138,9 @@ export function runScreenEngine(
       byScreen.set(result.screenName, existing);
     }
     let written = 0;
-    for (const [screenName, results] of byScreen) {
+    // Replace ALL screens (not just those with matches) to clear stale same-date rows
+    for (const screenName of screensToReplace) {
+      const results = byScreen.get(screenName) ?? [];
       written += replaceScreenResultsForDate(results, date, screenName, db);
     }
     log.info(

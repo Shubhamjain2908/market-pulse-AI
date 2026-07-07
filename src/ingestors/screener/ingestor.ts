@@ -10,7 +10,7 @@
  * pipeline continue.
  */
 
-import { RATE_LIMITS } from '../../constants.js';
+import { config } from '../../config/env.js';
 import { child } from '../../logger.js';
 import { skipScreenerFundamentalsFetch } from '../../market/screener-symbol-skip.js';
 import type { Fundamentals, QuarterlyFundamentals } from '../../types/domain.js';
@@ -59,7 +59,12 @@ export class ScreenerIngestor implements Ingestor {
       client ??
       createHttpClient({
         name: 'screener',
-        rateLimit: { requestsPerSecond: RATE_LIMITS.screener, burst: 2 },
+        rateLimit: { requestsPerSecond: config.SCREENER_REQUESTS_PER_SECOND, burst: 1 },
+        retry: {
+          limit: config.SCREENER_MAX_RETRIES,
+          baseDelayMs: config.SCREENER_RETRY_BASE_DELAY_MS,
+          maxDelayMs: 30_000,
+        },
       });
   }
 
