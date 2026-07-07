@@ -46,13 +46,13 @@ export interface HorizonReturns {
 }
 
 export interface ScoredCall extends PortfolioCall, HorizonReturns {
-  transitionIndex: number;
   correct: boolean | null;
 }
 
 export interface ActionStats {
   transitions: number;
   scorable: number;
+  unscorableNoHorizon: number;
   pending: number;
   correct: number;
   hitRate: number | null;
@@ -75,6 +75,7 @@ export interface AdviceReviewResult {
   scoredTransitions: number;
   pending: number;
   unscorableNoEntry: number;
+  unscorableNoHorizon: number;
   byAction: Record<string, ActionStats>;
   convictionBands: ConvictionBand[];
   worstCalls: ScoredCall[];
@@ -85,6 +86,7 @@ export interface AdviceReviewResult {
 // ---------------------------------------------------------------------------
 
 const HORIZON_DAYS: ReadonlyArray<30 | 60 | 90> = [30, 60, 90];
+const WALK_BACK_LIMIT = 10;
 
 /**
  * First NSE `quotes.close` on or after `callDate`, within 7 calendar days.
@@ -118,18 +120,39 @@ function tryGetEntryPrice(
 
 /**
  * Latest NSE `quotes.close` on or before `targetDate`.
- * Returns null when no quote found (missing data).
+ *
+ * Tries the exact calendar session first. If the symbol has no quote on that
+ * day (suspension, patchy ingest), walks back through up to `WALK_BACK_LIMIT`
+ * prior trading sessions looking for the symbol's last available close.
+ * Returns null when no quote found in the bounded walk.
  */
 function getCloseOnOrBefore(symbol: string, targetDate: string, db: DatabaseType): number | null {
   const session = lastOpenOnOrBefore(targetDate);
   if (!session) return null;
 
+  // Try exact-date lookup first
   const row = db
     .prepare(`SELECT close FROM quotes WHERE symbol = ? AND exchange = 'NSE' AND date = ?`)
     .get(symbol, session) as { close: number } | undefined;
 
-  if (!row || !Number.isFinite(row.close)) return null;
-  return row.close;
+  if (row && Number.isFinite(row.close)) return row.close;
+
+  // Walk back through prior trading sessions, bounded
+  let cur = addCalendarDaysIst(session, -1);
+  for (let attempts = 0; attempts < WALK_BACK_LIMIT; attempts++) {
+    const prior = lastOpenOnOrBefore(cur);
+    if (!prior) return null;
+
+    const priorRow = db
+      .prepare(`SELECT close FROM quotes WHERE symbol = ? AND exchange = 'NSE' AND date = ?`)
+      .get(symbol, prior) as { close: number } | undefined;
+
+    if (priorRow && Number.isFinite(priorRow.close)) return priorRow.close;
+
+    cur = addCalendarDaysIst(prior, -1);
+  }
+
+  return null;
 }
 
 /** Latest NSE quote date in the DB for the symbol. */
@@ -195,7 +218,6 @@ function scoreCall(
       benchmarkR60: null,
       benchmarkR90: null,
       horizonStatus: 'unscorable_no_entry',
-      transitionIndex: 0,
       correct: null,
     };
   }
@@ -229,7 +251,6 @@ function scoreCall(
       benchmarkR60: null,
       benchmarkR90: null,
       horizonStatus: 'pending',
-      transitionIndex: 0,
       correct: null,
     };
   }
@@ -253,7 +274,7 @@ function scoreCall(
       continue;
     }
 
-    // Symbol close at horizon
+    // Symbol close at horizon (with walk-back for missing exact-date quote)
     const pH = getCloseOnOrBefore(call.symbol, targetDate, db);
     if (pH == null) {
       r[H] = null;
@@ -265,7 +286,7 @@ function scoreCall(
     const rawRet = computeReturn(p0, pH);
     r[H] = rawRet;
 
-    // Benchmark return — use getCloseOnOrBefore (same methodology)
+    // Benchmark return
     if (benchP0 != null) {
       const benchPH = getCloseOnOrBefore(NIFTY_BENCHMARK_SYMBOL, targetDate, db);
       if (benchPH != null) {
@@ -300,7 +321,6 @@ function scoreCall(
     benchmarkR60: br[60] ?? null,
     benchmarkR90: br[90] ?? null,
     horizonStatus: overallStatus,
-    transitionIndex: 0,
     correct,
   };
 }
@@ -352,7 +372,12 @@ function computeActionStats(scored: ScoredCall[]): Record<string, ActionStats> {
 
   const result: Record<string, ActionStats> = {};
   for (const [action, calls] of byAction) {
-    const scorable = calls.filter((c) => c.horizonStatus === 'scorable');
+    // scorable = horizon elapsed AND x90 is computable (correct != null)
+    const scorable = calls.filter((c) => c.horizonStatus === 'scorable' && c.correct != null);
+    // unscorable with elapsed horizon but missing x90 quote data
+    const unscorableNoHorizon = calls.filter(
+      (c) => c.horizonStatus === 'scorable' && c.correct == null,
+    ).length;
     const pending = calls.filter((c) => c.horizonStatus === 'pending').length;
     const correct = scorable.filter((c) => c.correct === true).length;
     const hitRate = scorable.length > 0 ? correct / scorable.length : null;
@@ -365,6 +390,7 @@ function computeActionStats(scored: ScoredCall[]): Record<string, ActionStats> {
     result[action] = {
       transitions: calls.length,
       scorable: scorable.length,
+      unscorableNoHorizon,
       pending,
       correct,
       hitRate,
@@ -421,20 +447,22 @@ function formatTable(result: AdviceReviewResult): string {
   lines.push(
     `Total calls: ${result.totalCalls} → ${result.scoredTransitions} transitions (deduped)`,
   );
-  lines.push(`Pending: ${result.pending} | Unscorable (no entry): ${result.unscorableNoEntry}`);
+  lines.push(
+    `Pending: ${result.pending} | Unscorable (no entry): ${result.unscorableNoEntry} | Unscorable (no horizon): ${result.unscorableNoHorizon}`,
+  );
   lines.push('');
 
   // By-action table
   const actions = Object.keys(result.byAction).sort();
   lines.push('─── By action ───');
   lines.push(
-    `${header('action', 10)} ${header('transitions', 12)} ${header('scorable', 10)} ${header('pending', 8)} ${header('correct', 9)} ${header('hitRate', 10)} ${header('avg x30', 10)} ${header('avg x60', 10)} ${header('avg x90', 10)} ${header('avg raw r90', 14)}`,
+    `${header('action', 10)} ${header('transitions', 12)} ${header('scorable', 10)} ${header('noHorizon', 11)} ${header('pending', 8)} ${header('correct', 9)} ${header('hitRate', 10)} ${header('avg x30', 10)} ${header('avg x60', 10)} ${header('avg x90', 10)} ${header('avg raw r90', 14)}`,
   );
   for (const action of actions) {
     const s = result.byAction[action];
     if (!s) continue;
     lines.push(
-      `${cell(action, 10)} ${cell(s.transitions, 12)} ${cell(s.scorable, 10)} ${cell(s.pending, 8)} ${cell(s.correct, 9)} ${pct(s.hitRate, 10)} ${pct(s.avgX30, 10)} ${pct(s.avgX60, 10)} ${pct(s.avgX90, 10)} ${pct(s.avgRawR90, 14)}`,
+      `${cell(action, 10)} ${cell(s.transitions, 12)} ${cell(s.scorable, 10)} ${cell(s.unscorableNoHorizon, 11)} ${cell(s.pending, 8)} ${cell(s.correct, 9)} ${pct(s.hitRate, 10)} ${pct(s.avgX30, 10)} ${pct(s.avgX60, 10)} ${pct(s.avgX90, 10)} ${pct(s.avgRawR90, 14)}`,
     );
   }
   lines.push('');
@@ -553,13 +581,15 @@ export function runAdviceReview(
   // 3. Score each transition
   const scored: ScoredCall[] = [];
   let pendingCount = 0;
-  let unscorableCount = 0;
+  let unscorableEntryCount = 0;
+  let unscorableHorizonCount = 0;
 
   for (const call of transitions) {
     const s = scoreCall(call, benchQuoteMap, effectiveDb);
 
     if (s.horizonStatus === 'pending') pendingCount++;
-    else if (s.horizonStatus === 'unscorable_no_entry') unscorableCount++;
+    else if (s.horizonStatus === 'unscorable_no_entry') unscorableEntryCount++;
+    else if (s.horizonStatus === 'scorable' && s.correct == null) unscorableHorizonCount++;
 
     scored.push(s);
   }
@@ -579,7 +609,8 @@ export function runAdviceReview(
     totalCalls,
     scoredTransitions,
     pending: pendingCount,
-    unscorableNoEntry: unscorableCount,
+    unscorableNoEntry: unscorableEntryCount,
+    unscorableNoHorizon: unscorableHorizonCount,
     byAction,
     convictionBands,
     worstCalls,

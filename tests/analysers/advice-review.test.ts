@@ -351,3 +351,104 @@ describe('advice-review: console output', () => {
     expect(() => printAdviceReview(result, true)).not.toThrow();
   });
 });
+
+describe('advice-review: horizon quote walk-back', () => {
+  it('walks back to find quote when exact horizon date has no quote', () => {
+    const db = buildFixtureDb();
+
+    // Stock has quote on Apr 2 (Thu) but NOT on Apr 6 (Mon — the 90d target).
+    // Apr 7 makes latestQd > targetDate so the 90d horizon is elapsed;
+    // getCloseOnOrBefore walks back from Apr 6: Apr 5 (Sun) → lastOpenOnOrBefore
+    // returns Apr 2. Stock quote found on Apr 2.
+    // NIFTY also seeded on Apr 2 so benchmark close resolves the same way.
+    const entryDate = '2026-01-06';
+    seedSymbolQuotes(db, 'WALKCO', [
+      { date: entryDate, close: 100 },
+      { date: '2026-04-02', close: 110 }, // prior close (walk-back target)
+      { date: '2026-04-07', close: 112 }, // after horizon — makes 90d elapsed
+    ]);
+    seedBenchmark(db, [
+      { date: entryDate, close: 5000 },
+      { date: '2026-04-02', close: 5100 }, // benchmark close within walk-back window
+      { date: '2026-04-07', close: 5150 },
+    ]);
+
+    insertAnalysis(db, 'WALKCO', entryDate, 'HOLD', 0.6);
+
+    const result = runAdviceReview({ date: '2026-04-07', db });
+
+    // Walk-back finds Apr 2 quote for both stock and benchmark
+    // Stock: (110-100)/100 = +10%, NIFTY: (5100-5000)/5000 = +2%
+    // x90: +10% - 2% = +8% > -5 → correct HOLD
+    const holdStats = result.byAction.HOLD;
+    expect(holdStats?.scorable).toBe(1);
+    expect(holdStats?.correct).toBe(1);
+    expect(result.unscorableNoHorizon).toBe(0);
+  });
+
+  it('reports unscorableNoHorizon when walk-back limit is exhausted', () => {
+    const db = buildFixtureDb();
+
+    // Stock has entry quote on Jan 6 and a post-horizon quote on Apr 7 (so 90d
+    // is elapsed), but NO quote between Jan 6 and Apr 6 (the 90d target).
+    // Walk-back of 10 sessions from Apr 6 can't reach Jan 6 → unscorableNoHorizon.
+    // NIFTY IS seeded on the exact horizon date (Apr 6) so benchmark resolves
+    // but stock doesn't, isolating the test to stock walk-back exhaustion.
+    const entryDate = '2026-01-06';
+    seedSymbolQuotes(db, 'GAPCO', [
+      { date: entryDate, close: 100 },
+      // Apr 7 makes latestQd > 90d target so horizon is elapsed
+      { date: '2026-04-07', close: 105 },
+    ]);
+    seedBenchmark(db, [
+      { date: entryDate, close: 5000 },
+      { date: '2026-04-06', close: 5100 }, // benchmark on exact 90d target
+      { date: '2026-04-07', close: 5150 },
+    ]);
+
+    insertAnalysis(db, 'GAPCO', entryDate, 'HOLD', 0.6);
+
+    const result = runAdviceReview({ date: '2026-04-07', db });
+
+    // 90d horizon is elapsed (Apr 6 <= Apr 7), but stock has no quote within
+    // 10-session walk-back of Apr 6 → x90 null → unscorableNoHorizon.
+    // Benchmark resolves normally (NIFTY has Apr 6 quote).
+    expect(result.unscorableNoHorizon).toBe(1);
+    const holdStats = result.byAction.HOLD;
+    expect(holdStats?.scorable).toBe(0);
+    expect(holdStats?.unscorableNoHorizon).toBe(1);
+    expect(holdStats?.correct).toBe(0);
+    expect(holdStats?.hitRate).toBeNull();
+  });
+
+  it('reports unscorableNoHorizon when walk-back limit is exhausted', () => {
+    const db = buildFixtureDb();
+
+    // Stock has entry quote on Jan 6 and a post-horizon quote on Apr 7 (so 90d
+    // is elapsed), but NO quote between Jan 6 and Apr 6 (the 90d target).
+    // Walk-back of 10 sessions from Apr 6 can't reach Jan 6 → unscorableNoHorizon.
+    const entryDate = '2026-01-06';
+    seedSymbolQuotes(db, 'GAPCO', [
+      { date: entryDate, close: 100 },
+      // Apr 7 makes latestQd > 90d target so horizon is elapsed
+      { date: '2026-04-07', close: 105 },
+    ]);
+    seedBenchmark(db, [
+      { date: entryDate, close: 5000 },
+      { date: '2026-04-07', close: 5100 },
+    ]);
+
+    insertAnalysis(db, 'GAPCO', entryDate, 'HOLD', 0.6);
+
+    const result = runAdviceReview({ date: '2026-04-07', db });
+
+    // 90d horizon is elapsed (Apr 6 <= Apr 7), but no quote within 10-session
+    // walk-back of Apr 6 → x90 null → unscorableNoHorizon
+    expect(result.unscorableNoHorizon).toBe(1);
+    const holdStats = result.byAction.HOLD;
+    expect(holdStats?.scorable).toBe(0);
+    expect(holdStats?.unscorableNoHorizon).toBe(1);
+    expect(holdStats?.correct).toBe(0);
+    expect(holdStats?.hitRate).toBeNull();
+  });
+});
