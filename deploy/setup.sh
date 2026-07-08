@@ -83,17 +83,15 @@ else
     if need_cmd sudo; then
       sudo env PLAYWRIGHT_BROWSERS_PATH=0 pnpm exec playwright install-deps chromium || true
     fi
-    # Install Python dependencies for concall transcript fetching
-    if need_cmd pip3; then
-      pip3 install -r scripts/requirements-concall.txt
-      # Smoke-test the bse package so failures surface at setup time, not at 08:45
-      if need_cmd python3; then
-        python3 -c "from bse import BSE; print('bse import OK')" && \
-        python3 -c "import requests; r = requests.get('https://api.bseindia.com', timeout=5); print('BSE API reachable:', r.status_code)" || \
-        echo "WARNING: bse smoke test failed — check pip3 install and network access to api.bseindia.com" >&2
-      fi
+    # Install Python dependencies in a project-local venv (concall-fetcher.ts
+    # resolves .venv/bin/python3 first, falls back to system python3).
+    if need_cmd python3; then
+      python3 -m venv .venv
+      .venv/bin/pip install --quiet -r scripts/requirements-concall.txt
+      .venv/bin/python3 -c "from bse import BSE; print('bse import OK')" || \
+        echo "WARNING: bse smoke test failed" >&2
     else
-      echo "pip3 not found — install python3-pip and rerun: pip3 install -r scripts/requirements-concall.txt" >&2
+      echo "python3 not found — concall fetching will be unavailable" >&2
     fi
     pnpm run build
   )

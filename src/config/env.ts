@@ -149,6 +149,14 @@ const EnvSchema = z.object({
   /** Days of lookback for fetching NSE announcements. */
   CONCALL_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(30).default(10),
 
+  /**
+   * Universe for DSL screens (fii_accumulation, golden_cross, etc.).
+   * `'watchlist'` — only config/watchlist.json symbols (legacy, 15 symbols).
+   * `'signals'` — all symbols with enriched signals on the run date (~200).
+   * `'momentum'` — momentum-ranked universe (~157).
+   */
+  SCREEN_UNIVERSE: z.enum(['watchlist', 'signals', 'momentum']).default('signals'),
+
   /** Screener.in inter-request rate limit (requests/second). Default 0.5 ≈ 1 req per 2s. */
   SCREENER_REQUESTS_PER_SECOND: z.coerce.number().min(0.1).max(5).default(0.5),
   /** Screener.in base retry backoff delay (ms). Default 2000ms. */
