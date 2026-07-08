@@ -35,6 +35,12 @@ const PYTHON_SCRIPT = (() => {
   return existsSync(dev) ? dev : prod;
 })();
 
+/** Resolve python3 binary — prefer project venv if it exists. */
+const PYTHON_BIN = (() => {
+  const venv = join(process.cwd(), '.venv/bin/python3');
+  return existsSync(venv) ? venv : 'python3';
+})();
+
 // ────────────────────────────────────────────────────────────────────────────
 // Shared types (same contract as NSE announcements-fetcher)
 // ────────────────────────────────────────────────────────────────────────────
@@ -167,7 +173,7 @@ async function processSymbol(
 
   try {
     // Step 1: Spawn Python subprocess
-    const proc = spawnSync('python3', [PYTHON_SCRIPT, symbol, tmpDir], {
+    const proc = spawnSync(PYTHON_BIN, [PYTHON_SCRIPT, symbol, tmpDir], {
       cwd: process.cwd(),
       encoding: 'utf-8',
       timeout: 30_000, // 30s per symbol
