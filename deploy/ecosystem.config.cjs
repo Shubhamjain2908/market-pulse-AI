@@ -19,6 +19,9 @@ module.exports = {
       script: 'dist/cli.js',
       args: 'schedule',
       interpreter: 'node',
+      // Cap V8 heap to ~512 MB so OOM doesn't take down the 1 GB Oracle VM.
+      // Concall PDF extraction (unpdf) can spike on large transcripts (~12 MB PDFs).
+      node_args: '--max-old-space-size=512',
       instances: 1,
       autorestart: true,
       max_restarts: 20,
