@@ -25,7 +25,7 @@ need_cmd() {
 info "Updating system package repositories..."
 if need_cmd apt-get; then
   sudo apt-get update -y
-  sudo apt-get install -y curl ca-certificates git build-essential python3
+  sudo apt-get install -y curl ca-certificates git build-essential python3 python3-pip
 else
   error_exit "This optimized automated script strictly requires an APT (Ubuntu/Debian) base ecosystem."
 fi
@@ -79,6 +79,20 @@ else
 
     info "Running local module dependency installation tracking..."
     pnpm install
+
+    # Install Python dependencies for concall transcript fetching
+    info "Installing Python dependencies for concall feature..."
+    if need_cmd pip3; then
+      pip3 install -r scripts/requirements-concall.txt
+      # Smoke-test the bse package so failures surface at setup time
+      if need_cmd python3; then
+        python3 -c "from bse import BSE; print('bse import OK')" && \
+        python3 -c "import requests; r = requests.get('https://api.bseindia.com', timeout=5); print('BSE API reachable:', r.status_code)" || \
+        echo "WARNING: bse smoke test failed — check pip3 install and network access to api.bseindia.com" >&2
+      fi
+    else
+      echo "pip3 not found — install python3-pip and rerun: pip3 install -r scripts/requirements-concall.txt" >&2
+    fi
 
     info "Executing codebase compilation routines..."
     pnpm run build

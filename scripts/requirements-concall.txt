@@ -1,0 +1,6 @@
+# Python dependencies for BSE concall transcript fetching.
+# The `bse` package (BseIndiaApi v3+) resolves BSE scrip codes,
+# fetches corporate announcements, and downloads PDFs via AttachLive.
+#
+# Install: pip install -r scripts/requirements-concall.txt
+bse>=3.0

@@ -23,7 +23,7 @@ need_cmd() {
 install_apt() {
   info "Installing prerequisites (apt)"
   sudo apt-get update -y
-  sudo apt-get install -y curl ca-certificates git build-essential python3 \
+  sudo apt-get install -y curl ca-certificates git build-essential python3 python3-pip \
     libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libxkbcommon0 \
   libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2t64 libpango-1.0-0 \
   libcairo2 libnss3 libnspr4
@@ -82,6 +82,18 @@ else
     PLAYWRIGHT_BROWSERS_PATH=0 pnpm exec playwright install chromium
     if need_cmd sudo; then
       sudo env PLAYWRIGHT_BROWSERS_PATH=0 pnpm exec playwright install-deps chromium || true
+    fi
+    # Install Python dependencies for concall transcript fetching
+    if need_cmd pip3; then
+      pip3 install -r scripts/requirements-concall.txt
+      # Smoke-test the bse package so failures surface at setup time, not at 08:45
+      if need_cmd python3; then
+        python3 -c "from bse import BSE; print('bse import OK')" && \
+        python3 -c "import requests; r = requests.get('https://api.bseindia.com', timeout=5); print('BSE API reachable:', r.status_code)" || \
+        echo "WARNING: bse smoke test failed — check pip3 install and network access to api.bseindia.com" >&2
+      fi
+    else
+      echo "pip3 not found — install python3-pip and rerun: pip3 install -r scripts/requirements-concall.txt" >&2
     fi
     pnpm run build
   )
