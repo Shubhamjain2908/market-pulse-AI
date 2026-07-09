@@ -17,6 +17,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Database as DatabaseType } from 'better-sqlite3';
+import { isAllocationInstrument } from '../../agents/portfolio-context.js';
 import { config } from '../../config/env.js';
 import { loadWatchlist } from '../../config/loaders.js';
 import { getDb } from '../../db/connection.js';
@@ -98,18 +99,8 @@ export async function fetchConcallTranscripts(
     };
   }
 
-  // Filter out non-equity symbols (ETFs, SGBs, etc.)
-  const nonEquity = new Set([
-    'GOLDBEES',
-    'JUNIORBEES',
-    'LIQUIDCASE',
-    'MON100',
-    'NIFTYBEES',
-    'SILVERBEES',
-    'MAFANG',
-    'MOM100',
-  ]);
-  const equitySymbols = symbols.filter((s) => !nonEquity.has(s));
+  // Filter out non-equity symbols (ETFs, SGBs, gold bonds via isAllocationInstrument)
+  const equitySymbols = symbols.filter((s) => !isAllocationInstrument(s));
 
   log.info(
     { date, total: symbols.length, equity: equitySymbols.length, lookbackDays },
@@ -234,6 +225,21 @@ async function processSymbol(
       log.warn({ symbol, charCount }, 'transcript PDF too short — skipping (image-only)');
       result.skipped++;
       return;
+    }
+
+    // Detect invitation PDFs masquerading as transcripts (BSE uses "Earnings Call Transcript"
+    // as SUBCATNAME for both invites and actual transcripts). Check first 2000 chars for    // invitation language — narrow keyword set to minimize false positives.
+    const isInvite =
+      /\b(invitation|cordially\s+invited|notice\s+of\s+(conference|earnings|board)|you\s+are\s+(cordially\s+)?invited|intimation\s+(of\s+)?(conference|earnings|board))\b/i.test(
+        text.slice(0, 2000),
+      );
+    if (isInvite) {
+      log.info(
+        { symbol, charCount },
+        'PDF appears to be an invitation, not a transcript — marking as invite',
+      );
+      // Override kind so the concall analyser's WHERE ct.kind = 'transcript' filter skips it
+      pythonResult.kind = 'invite';
     }
 
     // Step 4: Insert into concall_transcripts
