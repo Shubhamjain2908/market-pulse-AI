@@ -167,7 +167,9 @@ export function evaluateOnePaperTrade(
     const bar = bars[i];
     if (!bar) continue;
 
-    const stopAtBarStart = stopLoss;
+    // Hard floor is a known configuration constraint — include it in the
+    // bar-start stop so it takes effect even before trail recalculates.
+    const stopAtBarStart = Math.max(stopLoss, hardFloor);
     const prevClose = getPrevClose(trade.symbol, bar.date, db);
 
     const gapUpExtreme =
@@ -273,7 +275,12 @@ export function evaluateOnePaperTrade(
       );
     }
 
-    const hitSl = bar.low <= stopLoss;
+    // ponytail: stop hit is checked against the stop at bar *start*, not the
+    // post-trail level. In real trading you can't know bar.close before the
+    // session ends, so the trail update that uses bar.close must not retroactively
+    // trigger a stop-out on the same bar. The SUPRIYA bug: trail used bar.close
+    // to ratchet stop above bar.low, then checked low <= new stop → false exit.
+    const hitSl = bar.low <= stopAtBarStart;
     const hitTg = bar.close >= trade.target;
     const elapsed = dayIndex.get(bar.date) ?? 0;
 
@@ -295,14 +302,14 @@ export function evaluateOnePaperTrade(
     };
 
     const logStoppedOut = (logDate: string, notes: string | null, exitReason: ExitReason): void => {
-      const exitPx = exitPriceWhenStopHit(bar, stopLoss);
+      const exitPx = exitPriceWhenStopHit(bar, stopAtBarStart);
       if (isFixedStop) {
         const pnl = pnlPctLong(trade.entryPrice, exitPx);
         const status = pnl >= 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
         closePaperTrade(trade.id, status, logDate, exitPx, pnl, db, notes ?? null, exitReason);
         return;
       }
-      const gap = bar.open < stopLoss ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
+      const gap = bar.open < stopAtBarStart ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
       // STOPPED_OUT row: new_stop is booked exit price (R3: gap-through uses bar.open).
       const logId = insertStopLog(
         {
@@ -329,22 +336,25 @@ export function evaluateOnePaperTrade(
     };
 
     if (!skipStopTargetThisBar && hitSl && hitTg) {
-      const exitPx = exitPriceWhenStopHit(bar, stopLoss);
+      // Same-day SL+TP: assume stop hit first (conservative exit price), but
+      // derive status from actual PnL — a profitable stop-out is still a WIN.
+      const exitPx = exitPriceWhenStopHit(bar, stopAtBarStart);
+      const pnl = pnlPctLong(trade.entryPrice, exitPx);
+      const status = pnl >= 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
       if (isFixedStop) {
-        const pnl = pnlPctLong(trade.entryPrice, exitPx);
         closePaperTrade(
           trade.id,
-          'CLOSED_LOSS',
+          status,
           bar.date,
           exitPx,
           pnl,
           db,
-          'same-day SL+TP: counted as loss (conservative)',
+          'same-day SL+TP: exit at stop price (conservative)',
           'INITIAL_STOP',
         );
-        return 'CLOSED_LOSS';
+        return status;
       }
-      const gap = bar.open < stopLoss ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
+      const gap = bar.open < stopAtBarStart ? GAP_DOWN_THROUGH_STOP_NOTE : undefined;
       const logId = insertStopLog(
         {
           tradeId: trade.id,
@@ -363,26 +373,25 @@ export function evaluateOnePaperTrade(
         },
         db,
       );
-      const pnl = pnlPctLong(trade.entryPrice, exitPx);
       const exitReasonStop: ExitReason = skipTrailThisBar ? 'INITIAL_STOP' : 'TRAILING_STOP';
       closePaperTrade(
         trade.id,
-        'CLOSED_LOSS',
+        status,
         bar.date,
         exitPx,
         pnl,
         db,
-        'same-day SL+TP: counted as loss (conservative)',
+        'same-day SL+TP: exit at stop price (conservative)',
         exitReasonStop,
       );
       if (logId !== null && !opts?.skipAi) scheduleTrailingStopPostMortem(logId);
-      return 'CLOSED_LOSS';
+      return status;
     }
 
     if (!skipStopTargetThisBar && hitSl) {
       const exitReasonStop: ExitReason = skipTrailThisBar ? 'INITIAL_STOP' : 'TRAILING_STOP';
       logStoppedOut(bar.date, null, exitReasonStop);
-      const exitPx = exitPriceWhenStopHit(bar, stopLoss);
+      const exitPx = exitPriceWhenStopHit(bar, stopAtBarStart);
       return pnlPctLong(trade.entryPrice, exitPx) >= 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS';
     }
 
