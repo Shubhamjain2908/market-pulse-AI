@@ -173,6 +173,12 @@ pnpm daily
 # Variations
 pnpm daily --skip-portfolio   # skip the Kite branch entirely
 pnpm daily --skip-ai          # no LLM calls (regime uses templated narrative; fast mode)
+
+> **Note:** Running `pnpm daily` twice on the same date will overwrite theses
+> (upsert on `symbol+date`), dedupe paper trades (unique index on
+> `symbol+signal_type+source_date`), but will reset the LLM budget tracker and
+> may produce different AI picks across runs. Use `pnpm daily --skip-ai` for
+> midday re-runs to avoid budget leaks and signal inflation.
 ```
 
 ### CLI reference
