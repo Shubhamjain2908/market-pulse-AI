@@ -46,6 +46,10 @@ export class YahooIngestor implements Ingestor {
     const failed: string[] = [];
 
     for (const symbol of symbols) {
+      if (/^SGB[A-Z0-9]+(?:-GB)?$/i.test(symbol.trim())) {
+        log.debug({ symbol }, 'yahoo: SGB ticker skipped (no Yahoo data)');
+        continue;
+      }
       try {
         const ticker = toYahooFinanceTicker(symbol);
         const rows = await this.client.chart(ticker, {
