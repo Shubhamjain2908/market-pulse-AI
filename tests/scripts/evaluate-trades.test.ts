@@ -154,7 +154,7 @@ describe('evaluate paper trades', () => {
     expect(evaluateOnePaperTrade(t, db, '2026-02-02', { skipAi: true })).toBe('CLOSED_LOSS');
   });
 
-  it('same-day SL+TP counts as LOSS', () => {
+  it('same-day SL+TP exits at stop price; status derived from PnL (loss case)', () => {
     seedNifty('2026-02-02');
     upsertQuotes([q('BOTH', '2026-02-02', 100, 130, 85, 125)], db);
     insertPaperTradeIfAbsent(
@@ -176,9 +176,17 @@ describe('evaluate paper trades', () => {
     if (t === undefined) throw new Error('missing trade');
     expect(evaluateOnePaperTrade(t, db, '2026-02-02', { skipAi: true })).toBe('CLOSED_LOSS');
     const row = db
-      .prepare('SELECT exit_reason, notes FROM paper_trades WHERE id = ?')
-      .get(t.id) as { exit_reason: string | null; notes: string | null };
+      .prepare('SELECT exit_reason, exit_price, pnl_pct, notes FROM paper_trades WHERE id = ?')
+      .get(t.id) as {
+      exit_reason: string | null;
+      exit_price: number;
+      pnl_pct: number;
+      notes: string | null;
+    };
     expect(row.exit_reason).toBe('INITIAL_STOP');
+    // Hard floor lifts LLM stop from 90 → 92 (hard_stop_pct = -8%).
+    expect(row.exit_price).toBe(92);
+    expect(row.pnl_pct).toBeCloseTo(-8, 4);
     expect(row.notes ?? '').toContain('same-day SL+TP');
   });
 
@@ -326,9 +334,19 @@ describe('evaluate paper trades', () => {
       const src = '2026-09-01';
       const d1 = '2026-09-02';
       const d2 = '2026-09-03';
-      seedNifty(d1, d2);
-      upsertQuotes([q('GAP92', d1, 100, 112, 100, 108), q('GAP92', d2, 98, 105, 101, 104)], db);
-      seedAtr14('GAP92', [src, d1, d2], 3);
+      const d3 = '2026-09-04';
+      seedNifty(d1, d2, d3);
+      // d1: initial setup day. d2: trail raises stop to max(108-2×3, 92) = 102.
+      // d3: stopAtBarStart = 102. open=89 < 102 → gap-down fill at open.
+      upsertQuotes(
+        [
+          q('GAP92', d1, 100, 112, 100, 108),
+          q('GAP92', d2, 109, 110, 106, 108),
+          q('GAP92', d3, 89, 105, 88, 104),
+        ],
+        db,
+      );
+      seedAtr14('GAP92', [src, d1, d2, d3], 3);
       insertPaperTradeIfAbsent(
         {
           symbol: 'GAP92',
@@ -344,14 +362,14 @@ describe('evaluate paper trades', () => {
       );
       const t = getOpenPaperTrades(db)[0];
       if (t === undefined) throw new Error('missing trade');
-      expect(evaluateOnePaperTrade(t, db, d2, { skipAi: true })).toBe('CLOSED_LOSS');
+      expect(evaluateOnePaperTrade(t, db, d3, { skipAi: true })).toBe('CLOSED_LOSS');
 
       const closed = db
         .prepare('SELECT status, exit_price, pnl_pct FROM paper_trades WHERE id = ?')
         .get(t.id) as { status: string; exit_price: number; pnl_pct: number };
       expect(closed.status).toBe('CLOSED_LOSS');
-      expect(closed.exit_price).toBe(98);
-      expect(closed.pnl_pct).toBeCloseTo(-2, 4);
+      expect(closed.exit_price).toBe(89);
+      expect(closed.pnl_pct).toBeCloseTo(-11, 0);
 
       const logRow = db
         .prepare(
@@ -359,7 +377,7 @@ describe('evaluate paper trades', () => {
         )
         .get(t.id) as { notes: string | null; new_stop: number };
       expect(logRow?.notes).toBe(GAP_DOWN_THROUGH_STOP_NOTE);
-      expect(logRow?.new_stop).toBe(98);
+      expect(logRow?.new_stop).toBe(89);
     });
 
     it('9.2.2 — first session bar stop-out uses INITIAL_STOP (Day-1 block)', () => {
@@ -826,5 +844,361 @@ describe('evaluate paper trades', () => {
     expect(r.closed).toBe(1);
     expect(r.closedWin).toBe(1);
     expect(r.stillOpen).toBe(0);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Data integrity: stop-hit checks use bar-start stop, not post-trail stop
+  // ──────────────────────────────────────────────────────────────────────────
+
+  describe('stop-hit uses stopAtBarStart (trail-then-check order)', () => {
+    /**
+     * SUPRIYA reproduction: stock gaps up, bar.close is much higher than prior
+     * highest close, trail ratchets stop far above bar.low using the new close.
+     * Pre-fix: trail updated stop using bar.close, then checked bar.low <= new
+     * stop → false stop-out with positive PnL tagged CLOSED_LOSS.
+     * Post-fix: hit check uses stopAtBarStart; trail only affects next bar.
+     */
+    it('gap-up bar does NOT false-trigger stop when trail ratchets above bar.low', () => {
+      const src = '2026-05-19';
+      const d1 = '2026-05-20';
+      const d2 = '2026-05-21';
+      const d3 = '2026-05-22';
+      seedNifty(d1, d2, d3);
+      upsertQuotes(
+        [
+          q('SUPBUG', d1, 100, 105, 98, 104),
+          q('SUPBUG', d2, 105, 112, 103, 110),
+          // Gap-up bar: opens at 130, dips to 118, closes 140.
+          // Old stop (before trail) ≈ 104 (highestClose=110, 110 - 2×3 = 104).
+          // Trail using close=140 would push stop to 140 - 2×3 = 134 > low 118 → false exit.
+          // Fix: hit check uses stopAtBarStart (~104), bar.low 118 > 104 → stays open.
+          q('SUPBUG', d3, 130, 145, 118, 140),
+        ],
+        db,
+      );
+      seedAtr14('SUPBUG', [src, d1, d2, d3], 3);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'SUPBUG',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 85,
+          target: 200,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const t = getOpenPaperTrades(db)[0];
+      if (!t) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, d3, { skipAi: true })).toBe('still_open');
+
+      const still = getOpenPaperTrades(db)[0];
+      // Trail should have updated to reflect bar.close=140 for NEXT bar's stop
+      expect(still?.highestCloseSinceEntry).toBe(140);
+      // Stop is raised (trail applied for persistence), but hit was checked against old stop
+      expect(still?.stopLoss).toBeGreaterThan(104);
+    });
+
+    it('stop-out still fires when bar.low <= stopAtBarStart (normal case)', () => {
+      const src = '2026-05-19';
+      const d1 = '2026-05-20';
+      const d2 = '2026-05-21';
+      seedNifty(d1, d2);
+      upsertQuotes(
+        [
+          q('SLHIT', d1, 100, 108, 99, 106),
+          // Bar.low 93 <= stopAtBarStart (after trail from day1: 106 - 2×3 = 100)
+          q('SLHIT', d2, 102, 105, 93, 95),
+        ],
+        db,
+      );
+      seedAtr14('SLHIT', [src, d1, d2], 3);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'SLHIT',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 85,
+          target: 200,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const t = getOpenPaperTrades(db)[0];
+      if (!t) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, d2, { skipAi: true })).toBe('CLOSED_LOSS');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Same-day SL+TP: status derived from PnL, not hard-coded
+  // ──────────────────────────────────────────────────────────────────────────
+
+  describe('same-day SL+TP pnl-based status', () => {
+    it('same-day SL+TP with profitable stop → CLOSED_WIN (trailing, stop above entry)', () => {
+      const src = '2026-06-01';
+      const d1 = '2026-06-02';
+      const d2 = '2026-06-03';
+      const d3 = '2026-06-04';
+      seedNifty(d1, d2, d3);
+      upsertQuotes(
+        [
+          q('SLTP_W', d1, 100, 108, 99, 106),
+          q('SLTP_W', d2, 107, 120, 106, 118),
+          // On d3: stopAtBarStart ≈ 112 (from highestClose=118, 118-2×3=112).
+          // bar.low=111 <= 112 → SL hit. bar.close=125 >= target=120 → TP hit.
+          // exitPx = stopAtBarStart = 112 (open 113 >= stop 112).
+          // pnl = (112-100)/100 = +12% → CLOSED_WIN
+          q('SLTP_W', d3, 113, 126, 111, 125),
+        ],
+        db,
+      );
+      seedAtr14('SLTP_W', [src, d1, d2, d3], 3);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'SLTP_W',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 85,
+          target: 120,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const t = getOpenPaperTrades(db)[0];
+      if (!t) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, d3, { skipAi: true })).toBe('CLOSED_WIN');
+
+      const row = db
+        .prepare(
+          'SELECT status, exit_price, pnl_pct, exit_reason, notes FROM paper_trades WHERE id = ?',
+        )
+        .get(t.id) as {
+        status: string;
+        exit_price: number;
+        pnl_pct: number;
+        exit_reason: string;
+        notes: string;
+      };
+      expect(row.status).toBe('CLOSED_WIN');
+      expect(row.pnl_pct).toBeGreaterThan(0);
+      expect(row.exit_reason).toBe('TRAILING_STOP');
+      expect(row.notes).toContain('same-day SL+TP');
+    });
+
+    it('same-day SL+TP with losing stop → CLOSED_LOSS (fixed stop)', () => {
+      seedNifty('2026-02-02');
+      // entry=100, stop=90, target=120. bar low=85 hits stop, close=125 hits target.
+      // exitPx = 90 (open 100 >= stop 90). pnl = -10% → CLOSED_LOSS.
+      upsertQuotes([q('SLTP_L', '2026-02-02', 100, 130, 85, 125)], db);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'SLTP_L',
+          signalType: 'AI_PICK',
+          sourceDate: '2026-02-01',
+          entryPrice: 100,
+          stopLoss: 90,
+          target: 120,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const t = getOpenPaperTrades(db)[0];
+      if (!t) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, '2026-02-02', { skipAi: true })).toBe('CLOSED_LOSS');
+
+      const row = db.prepare('SELECT status, pnl_pct FROM paper_trades WHERE id = ?').get(t.id) as {
+        status: string;
+        pnl_pct: number;
+      };
+      expect(row.status).toBe('CLOSED_LOSS');
+      expect(row.pnl_pct).toBeLessThan(0);
+    });
+
+    it('same-day SL+TP with gap-down through profitable stop → CLOSED_WIN at open', () => {
+      const src = '2026-06-01';
+      const d1 = '2026-06-02';
+      const d2 = '2026-06-03';
+      const d3 = '2026-06-04';
+      seedNifty(d1, d2, d3);
+      upsertQuotes(
+        [
+          q('GAPSL', d1, 100, 108, 99, 106),
+          // d2: trail raises stop. highestClose = max(106, 122) = 122.
+          // stop = max(122 - 2×3, 92) = 116. Target 125 not hit (close=122 < 125).
+          q('GAPSL', d2, 107, 123, 106, 122),
+          // d3: stopAtBarStart = 116. open=114 < 116 → gap-down exit at 114.
+          // pnl = (114-100)/100 = +14% → CLOSED_WIN despite gap-through.
+          // bar.close=130 >= target=125 → TP also hit → same-day SL+TP.
+          q('GAPSL', d3, 114, 132, 112, 130),
+        ],
+        db,
+      );
+      seedAtr14('GAPSL', [src, d1, d2, d3], 3);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'GAPSL',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 85,
+          target: 125,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const t = getOpenPaperTrades(db)[0];
+      if (!t) throw new Error('missing trade');
+      expect(evaluateOnePaperTrade(t, db, d3, { skipAi: true })).toBe('CLOSED_WIN');
+
+      const row = db
+        .prepare('SELECT status, exit_price, pnl_pct FROM paper_trades WHERE id = ?')
+        .get(t.id) as { status: string; exit_price: number; pnl_pct: number };
+      expect(row.status).toBe('CLOSED_WIN');
+      expect(row.exit_price).toBe(114); // gap-through: fill at open
+      expect(row.pnl_pct).toBeGreaterThan(0);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Stats integrity: win/loss status must always agree with PnL sign
+  // ──────────────────────────────────────────────────────────────────────────
+
+  describe('stats integrity', () => {
+    it('profitable trailing stop exit is CLOSED_WIN and counts as win in stats', () => {
+      const d1 = '2026-07-02';
+      const d2 = '2026-07-03';
+      const d3 = '2026-07-04';
+      seedNifty(d1, d2, d3);
+      upsertQuotes(
+        [
+          q('WINST', d1, 100, 112, 99, 110),
+          q('WINST', d2, 111, 120, 109, 118),
+          // stopAtBarStart ≈ 112 (118-2×3=112). low=111 <= 112 → stopped out.
+          // exitPx = 112 (open 113 >= stop). pnl = +12% → WIN.
+          q('WINST', d3, 113, 115, 111, 114),
+        ],
+        db,
+      );
+      seedAtr14('WINST', ['2026-07-01', d1, d2, d3], 3);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'WINST',
+          signalType: 'AI_PICK',
+          sourceDate: '2026-07-01',
+          entryPrice: 100,
+          stopLoss: 85,
+          target: 200,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const t = getOpenPaperTrades(db)[0];
+      if (!t) throw new Error('missing trade');
+      evaluateOnePaperTrade(t, db, d3, { skipAi: true });
+
+      const row = db
+        .prepare('SELECT status, pnl_pct, exit_reason FROM paper_trades WHERE id = ?')
+        .get(t.id) as { status: string; pnl_pct: number; exit_reason: string };
+      expect(row.status).toBe('CLOSED_WIN');
+      expect(row.pnl_pct).toBeGreaterThan(0);
+      expect(row.exit_reason).toBe('TRAILING_STOP');
+
+      const stats = getPaperTradeStats({ days: 30, asOf: d3 }, db);
+      expect(stats.winCount).toBe(1);
+      expect(stats.lossCount).toBe(0);
+      // winRate is null when closedCount < MIN_SAMPLE_CLOSED (5)
+      expect(stats.closedCount).toBe(1);
+    });
+
+    it('losing trailing stop exit is CLOSED_LOSS and counts as loss in stats', () => {
+      const src = '2026-07-01';
+      const d1 = '2026-07-02';
+      seedNifty(d1);
+      upsertQuotes([q('LOSST', d1, 100, 103, 88, 90)], db);
+      seedAtr14('LOSST', [src, d1], 3);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'LOSST',
+          signalType: 'AI_PICK',
+          sourceDate: src,
+          entryPrice: 100,
+          stopLoss: 90,
+          target: 200,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      const t = getOpenPaperTrades(db)[0];
+      if (!t) throw new Error('missing trade');
+      evaluateOnePaperTrade(t, db, d1, { skipAi: true });
+
+      const row = db.prepare('SELECT status, pnl_pct FROM paper_trades WHERE id = ?').get(t.id) as {
+        status: string;
+        pnl_pct: number;
+      };
+      expect(row.status).toBe('CLOSED_LOSS');
+      expect(row.pnl_pct).toBeLessThan(0);
+
+      const stats = getPaperTradeStats({ days: 30, asOf: d1 }, db);
+      expect(stats.lossCount).toBe(1);
+      expect(stats.winCount).toBe(0);
+    });
+
+    it('multiple trades: win rate matches actual positive-pnl count', () => {
+      seedNifty('2026-08-02');
+      // Trade 1: target hit → WIN (+20%)
+      upsertQuotes([q('MR_W', '2026-08-02', 100, 125, 95, 122)], db);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'MR_W',
+          signalType: 'AI_PICK',
+          sourceDate: '2026-08-01',
+          entryPrice: 100,
+          stopLoss: 90,
+          target: 120,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+      // Trade 2: stop hit → LOSS (-10%)
+      upsertQuotes([q('MR_L', '2026-08-02', 100, 105, 85, 88)], db);
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'MR_L',
+          signalType: 'AI_PICK',
+          sourceDate: '2026-08-01',
+          entryPrice: 100,
+          stopLoss: 90,
+          target: 120,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      );
+
+      const r = runEvaluatePaperTrades('2026-08-02', db, { skipAi: true });
+      expect(r.closedWin).toBe(1);
+      expect(r.closedLoss).toBe(1);
+
+      const stats = getPaperTradeStats({ days: 30, asOf: '2026-08-02' }, db);
+      expect(stats.closedCount).toBe(2);
+      expect(stats.winCount).toBe(1);
+      expect(stats.lossCount).toBe(1);
+      // winRate requires MIN_SAMPLE_CLOSED=5; with only 2 trades it's null
+      expect(stats.winRate).toBeNull();
+      expect(stats.expectancyPct).toBeDefined();
+    });
   });
 });
