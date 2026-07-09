@@ -319,10 +319,11 @@ export const ConcallIntelSchema = z.object({
   delivery: z
     .array(
       z.object({
-        priorGuidance: z.string(),
-        outcome: z.enum(['beat', 'met', 'missed', 'unverifiable']),
+        priorGuidance: z.string().catch(''),
+        outcome: z.enum(['beat', 'met', 'missed', 'unverifiable']).catch('unverifiable'),
       }),
     )
+    .catch([])
     .optional(),
   deflections: z
     .preprocess((v) => {
