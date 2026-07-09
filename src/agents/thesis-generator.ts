@@ -426,6 +426,81 @@ export function resolveThesisEligibleUniverse(
   });
 }
 
+/**
+ * Apply deterministic confidence caps based on fundamentals and technical extremes.
+ * These caps override the LLM's confidence when valuation or technical metrics
+ * indicate excessive risk — more reliable than prompt engineering.
+ *
+ * Caps (applied in order, each may reduce confidence):
+ * 1. PE > 60x AND profit_growth_yoy < 30% → cap at 5
+ * 2. PEG > 3 → cap at 5
+ * 3. RSI > 75 → cap at 7
+ * 4. Promoter holding change < -1% → cap at 7
+ */
+function capConfidence(
+  symbol: string,
+  date: string,
+  db: DatabaseType,
+  signalSnap: Record<string, number>,
+  originalConfidence: number,
+): number {
+  if (originalConfidence <= 0) return originalConfidence;
+
+  let capped = originalConfidence;
+
+  // Load latest fundamentals
+  const fundRow = db
+    .prepare(
+      `SELECT pe, peg, profit_growth_yoy AS profitGrowthYoy, promoter_holding_change_qoq AS promoterChangeQoq
+       FROM fundamentals
+       WHERE symbol = ? AND as_of <= ?
+       ORDER BY as_of DESC LIMIT 1`,
+    )
+    .get(symbol.toUpperCase(), date) as
+    | {
+        pe: number | null;
+        peg: number | null;
+        profitGrowthYoy: number | null;
+        promoterChangeQoq: number | null;
+      }
+    | undefined;
+
+  const pe = fundRow?.pe;
+  const peg = fundRow?.peg;
+  const profitGrowth = fundRow?.profitGrowthYoy;
+  const promoterChange = fundRow?.promoterChangeQoq;
+
+  // Cap 1: PE > 60x with low growth → overvalued with no earnings support
+  if (
+    pe != null &&
+    Number.isFinite(pe) &&
+    pe > 60 &&
+    profitGrowth != null &&
+    Number.isFinite(profitGrowth) &&
+    profitGrowth < 30
+  ) {
+    capped = Math.min(capped, 5);
+  }
+
+  // Cap 2: PEG > 3 → growth doesn't justify valuation
+  if (peg != null && Number.isFinite(peg) && peg > 3) {
+    capped = Math.min(capped, 5);
+  }
+
+  // Cap 3: RSI > 75 → overbought, likely chasing momentum
+  const rsi = signalSnap.rsi_14;
+  if (rsi != null && Number.isFinite(rsi) && rsi > 75) {
+    capped = Math.min(capped, 7);
+  }
+
+  // Cap 4: Promoter reducing stake → insider signal
+  if (promoterChange != null && Number.isFinite(promoterChange) && promoterChange < -1) {
+    capped = Math.min(capped, 7);
+  }
+
+  return capped;
+}
+
 export async function generateTheses(
   opts: ThesisGeneratorOptions = {},
   db: DatabaseType = getDb(),
@@ -522,6 +597,17 @@ export async function generateTheses(
               confidenceScore: Math.min(thesisOut.confidenceScore, 6),
             };
           }
+          // Deterministic confidence caps for extreme valuations and technical overextension
+          thesisOut = {
+            ...thesisOut,
+            confidenceScore: capConfidence(
+              candidate.symbol,
+              date,
+              db,
+              signalSnap,
+              thesisOut.confidenceScore,
+            ),
+          };
 
           const anchors = computeRubricAnchors(candidate.symbol, date, db);
           const rubricTotal = computeRubricTotal(anchors, thesisOut.rubric ?? null);
