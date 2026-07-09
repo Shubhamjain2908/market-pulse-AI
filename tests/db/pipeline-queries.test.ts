@@ -66,9 +66,14 @@ describe('db/pipeline-queries', () => {
   it('getStageHistory returns runs for the requested stage ordered by date desc', () => {
     const db = getDb({ path: dbPath });
     migrate(db);
+    // Use dates relative to now so the date('now', ...) filter in SQL matches.
+    const now = new Date();
+    const day1 = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const day2 = new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const day3 = now.toISOString().slice(0, 10);
     recordPipelineStage(
       {
-        runDate: '2026-07-01',
+        runDate: day1,
         stage: 'yahoo-snapshot',
         status: 'success',
         metadata: { attempted: 250, written: 248, failed: 2 },
@@ -77,7 +82,7 @@ describe('db/pipeline-queries', () => {
     );
     recordPipelineStage(
       {
-        runDate: '2026-07-02',
+        runDate: day2,
         stage: 'yahoo-snapshot',
         status: 'success',
         metadata: { attempted: 250, written: 250, failed: 0 },
@@ -86,7 +91,7 @@ describe('db/pipeline-queries', () => {
     );
     recordPipelineStage(
       {
-        runDate: '2026-07-03',
+        runDate: day3,
         stage: 'enrich',
         status: 'failed',
         errorMsg: 'stale',
@@ -96,8 +101,8 @@ describe('db/pipeline-queries', () => {
 
     const rows = getStageHistory('yahoo-snapshot', 7, db);
     expect(rows).toHaveLength(2);
-    expect(rows[0]?.runDate).toBe('2026-07-02');
-    expect(rows[1]?.runDate).toBe('2026-07-01');
+    expect(rows[0]?.runDate).toBe(day2);
+    expect(rows[1]?.runDate).toBe(day1);
     expect(rows[0]?.status).toBe('success');
     expect(rows[1]?.status).toBe('success');
 
