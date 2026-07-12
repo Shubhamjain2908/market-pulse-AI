@@ -1,9 +1,13 @@
+import { execSync } from 'node:child_process';
+import { createReadStream, existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { Cron } from 'croner';
 import express from 'express';
 import { config } from '../config/env.js';
-import { PROJECT_DOTENV_PATH } from '../config/project-paths.js';
+import { PROJECT_DOTENV_PATH, PROJECT_ROOT } from '../config/project-paths.js';
 import { MARKET_TIMEZONE } from '../constants.js';
 import { closeDb, getDb, migrate } from '../db/index.js';
+import { isoDateIst } from '../ingestors/base/dates.js';
 import { upsertEnvVar } from '../ingestors/kite/auth.js';
 import { KiteClient } from '../ingestors/kite/client.js';
 import { child } from '../logger.js';
@@ -84,6 +88,217 @@ app.get('/auth/cue-dashboard', (_req, res) => {
     log.error({ err, path: CUE_DASHBOARD_HTML_PATH }, 'failed to serve cue dashboard html');
     res.status(200).send(renderCueDashboardFallbackPage(CUE_DASHBOARD_HTML_PATH));
   });
+});
+
+// --------------------------------------------------------------------------
+// Snapshot & log endpoints (no SSH needed — use curl from any machine)
+// --------------------------------------------------------------------------
+
+app.get('/auth/snapshot/db', (req, res) => {
+  const dataDir = join(PROJECT_ROOT, 'data');
+  const dbPath = join(dataDir, 'market-pulse.db');
+  const randomSuffix = Math.random().toString(36).slice(2, 8);
+  const tmpZip = join('/tmp', `market-pulse-data-${isoDateIst()}-${randomSuffix}.zip`);
+  const filename = `market-pulse-data-${isoDateIst()}.zip`;
+
+  // Register cleanup early — fires even if client disconnects mid-zip
+  const cleanup = () => {
+    try {
+      unlinkSync(tmpZip);
+    } catch {
+      /* temp file cleanup is best-effort */
+    }
+  };
+  req.on('close', cleanup);
+
+  // WAL checkpoint so the DB snapshot is internally consistent
+  try {
+    execSync(`sqlite3 ${JSON.stringify(dbPath)} 'PRAGMA wal_checkpoint(TRUNCATE);'`, {
+      timeout: 10_000,
+      stdio: 'pipe',
+    });
+  } catch (err) {
+    log.warn({ err }, 'snapshot WAL checkpoint failed — zipping anyway');
+  }
+
+  // Zip the entire data/ directory
+  try {
+    execSync(`cd ${JSON.stringify(PROJECT_ROOT)} && zip -r ${JSON.stringify(tmpZip)} data/`, {
+      timeout: 120_000,
+      stdio: 'pipe',
+    });
+  } catch (err) {
+    // Check if zip binary is missing (ENOENT)
+    const msg = err instanceof Error ? err.message : String(err);
+    if (
+      msg.includes('ENOENT') ||
+      msg.includes('not found') ||
+      msg.includes('zip: command not found')
+    ) {
+      log.error({ err }, 'zip command not found — install it: apt-get install zip');
+      res.status(500).send('zip command not found on server. Run: sudo apt-get install zip');
+    } else {
+      log.error({ err }, 'snapshot zip failed');
+      res.status(500).send('Snapshot archive creation failed. Check server logs.');
+    }
+    return;
+  }
+
+  res.set('Content-Disposition', `attachment; filename="${filename}"`);
+  res.set('Content-Type', 'application/zip');
+
+  const stream = createReadStream(tmpZip);
+  stream.pipe(res);
+  stream.on('end', cleanup);
+  stream.on('error', (err) => {
+    log.error({ err }, 'snapshot stream error');
+    cleanup();
+    if (!res.headersSent) res.status(500).end();
+  });
+});
+
+app.get('/auth/snapshot/cue-db', (req, res) => {
+  const cueDbDir = '/home/ubuntu/cue/db';
+  const randomSuffix = Math.random().toString(36).slice(2, 8);
+  const tmpZip = join('/tmp', `cue-data-${isoDateIst()}-${randomSuffix}.zip`);
+  const filename = `cue-data-${isoDateIst()}.zip`;
+
+  // Fail fast if CUE db directory doesn't exist
+  if (!existsSync(cueDbDir)) {
+    res.status(404).send('CUE database directory not found on this server.');
+    return;
+  }
+
+  // Register cleanup early
+  const cleanup = () => {
+    try {
+      unlinkSync(tmpZip);
+    } catch {
+      /* best-effort */
+    }
+  };
+  req.on('close', cleanup);
+
+  // WAL checkpoint for consistency (cue.db may or may not be in WAL mode)
+  try {
+    execSync(
+      `sqlite3 ${JSON.stringify(join(cueDbDir, 'cue.db'))} 'PRAGMA wal_checkpoint(TRUNCATE);'`,
+      {
+        timeout: 10_000,
+        stdio: 'pipe',
+      },
+    );
+  } catch (err) {
+    log.warn({ err }, 'cue-db WAL checkpoint failed — zipping anyway');
+  }
+
+  const cueRoot = resolve(cueDbDir, '..');
+  try {
+    execSync(`cd ${JSON.stringify(cueRoot)} && zip -r ${JSON.stringify(tmpZip)} db/`, {
+      timeout: 120_000,
+      stdio: 'pipe',
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (
+      msg.includes('ENOENT') ||
+      msg.includes('not found') ||
+      msg.includes('zip: command not found')
+    ) {
+      log.error({ err }, 'zip command not found — install it: apt-get install zip');
+      res.status(500).send('zip command not found on server. Run: sudo apt-get install zip');
+    } else {
+      log.error({ err }, 'cue-db zip failed');
+      res.status(500).send('CUE archive creation failed. Check server logs.');
+    }
+    return;
+  }
+
+  res.set('Content-Disposition', `attachment; filename="${filename}"`);
+  res.set('Content-Type', 'application/zip');
+
+  const stream = createReadStream(tmpZip);
+  stream.pipe(res);
+  stream.on('end', cleanup);
+  stream.on('error', (err) => {
+    log.error({ err }, 'cue-db stream error');
+    cleanup();
+    if (!res.headersSent) res.status(500).end();
+  });
+});
+
+app.get('/auth/snapshot/logs', (req, res) => {
+  const date = req.query.date;
+  if (!date || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    res.status(400).send('Missing or invalid query: ?date=YYYY-MM-DD');
+    return;
+  }
+
+  const run = req.query.run;
+  if (run && typeof run === 'string' && run !== 'morning' && run !== 'evening') {
+    res.status(400).send("Invalid ?run. Use 'morning', 'evening', or omit for full day.");
+    return;
+  }
+
+  const tail = Math.max(1, Math.min(5000, Number(req.query.tail) || 100));
+
+  // Try PM2 log paths in priority order
+  const logCandidates = [
+    resolve(PROJECT_ROOT, 'deploy/logs/pm2-pulse.log'),
+    resolve(PROJECT_ROOT, 'deploy/logs/pm2-combined.log'),
+  ];
+  const logPath = logCandidates.find((p) => existsSync(p));
+  if (!logPath) {
+    res.status(404).send('Log file not found on this server.');
+    return;
+  }
+
+  let content: string;
+  try {
+    content = readFileSync(logPath, 'utf8');
+  } catch (err) {
+    log.error({ err, path: logPath }, 'snapshot logs read failed');
+    res.status(500).send('Failed to read log file.');
+    return;
+  }
+
+  // Determine IST minute-range for run filter
+  let minMin = 0;
+  let maxMin = 24 * 60;
+  if (run === 'morning') {
+    minMin = 8 * 60; // 08:00
+    maxMin = 12 * 60; // 12:00
+  } else if (run === 'evening') {
+    minMin = 15 * 60; // 15:00
+    maxMin = 18 * 60; // 18:00
+  }
+
+  const lines = content.split('\n');
+  const matched: string[] = [];
+
+  for (const line of lines) {
+    // Line must contain the target date
+    if (!line.includes(date)) continue;
+
+    // Apply run-based time filter by scanning for ISO time (T08:45) or HH:MM
+    if (run) {
+      const m = line.match(/T(\d{2}):(\d{2})/);
+      if (m) {
+        const mIns = Number.parseInt(m[1] ?? '0', 10) * 60 + Number.parseInt(m[2] ?? '0', 10);
+        if (mIns < minMin || mIns >= maxMin) continue;
+      }
+      // If no T-pattern, also try HH:MM:SS after a space (pino timestamps)
+      const m2 = line.match(/(\d{2}):(\d{2}):(\d{2})/);
+      if (!m && m2) {
+        const mIns = Number.parseInt(m2[1] ?? '0', 10) * 60 + Number.parseInt(m2[2] ?? '0', 10);
+        if (mIns < minMin || mIns >= maxMin) continue;
+      }
+    }
+
+    matched.push(line);
+  }
+
+  res.type('text/plain').send(`${matched.slice(-tail).join('\n')}\n`);
 });
 
 function upsertKiteAccessToken(token: string): void {
