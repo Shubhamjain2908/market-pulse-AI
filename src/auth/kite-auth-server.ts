@@ -157,6 +157,76 @@ app.get('/auth/snapshot/db', (req, res) => {
   });
 });
 
+app.get('/auth/snapshot/cue-db', (req, res) => {
+  const cueDbDir = '/home/ubuntu/cue/db';
+  const randomSuffix = Math.random().toString(36).slice(2, 8);
+  const tmpZip = join('/tmp', `cue-data-${isoDateIst()}-${randomSuffix}.zip`);
+  const filename = `cue-data-${isoDateIst()}.zip`;
+
+  // Fail fast if CUE db directory doesn't exist
+  if (!existsSync(cueDbDir)) {
+    res.status(404).send('CUE database directory not found on this server.');
+    return;
+  }
+
+  // Register cleanup early
+  const cleanup = () => {
+    try {
+      unlinkSync(tmpZip);
+    } catch {
+      /* best-effort */
+    }
+  };
+  req.on('close', cleanup);
+
+  // WAL checkpoint for consistency (cue.db may or may not be in WAL mode)
+  try {
+    execSync(
+      `sqlite3 ${JSON.stringify(join(cueDbDir, 'cue.db'))} 'PRAGMA wal_checkpoint(TRUNCATE);'`,
+      {
+        timeout: 10_000,
+        stdio: 'pipe',
+      },
+    );
+  } catch (err) {
+    log.warn({ err }, 'cue-db WAL checkpoint failed — zipping anyway');
+  }
+
+  const cueRoot = resolve(cueDbDir, '..');
+  try {
+    execSync(`cd ${JSON.stringify(cueRoot)} && zip -r ${JSON.stringify(tmpZip)} db/`, {
+      timeout: 120_000,
+      stdio: 'pipe',
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (
+      msg.includes('ENOENT') ||
+      msg.includes('not found') ||
+      msg.includes('zip: command not found')
+    ) {
+      log.error({ err }, 'zip command not found — install it: apt-get install zip');
+      res.status(500).send('zip command not found on server. Run: sudo apt-get install zip');
+    } else {
+      log.error({ err }, 'cue-db zip failed');
+      res.status(500).send('CUE archive creation failed. Check server logs.');
+    }
+    return;
+  }
+
+  res.set('Content-Disposition', `attachment; filename="${filename}"`);
+  res.set('Content-Type', 'application/zip');
+
+  const stream = createReadStream(tmpZip);
+  stream.pipe(res);
+  stream.on('end', cleanup);
+  stream.on('error', (err) => {
+    log.error({ err }, 'cue-db stream error');
+    cleanup();
+    if (!res.headersSent) res.status(500).end();
+  });
+});
+
 app.get('/auth/snapshot/logs', (req, res) => {
   const date = req.query.date;
   if (!date || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
