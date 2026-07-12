@@ -23,7 +23,7 @@ need_cmd() {
 install_apt() {
   info "Installing prerequisites (apt)"
   sudo apt-get update -y
-  sudo apt-get install -y curl ca-certificates git build-essential python3 python3-pip \
+  sudo apt-get install -y curl ca-certificates git build-essential python3 python3-pip zip \
     libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libxkbcommon0 \
   libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2t64 libpango-1.0-0 \
   libcairo2 libnss3 libnspr4
