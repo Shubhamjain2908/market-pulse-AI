@@ -68,4 +68,27 @@ describe('portfolio-context', () => {
     expect(lines.some((l) => l.startsWith('roe:') && l.includes('%'))).toBe(true);
     expect(lines.some((l) => l.includes('3.56%'))).toBe(true);
   });
+
+  it('formatFundamentalsForLlm flags extreme profit_growth_yoy > 200%', () => {
+    const lines = formatFundamentalsForLlm({
+      symbol: 'NAUKRI',
+      as_of: '2026-07-09',
+      profit_growth_yoy: 276,
+      pe: 48,
+      source: 'screener',
+    });
+    expect(lines.some((l) => l.includes('exceeds 200%'))).toBe(true);
+    expect(lines.some((l) => l.includes('verify against quarterly data'))).toBe(true);
+  });
+
+  it('formatFundamentalsForLlm does NOT flag growth at 150%', () => {
+    const lines = formatFundamentalsForLlm({
+      symbol: 'TITAN',
+      as_of: '2026-07-09',
+      profit_growth_yoy: 54,
+      pe: 79,
+      source: 'screener',
+    });
+    expect(lines.some((l) => l.includes('200%'))).toBe(false);
+  });
 });

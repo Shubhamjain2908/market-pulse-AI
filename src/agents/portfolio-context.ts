@@ -120,5 +120,13 @@ export function formatFundamentalsForLlm(row: Record<string, unknown>): string[]
       lines.push(`${k}: ${v}`);
     }
   }
+  // Flag potentially misleading profit_growth_yoy values (base-effect artifacts like NAUKRI 276%)
+  const profitGrowth = row.profit_growth_yoy;
+  if (typeof profitGrowth === 'number' && Number.isFinite(profitGrowth) && profitGrowth > 200) {
+    lines.push(
+      '⚠️ profit_growth_yoy exceeds 200% — extreme value; verify against quarterly data before citing as a primary signal',
+    );
+  }
+
   return lines;
 }
