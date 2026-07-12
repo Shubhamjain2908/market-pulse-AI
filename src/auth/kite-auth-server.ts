@@ -284,13 +284,13 @@ app.get('/auth/snapshot/logs', (req, res) => {
     if (run) {
       const m = line.match(/T(\d{2}):(\d{2})/);
       if (m) {
-        const mIns = Number.parseInt(m[1]!) * 60 + Number.parseInt(m[2]!);
+        const mIns = Number.parseInt(m[1] ?? '0', 10) * 60 + Number.parseInt(m[2] ?? '0', 10);
         if (mIns < minMin || mIns >= maxMin) continue;
       }
       // If no T-pattern, also try HH:MM:SS after a space (pino timestamps)
       const m2 = line.match(/(\d{2}):(\d{2}):(\d{2})/);
       if (!m && m2) {
-        const mIns = Number.parseInt(m2[1]!) * 60 + Number.parseInt(m2[2]!);
+        const mIns = Number.parseInt(m2[1] ?? '0', 10) * 60 + Number.parseInt(m2[2] ?? '0', 10);
         if (mIns < minMin || mIns >= maxMin) continue;
       }
     }
@@ -298,7 +298,7 @@ app.get('/auth/snapshot/logs', (req, res) => {
     matched.push(line);
   }
 
-  res.type('text/plain').send(matched.slice(-tail).join('\n') + '\n');
+  res.type('text/plain').send(`${matched.slice(-tail).join('\n')}\n`);
 });
 
 function upsertKiteAccessToken(token: string): void {
