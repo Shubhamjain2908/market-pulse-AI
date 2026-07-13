@@ -915,50 +915,29 @@ export function buildStockContext(
   const momentumCtx = buildMomentumContextAppend(symbol, date, db);
   if (momentumCtx) sections.push(momentumCtx);
 
-  const news =
-    variant === 'portfolio'
-      ? (db
-          .prepare(
-            `
+  const newsRows = db
+    .prepare(
+      `
       SELECT headline, source, published_at, sentiment FROM news
       WHERE symbol = ?
         AND published_at >= datetime(?, '-7 days')
       ORDER BY published_at DESC LIMIT 10
     `,
-          )
-          .all(symbol, date) as Array<{
-          headline: string;
-          source: string;
-          published_at: string;
-          sentiment: number | null;
-        }>)
-      : (db
-          .prepare(
-            `
-      SELECT headline, source, published_at, sentiment FROM news
-      WHERE (symbol = ? OR symbol IS NULL)
-        AND published_at >= datetime(?, '-7 days')
-      ORDER BY published_at DESC LIMIT 10
-    `,
-          )
-          .all(symbol, date) as Array<{
-          headline: string;
-          source: string;
-          published_at: string;
-          sentiment: number | null;
-        }>);
+    )
+    .all(symbol, date) as Array<{
+    headline: string;
+    source: string;
+    published_at: string;
+    sentiment: number | null;
+  }>;
 
-  if (news.length > 0) {
-    sections.push(
-      variant === 'portfolio'
-        ? '\n## Recent News (symbol-tagged only, last 7 days)'
-        : '\n## Recent News (last 7 days)',
-    );
-    for (const n of news) {
+  if (newsRows.length > 0) {
+    sections.push('\n## Recent News (symbol-tagged only, last 7 days)');
+    for (const n of newsRows) {
       const sent = n.sentiment != null ? ` [sentiment: ${n.sentiment.toFixed(2)}]` : '';
       sections.push(`- ${n.headline} (${n.source}, ${n.published_at})${sent}`);
     }
-  } else if (variant === 'portfolio') {
+  } else {
     sections.push('\n## Recent News (symbol-tagged only, last 7 days)');
     sections.push('- No symbol-tagged headlines in the window — do not invent company news.');
   }
