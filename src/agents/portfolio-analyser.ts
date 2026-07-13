@@ -494,6 +494,7 @@ function buildAllocationCarryRow(
     pnlPct: h.pnlPct ?? null,
     model: 'none',
     raw: null,
+    proposedAction: null,
   };
 }
 
@@ -526,6 +527,7 @@ function buildLitePortfolioRow(
     suggestedStop: null,
     suggestedTarget: null,
   };
+  const proposedAction = baseAction.action;
   const g = applyStrategyPortfolioGuardrails(
     applyPortfolioAddGuardrails(
       baseAction,
@@ -553,6 +555,7 @@ function buildLitePortfolioRow(
     pnlPct: h.pnlPct ?? null,
     model: 'lite-snapshot-v1',
     raw: null,
+    proposedAction: proposedAction !== shadowed.action ? proposedAction : null,
   };
 }
 
@@ -605,6 +608,7 @@ async function analyseOne(
     pnlPct: h.pnlPct ?? null,
     weightPct: weightsPct.get(h.symbol.toUpperCase()) ?? null,
   };
+  const proposedAction = result.data.action;
   const a: PortfolioAction = applyStrategyPortfolioGuardrails(
     applyPortfolioAddGuardrails(
       applyOpenPaperTradeAddBlock(result.data, openPaperTradeCount),
@@ -635,6 +639,7 @@ async function analyseOne(
     pnlPct: h.pnlPct ?? null,
     model: llm.model,
     raw: result.raw,
+    proposedAction: proposedAction !== shadowed.action ? proposedAction : null,
   };
 }
 
@@ -765,5 +770,6 @@ function buildStaleKiteHoldingsRows(
     pnlPct: h.pnlPct ?? null,
     model: 'none',
     raw: null,
+    proposedAction: null,
   }));
 }

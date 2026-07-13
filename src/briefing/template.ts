@@ -97,6 +97,8 @@ export interface PortfolioPositionCard {
   suggestedTarget: number | null;
   /** Latest RSI / volume / 52w context from `signals` (after enrich). */
   technicalSummary?: string | null;
+  /** What the LLM originally proposed before guardrail escalation — null when unchanged. */
+  proposedAction?: string | null;
 }
 
 export interface PortfolioRiskRollup {
@@ -577,10 +579,14 @@ function renderPositionCard(c: PortfolioPositionCard): string {
   const actionChip = c.action
     ? `<span class="action-chip ${c.action.toLowerCase()}">${c.action}</span> `
     : '';
+  const proposedChip =
+    c.proposedAction && c.proposedAction !== c.action
+      ? `<span class="proposed-badge" title="LLM originally proposed ${c.proposedAction} — guardrail escalated to ${c.action}">proposed: ${c.proposedAction}</span> `
+      : '';
 
   const headline = `<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout position-header-table"><tr>
       <td valign="top" style="width:50%;padding:0 8px 0 0;"><strong>${esc(c.symbol)}</strong><span class="muted"> · ${c.qty.toFixed(0)} qty @ ₹${c.avgPrice.toFixed(2)}</span></td>
-      <td valign="top" align="right" style="width:50%;padding:0 0 0 8px;">${actionChip}<span class="${pnlClass}">${pnl}</span>${dayChip}</td>
+      <td valign="top" align="right" style="width:50%;padding:0 0 0 8px;">${proposedChip}${actionChip}<span class="${pnlClass}">${pnl}</span>${dayChip}</td>
     </tr></table>`;
 
   const tech =
@@ -1171,6 +1177,9 @@ function baseStyles(): string {
     .action-chip.add  { background: #d4edda; color: #155724; }
     .action-chip.trim { background: #fff3cd; color: #856404; }
     .action-chip.exit { background: #f8d7da; color: #721c24; }
+    .proposed-badge { display: inline-block; padding: 2px 8px; border-radius: 999px;
+      font-size: 10px; font-weight: 600; letter-spacing: 0.03em; background: #eef4f8;
+      color: #6b7280; border: 1px dashed #cbd5e1; margin-right: 4px; }
     .momentum-card { border-left: 4px solid #b7791f; }
     .momentum-rebalance { margin-bottom: 12px; font-size: 13px; line-height: 1.45; }
     .momentum-sub { margin: 14px 0 6px; font-size: 13px; color: ${c.accent}; }
