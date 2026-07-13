@@ -56,6 +56,7 @@ import type { ScreenDefinition } from '../types/domain.js';
 import { renderCotGoldMacroLine } from './cot-gold-line.js';
 import { renderEtfPricingBlock } from './etf-pricing-card.js';
 import { type MomentumRebalanceSummary, renderMomentumBriefingBlock } from './momentum-card.js';
+import type { PaperTradeRecordResult } from './paper-trade-writer.js';
 import { recordPaperTrades } from './paper-trade-writer.js';
 import {
   type RegimeFlowAttribution,
@@ -155,6 +156,11 @@ export interface ComposeBriefingOptions {
   watchlist?: string[];
   /** Skip all LLM calls (Phase 1 mode). */
   skipAi?: boolean;
+  /**
+   * Whether to admit new paper trades from theses and portfolio ADD actions.
+   * Default true. Set false for EOD Reconciliation Run to prevent new ledger rows.
+   */
+  admitNewPaperTrades?: boolean;
   /** Weekend / NSE holiday — banner only; callers should also skip pipeline LLMs. */
   marketClosure?: { kind: 'weekend' | 'holiday'; label: string };
   /** Populated when `generateTheses` ran in the same workflow — drives AI Picks empty-state copy. */
@@ -221,15 +227,19 @@ export async function composeBriefing(
   const screenMatches = partialPipeline ? [] : gatherScreenMatches(date, db);
   const portfolio = partialPipeline ? undefined : gatherPortfolio(date, db);
 
-  const paperLog = recordPaperTrades(date, theses, portfolio, db);
-  if (
-    paperLog.insertedAiPick > 0 ||
-    paperLog.insertedPortfolioAdd > 0 ||
-    paperLog.insertedCatalystEntry > 0 ||
-    paperLog.crossStrategyBlocked > 0 ||
-    paperLog.blockedPortfolioAdd > 0
-  ) {
-    log.info(paperLog, 'paper trades recorded');
+  const admitNew = opts.admitNewPaperTrades !== false;
+  let paperLog: PaperTradeRecordResult | undefined;
+  if (admitNew) {
+    paperLog = recordPaperTrades(date, theses, portfolio, db);
+    if (
+      paperLog.insertedAiPick > 0 ||
+      paperLog.insertedPortfolioAdd > 0 ||
+      paperLog.insertedCatalystEntry > 0 ||
+      paperLog.crossStrategyBlocked > 0 ||
+      paperLog.blockedPortfolioAdd > 0
+    ) {
+      log.info(paperLog, 'paper trades recorded');
+    }
   }
 
   const statsRaw = getPaperTradeStats({ days: 30, asOf: date }, db);
@@ -315,7 +325,7 @@ export async function composeBriefing(
 
   const warnings: WarningEntry[] = [...(opts.warnings ?? [])];
 
-  const crossStrategyFromPaper = paperLog.crossStrategyBlocked;
+  const crossStrategyFromPaper = paperLog?.crossStrategyBlocked ?? 0;
   const crossStrategyFromMomentum = momentumSummary?.crossStrategyBlocked ?? 0;
   const crossStrategyTotal = crossStrategyFromPaper + crossStrategyFromMomentum;
   if (crossStrategyTotal > 0) {
