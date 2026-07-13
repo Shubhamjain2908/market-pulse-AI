@@ -89,18 +89,18 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.2",
+    "@biomejs/biome": "^2.5.3",
     "@types/better-sqlite3": "^7.6.12",
     "@types/express": "^5.0.6",
     "@types/node": "^26.1.0",
     "@types/nodemailer": "^8.0.0",
-    "@vitest/coverage-v8": "^4.1.9",
+    "@vitest/coverage-v8": "^4.1.10",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.8",
     "tsx": "^4.23.0",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "vite": "^8.1.0",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
