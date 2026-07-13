@@ -78,6 +78,14 @@ export interface DailyWorkflowOptions {
   skipAi?: boolean;
   /** Skip portfolio sync and stop-loss detection. */
   skipPortfolio?: boolean;
+  /**
+   * Whether to admit new paper trades during this run.
+   * Default true (backward-compatible). Set false for EOD Reconciliation Run
+   * to prevent new ledger rows from being created.
+   * When false, thesis, concall analysis, and portfolio analysis are also skipped
+   * (no LLM calls to generate admission candidates).
+   */
+  admitNewPaperTrades?: boolean;
 }
 
 export interface DailyWorkflowResult {
@@ -182,7 +190,12 @@ export async function runDailyWorkflow(
   const warnings: WarningEntry[] = [];
   let budgetExceeded = false;
 
-  if (!opts.skipAi) {
+  const admitNew = opts.admitNewPaperTrades !== false;
+  // Both skipAi AND admitNewPaperTrades must be false (or unset) to run LLM stages.
+  // At EOD (skipAi=true, admitNewPaperTrades=false), LLM stages are skipped.
+  const shouldRunLlmStages = !opts.skipAi && admitNew;
+
+  if (shouldRunLlmStages) {
     startRunBudget(date, config.LLM_RUN_BUDGET_USD);
   }
 
@@ -438,7 +451,7 @@ export async function runDailyWorkflow(
         }
       | undefined;
 
-    if (!opts.skipAi) {
+    if (shouldRunLlmStages) {
       const sentimentResult = await enrichSentiment();
       log.info(sentimentResult, 'sentiment scoring done');
       if (sentimentResult.scored === 0 && sentimentResult.failed > 0) {
@@ -499,7 +512,7 @@ export async function runDailyWorkflow(
         }
       }
 
-      if (!opts.skipAi && config.CONCALL_ANALYSIS_ENABLED === '1') {
+      if (shouldRunLlmStages && config.CONCALL_ANALYSIS_ENABLED === '1') {
         recordPipelineStage({ runDate, stage: 'concall-analysis', status: 'started' }, db);
         try {
           const concallResult = await analyseConcallTranscripts({}, db);
@@ -541,7 +554,7 @@ export async function runDailyWorkflow(
         }
       }
 
-      if (!opts.skipPortfolio) {
+      if (!opts.skipPortfolio && admitNew) {
         recordPipelineStage({ runDate, stage: 'portfolio-analysis', status: 'started' }, db);
         try {
           const portfolioResult = await analysePortfolio({ date });
@@ -606,7 +619,8 @@ export async function runDailyWorkflow(
       briefing = await runBriefingComposer({
         date,
         skipAi: opts.skipAi,
-        thesisRun: opts.skipAi ? undefined : thesisRun,
+        admitNewPaperTrades: admitNew,
+        thesisRun: shouldRunLlmStages ? thesisRun : undefined,
         delivery: config.BRIEFING_DELIVERY,
         warnings: warnings.length > 0 ? warnings : undefined,
         budgetExceeded: budgetExceeded || undefined,
@@ -637,7 +651,7 @@ export async function runDailyWorkflow(
         theses: briefing.thesesCount,
         portfolioHoldings: briefing.portfolioCount,
       },
-      thesisRun: opts.skipAi ? undefined : thesisRun,
+      thesisRun: shouldRunLlmStages ? thesisRun : undefined,
       hasMoodNarrative: briefing.hasNarrative,
     });
 
@@ -653,7 +667,7 @@ export async function runDailyWorkflow(
       delivery: config.BRIEFING_DELIVERY,
     };
   } finally {
-    if (!opts.skipAi) {
+    if (shouldRunLlmStages) {
       clearRunBudget(date);
     }
   }

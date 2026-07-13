@@ -16,6 +16,11 @@ export interface BriefRunOptions {
   delivery?: 'file' | 'email';
   /** Skip LLM-generated sections (narrative, etc.). */
   skipAi?: boolean;
+  /**
+   * Whether to admit new paper trades from theses and portfolio ADD actions.
+   * Default true. Set false for EOD Reconciliation Run.
+   */
+  admitNewPaperTrades?: boolean;
   /** Weekend / NSE holiday — closed-market brief from persisted DB rows only. */
   marketClosure?: { kind: 'weekend' | 'holiday'; label: string };
   /** When theses were generated in the same workflow pass (for AI Picks messaging). */

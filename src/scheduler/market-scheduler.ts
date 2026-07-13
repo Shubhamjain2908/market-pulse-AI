@@ -222,7 +222,11 @@ async function runScheduledJob(tag: string): Promise<void> {
   const t0 = Date.now();
   log.info({ tag, health: 'started' }, 'scheduled job started');
   try {
-    const result = await runDailyWorkflow();
+    // EOD Reconciliation Run (16:30): skip AI, do not admit new paper trades.
+    // Decision Run (08:45) and Saturday: full workflow, backward-compatible defaults.
+    const isEod = tag === 'weekday-1630';
+    const opts = isEod ? { skipAi: true, admitNewPaperTrades: false } : {};
+    const result = await runDailyWorkflow(opts);
     await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
     log.info(
       {
