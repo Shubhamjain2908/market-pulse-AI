@@ -11,7 +11,7 @@ trades. Currently NOT met.
 
 ## Shipped — Quality-GARP (v2, 2026-06-06)
 
-**Live:** `quality_garp` dispatcher in [`stock-screener.ts`](src/analysers/stock-screener.ts) + [`getQualityGarpFundamentals`](src/db/queries.ts) (yahoo annual ×3 + snapshot/screener coalesce + promoter join). Gates: PE≤35, PB≤6, **3yr ROE≥18%**, **ROCE≥20%**, **D/E<0.5**, **PEG<1.2**, RSI<45, within 5% of SMA50, no promoter selling; ETF exclusion; regime **BULL 1.0× / CHOPPY 0.75×**. Refresh: `pnpm fundamentals:refresh`. README: [Quality-GARP screener](README.md#quality-garp-screener).
+**Live:** `quality_garp` dispatcher in [`stock-screener.ts`](src/analysers/stock-screener.ts) + [`getQualityGarpFundamentals`](src/db/queries.ts) (yahoo annual ×3 + snapshot/screener coalesce + promoter join). **13 gates** (`QUALITY_GARP_TOTAL_GATES = 13`): ETF exclusion → fundamentals present → PE/PB non-null → PE≤35/PB≤6 → 3yr ROE≥18% → ROCE≥20% → D/E<0.5 → PEG<1.2 → RSI<threshold (regime-aware) → SMA50 proximity (regime-aware) → promoter no-selling → pledge≤15% (shadow) → OPM stability (std-dev≤5%, fail-open) + post-gate QDS (score>3, fail-open). Regime **BULL 1.0× / CHOPPY 0.75×**. Refresh: `pnpm fundamentals:refresh`. README: [Quality-GARP screener](README.md#quality-garp-screener).
 
 **v2 backlog (deferred):** Dec-FY `as_of` edge cases.
 
