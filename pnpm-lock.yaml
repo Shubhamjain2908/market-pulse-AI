@@ -43,8 +43,8 @@ importers:
         specifier: ^12.1.1
         version: 12.1.1
       nodemailer:
-        specifier: ^9.0.1
-        version: 9.0.1
+        specifier: ^9.0.3
+        version: 9.0.3
       openai:
         specifier: ^6.45.0
         version: 6.45.0(ws@8.21.0)(zod@4.4.3)
@@ -1180,8 +1180,8 @@ packages:
   help-me@5.0.0:
     resolution: {integrity: sha512-7xgomUX6ADmcYzFik0HzAxh/73YlKR9bmFzf51CZwR+b6YtzU2m0u49hQCqV6SvlqIqsaxovfwdvbnsw3b/zpg==}
 
-  hono@4.12.27:
-    resolution: {integrity: sha512-1yrb/+w6HWQJrUCLkJ2IF5jNIPvvFkblV5RNOYl6bV+OA6p9GLcMpHFFGTosSvHvcAUibuUukRqhlYI4z32C7Q==}
+  hono@4.12.29:
+    resolution: {integrity: sha512-1hNiRjawYrLq/4m3DQQjPGFg0VZkk4RjQJDff/excI6Dm9BiL75qxGrd7/c6YOxPdq6AscP3LiXhQ6fKFC1Waw==}
     engines: {node: '>=16.9.0'}
 
   html-escaper@2.0.2:
@@ -1495,8 +1495,8 @@ packages:
     resolution: {integrity: sha512-dRB78srN/l6gqWulah9SrxeYnxeddIG30+GOqK/9OlLVyLg3HPnr6SqOWTWOXKRwC2eGYCkZ59NNuSgvSrpgOA==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
-  nodemailer@9.0.1:
-    resolution: {integrity: sha512-Gwv8SQewT616ZM/URn0H54b8PWo/Wum7md3EW2aWy1lO27+WZCX+Xyak3J+NlmHUjDh5ME+uesJUDRbR3Ye8Bw==}
+  nodemailer@9.0.3:
+    resolution: {integrity: sha512-n+YP+NKwR5zRWa60k3GiQ6Q3B4KXCoAw40dAKeCtYn020iNN74aWK2liXIC3ZEATeGql7we3tE3t8QwhY0eskw==}
     engines: {node: '>=6.0.0'}
 
   normalize-url@4.5.1:
@@ -2388,9 +2388,9 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@hono/node-server@1.19.14(hono@4.12.27)':
+  '@hono/node-server@1.19.14(hono@4.12.29)':
     dependencies:
-      hono: 4.12.27
+      hono: 4.12.29
 
   '@jridgewell/resolve-uri@3.1.2': {}
 
@@ -2405,7 +2405,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(zod@3.25.76)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.27)
+      '@hono/node-server': 1.19.14(hono@4.12.29)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -2415,7 +2415,7 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.27
+      hono: 4.12.29
       jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -2427,7 +2427,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.27)
+      '@hono/node-server': 1.19.14(hono@4.12.29)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -2437,7 +2437,7 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.27
+      hono: 4.12.29
       jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -3211,7 +3211,7 @@ snapshots:
 
   help-me@5.0.0: {}
 
-  hono@4.12.27: {}
+  hono@4.12.29: {}
 
   html-escaper@2.0.2: {}
 
@@ -3489,7 +3489,7 @@ snapshots:
       fetch-blob: 3.2.0
       formdata-polyfill: 4.0.10
 
-  nodemailer@9.0.1: {}
+  nodemailer@9.0.3: {}
 
   normalize-url@4.5.1: {}
 

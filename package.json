@@ -75,7 +75,7 @@
     "express": "^5.2.1",
     "got": "^15.0.7",
     "juice": "^12.1.1",
-    "nodemailer": "^9.0.1",
+    "nodemailer": "^9.0.3",
     "openai": "^6.45.0",
     "otplib": "^13.4.1",
     "p-limit": "^7.3.0",
