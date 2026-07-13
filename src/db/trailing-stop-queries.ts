@@ -144,6 +144,17 @@ export function patchPaperTradeTrailing(
   ).run(params);
 }
 
+/** Update pricing_status for a paper trade (priced / unpriced / stale). */
+export function patchPaperTradePricingStatus(
+  tradeId: number,
+  pricingStatus: 'priced' | 'unpriced' | 'stale',
+  db: DatabaseType = getDb(),
+): void {
+  db.prepare(
+    `UPDATE paper_trades SET pricing_status = @pricingStatus WHERE id = @id AND status = 'OPEN'`,
+  ).run({ id: tradeId, pricingStatus });
+}
+
 /** Idempotent on (trade_id, log_date, action). Returns new row id when inserted, else null. */
 export function insertStopLog(
   row: TrailingStopLogInsert,

@@ -26,6 +26,7 @@ import {
   getAtr14,
   getLastEvaluatedBarDate,
   insertStopLog,
+  patchPaperTradePricingStatus,
   patchPaperTradeTrailing,
   resetStopRaisedTodayForOpenTrades,
 } from '../db/trailing-stop-queries.js';
@@ -139,7 +140,13 @@ export function evaluateOnePaperTrade(
   const bars = getSymbolBars(db, trade.symbol, walkFrom, asOf);
   if (bars.length === 0) {
     // Caught up through `asOf` (idempotent re-eval) vs never had quotes in the entry window.
-    return lastEvaluated !== null ? 'still_open' : 'no_data';
+    if (lastEvaluated !== null) {
+      // Had bars before but none for this session — mark stale
+      patchPaperTradePricingStatus(trade.id, 'stale', db);
+      return 'still_open';
+    }
+    // Never had bars — remains unpriced
+    return 'no_data';
   }
 
   const momentumCfg = loadMomentumConfig();
@@ -426,6 +433,8 @@ export function evaluateOnePaperTrade(
     persistOpenRow();
   }
 
+  // All bars processed without a close — mark priced
+  patchPaperTradePricingStatus(trade.id, 'priced', db);
   return 'still_open';
 }
 
