@@ -77,10 +77,17 @@ describe('evaluateAiPickEligibility', () => {
     ).run(sym, date, kind);
   }
 
+  function seedEarningsBlackoutOk(sym: string, date: string): void {
+    sig(sym, date, 'mom_earnings_blackout', 0);
+  }
+
   function seedBhelGoldenCrossElite(rankDate: string): void {
     const sym = 'BHEL';
     insertRegimeChoppy(SOURCE_DATE);
     screen(sym, SOURCE_DATE, 'golden_cross');
+    // Earnings blackout seeded on SOURCE_DATE (always fresh) so the staleness
+    // test for rank vs T-2 boundary is not short-circuited by stale earnings evidence.
+    seedEarningsBlackoutOk(sym, SOURCE_DATE);
     sig(sym, rankDate, 'mom_rank', 2);
     sig(sym, rankDate, 'mom_false_flag', 0);
     sig(sym, rankDate, 'mom_relative_strength_ba', 0.5);
@@ -111,6 +118,7 @@ describe('evaluateAiPickEligibility', () => {
   it('blocks TIPSMUSIC — golden_cross_rejected rank > 10', () => {
     insertRegimeChoppy(SOURCE_DATE);
     screen('TIPSMUSIC', SOURCE_DATE, 'golden_cross');
+    seedEarningsBlackoutOk('TIPSMUSIC', SOURCE_DATE);
     sig('TIPSMUSIC', SOURCE_DATE, 'mom_rank', 51);
     sig('TIPSMUSIC', SOURCE_DATE, 'mom_false_flag', 0);
     sig('TIPSMUSIC', SOURCE_DATE, 'mom_relative_strength_ba', 0.3);
@@ -122,6 +130,7 @@ describe('evaluateAiPickEligibility', () => {
   it('blocks HINDALCO — no_confirmation_path', () => {
     insertRegimeChoppy(SOURCE_DATE);
     screen('HINDALCO', SOURCE_DATE, 'golden_cross');
+    seedEarningsBlackoutOk('HINDALCO', SOURCE_DATE);
     sig('HINDALCO', SOURCE_DATE, 'mom_rank', 15);
     sig('HINDALCO', SOURCE_DATE, 'mom_false_flag', 0);
     sig('HINDALCO', SOURCE_DATE, 'mom_relative_strength_ba', -0.1);
@@ -135,6 +144,7 @@ describe('evaluateAiPickEligibility', () => {
     insertRegimeChoppy(SOURCE_DATE);
     screen(sym, SOURCE_DATE, 'golden_cross');
     quote(sym, SOURCE_DATE, 2022);
+    seedEarningsBlackoutOk(sym, SOURCE_DATE);
     sig(sym, SOURCE_DATE, 'sma_50', 1900);
     sig(sym, SOURCE_DATE, 'sma_200', 1800);
     sig(sym, SOURCE_DATE, 'volume_ratio_20d', 1.6);
@@ -146,6 +156,7 @@ describe('evaluateAiPickEligibility', () => {
 
   it('allows TATASTEEL — path_a_non_generic_screen', () => {
     insertRegimeChoppy(SOURCE_DATE);
+    seedEarningsBlackoutOk('TATASTEEL', SOURCE_DATE);
     screen('TATASTEEL', SOURCE_DATE, 'rsi_oversold_bounce');
     const r = evaluateAiPickEligibility('TATASTEEL', SOURCE_DATE, thesis(7), db);
     expect(r.eligible).toBe(true);
@@ -181,6 +192,7 @@ describe('evaluateAiPickEligibility', () => {
   });
 
   it('OUT_OF_UNIVERSE_PATH_A — non-generic screen allows without rank', () => {
+    seedEarningsBlackoutOk('RANDOMCO', SOURCE_DATE);
     screen('RANDOMCO', SOURCE_DATE, 'rsi_oversold_bounce');
     const r = evaluateAiPickEligibility('RANDOMCO', SOURCE_DATE, thesis(7), db);
     expect(r.eligible).toBe(true);
@@ -189,6 +201,7 @@ describe('evaluateAiPickEligibility', () => {
 
   it('OUT_OF_UNIVERSE_PATH_C_BLOCKED — golden_cross only without rank blocks', () => {
     insertRegimeChoppy(SOURCE_DATE);
+    seedEarningsBlackoutOk('RANDOMCO', SOURCE_DATE);
     screen('RANDOMCO', SOURCE_DATE, 'golden_cross');
     const r = evaluateAiPickEligibility('RANDOMCO', SOURCE_DATE, thesis(7), db);
     expect(r.eligible).toBe(false);
@@ -198,6 +211,7 @@ describe('evaluateAiPickEligibility', () => {
   it('blocks IDEA false_momentum_flag even at high confidence', () => {
     insertRegimeChoppy(SOURCE_DATE);
     screen('IDEA', SOURCE_DATE, 'rsi_oversold_bounce');
+    seedEarningsBlackoutOk('IDEA', SOURCE_DATE);
     sig('IDEA', SOURCE_DATE, 'mom_false_flag', 1);
     const r = evaluateAiPickEligibility('IDEA', SOURCE_DATE, thesis(8), db);
     expect(r.eligible).toBe(false);
@@ -207,6 +221,7 @@ describe('evaluateAiPickEligibility', () => {
   it('allows Path A when false_momentum_flag=1 is stale', () => {
     insertRegimeChoppy(SOURCE_DATE);
     screen('TATASTEEL', SOURCE_DATE, 'rsi_oversold_bounce');
+    seedEarningsBlackoutOk('TATASTEEL', SOURCE_DATE);
     sig('TATASTEEL', '2026-06-17', 'mom_false_flag', 1);
     const r = evaluateAiPickEligibility('TATASTEEL', SOURCE_DATE, thesis(8), db);
     expect(r.eligible).toBe(true);
@@ -219,6 +234,7 @@ describe('evaluateAiPickEligibility', () => {
     insertRegimeChoppy(SOURCE_DATE);
     screen(sym, SOURCE_DATE, 'golden_cross');
     quote(sym, SOURCE_DATE, 2022);
+    seedEarningsBlackoutOk(sym, SOURCE_DATE);
     sig(sym, SOURCE_DATE, 'sma_50', 1900);
     sig(sym, SOURCE_DATE, 'sma_200', 1800);
     sig(sym, SOURCE_DATE, 'volume_ratio_20d', 1.6);
@@ -233,6 +249,7 @@ describe('evaluateAiPickEligibility', () => {
   it('blocks IDEA 2026-07-06 scenario — operating quality guard', () => {
     insertRegimeChoppy(SOURCE_DATE);
     screen('IDEA', SOURCE_DATE, 'golden_cross');
+    seedEarningsBlackoutOk('IDEA', SOURCE_DATE);
     sig('IDEA', SOURCE_DATE, 'mom_rank', 4);
     sig('IDEA', SOURCE_DATE, 'mom_false_flag', 0);
     sig('IDEA', SOURCE_DATE, 'mom_relative_strength_ba', 0.5);
@@ -255,6 +272,7 @@ describe('evaluateAiPickEligibility', () => {
     insertRegimeChoppy(SOURCE_DATE);
     const sym = 'TATASTEEL';
     screen(sym, SOURCE_DATE, 'rsi_oversold_bounce');
+    seedEarningsBlackoutOk(sym, SOURCE_DATE);
     // Good fundamentals: positive ROCE, PB present, ROE present
     db.prepare(
       `INSERT INTO fundamentals (symbol, as_of, roce, roe, pb, net_profit_ttm, profit_growth_yoy, source)
@@ -272,6 +290,7 @@ describe('evaluateAiPickEligibility', () => {
     insertRegimeChoppy(SOURCE_DATE);
     const sym = 'HDFCBANK';
     screen(sym, SOURCE_DATE, 'rsi_oversold_bounce');
+    seedEarningsBlackoutOk(sym, SOURCE_DATE);
     // Bank: has roce but roe present and pb present — passes quality check
     db.prepare(
       `INSERT INTO fundamentals (symbol, as_of, roce, roe, pb, net_profit_ttm, profit_growth_yoy, source)
@@ -282,5 +301,89 @@ describe('evaluateAiPickEligibility', () => {
     expect(r.eligible).toBe(true);
     expect(r.path).toBe('path_a_non_generic_screen');
     expect(r.facts.operatingQualityBlocked).toBe(false);
+  });
+
+  // ---- Earnings blackout gate tests ----
+
+  it('earnings_blackout — fresh=1 blocks admission', () => {
+    insertRegimeChoppy(SOURCE_DATE);
+    const sym = 'EARNBLK';
+    screen(sym, SOURCE_DATE, 'rsi_oversold_bounce');
+    sig(sym, SOURCE_DATE, 'mom_earnings_blackout', 1);
+    const r = evaluateAiPickEligibility(sym, SOURCE_DATE, thesis(7), db);
+    expect(r.eligible).toBe(false);
+    expect(r.reasons).toEqual(['earnings_blackout']);
+    expect(r.facts.momEarningsBlackout).toBe(1);
+    expect(r.facts.momEarningsBlackoutFresh).toBe(true);
+  });
+
+  it('earnings_blackout — missing signal blocks as unknown (fail-closed)', () => {
+    insertRegimeChoppy(SOURCE_DATE);
+    screen('NODATA', SOURCE_DATE, 'rsi_oversold_bounce');
+    const r = evaluateAiPickEligibility('NODATA', SOURCE_DATE, thesis(7), db);
+    expect(r.eligible).toBe(false);
+    expect(r.reasons).toEqual(['earnings_blackout_unknown']);
+    expect(r.facts.momEarningsBlackout).toBeNull();
+  });
+
+  it('earnings_blackout — stale signal (> T-2) blocks as unknown', () => {
+    insertRegimeChoppy(SOURCE_DATE);
+    const sym = 'STALEBLK';
+    screen(sym, SOURCE_DATE, 'rsi_oversold_bounce');
+    // Signal on 2026-06-17 is 3 sessions back (stale, older than T-2)
+    sig(sym, '2026-06-17', 'mom_earnings_blackout', 0);
+    const r = evaluateAiPickEligibility(sym, SOURCE_DATE, thesis(7), db);
+    expect(r.eligible).toBe(false);
+    expect(r.reasons).toEqual(['earnings_blackout_unknown']);
+    expect(r.facts.momEarningsBlackout).toBe(0);
+    expect(r.facts.momEarningsBlackoutFresh).toBe(false);
+  });
+
+  it('earnings_blackout — fresh=0 continues to path gates', () => {
+    insertRegimeChoppy(SOURCE_DATE);
+    const sym = 'CLEARBLK';
+    screen(sym, SOURCE_DATE, 'rsi_oversold_bounce');
+    seedEarningsBlackoutOk(sym, SOURCE_DATE);
+    const r = evaluateAiPickEligibility(sym, SOURCE_DATE, thesis(7), db);
+    expect(r.eligible).toBe(true);
+    expect(r.path).toBe('path_a_non_generic_screen');
+    expect(r.facts.momEarningsBlackout).toBe(0);
+    expect(r.facts.momEarningsBlackoutFresh).toBe(true);
+  });
+
+  it('earnings_blackout — blackout check fires before false_momentum_flag', () => {
+    insertRegimeChoppy(SOURCE_DATE);
+    const sym = 'BLKFIRST';
+    screen(sym, SOURCE_DATE, 'rsi_oversold_bounce');
+    // Both blackout=1 and false_flag=1 are set
+    sig(sym, SOURCE_DATE, 'mom_earnings_blackout', 1);
+    sig(sym, SOURCE_DATE, 'mom_false_flag', 1);
+    const r = evaluateAiPickEligibility(sym, SOURCE_DATE, thesis(8), db);
+    // Should block for earnings_blackout, not false_momentum_flag
+    expect(r.eligible).toBe(false);
+    expect(r.reasons).toEqual(['earnings_blackout']);
+  });
+
+  it('LTF regression — rank 19, volume breakout, blackout=1 blocks AI_PICK', () => {
+    insertRegimeChoppy(SOURCE_DATE);
+    const sym = 'LTF';
+    // Golden cross screen (Path C requires golden_cross screen)
+    screen(sym, SOURCE_DATE, 'golden_cross');
+    // Volume breakout path signals
+    quote(sym, SOURCE_DATE, 2022);
+    sig(sym, SOURCE_DATE, 'sma_50', 1900);
+    sig(sym, SOURCE_DATE, 'sma_200', 1800);
+    sig(sym, SOURCE_DATE, 'volume_ratio_20d', 1.6);
+    sig(sym, SOURCE_DATE, 'mom_rank', 19);
+    sig(sym, SOURCE_DATE, 'mom_false_flag', 0);
+    sig(sym, SOURCE_DATE, 'mom_relative_strength_ba', 0.5);
+    // Earnings blackout active
+    sig(sym, SOURCE_DATE, 'mom_earnings_blackout', 1);
+
+    const r = evaluateAiPickEligibility(sym, SOURCE_DATE, thesis(8), db);
+    expect(r.eligible).toBe(false);
+    expect(r.reasons).toEqual(['earnings_blackout']);
+    expect(r.facts.momEarningsBlackout).toBe(1);
+    expect(r.facts.momEarningsBlackoutFresh).toBe(true);
   });
 });

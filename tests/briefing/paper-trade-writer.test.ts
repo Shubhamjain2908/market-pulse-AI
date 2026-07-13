@@ -40,12 +40,32 @@ describe('recordPaperTrades', () => {
   let dbPath: string;
   let db: ReturnType<typeof getDb>;
 
+  function insertNiftyQuote(date: string): void {
+    db.prepare(
+      `INSERT INTO quotes (symbol, exchange, date, open, high, low, close, volume, source)
+       VALUES ('NIFTY_50', 'NSE', ?, 100, 100, 100, 100, 1000, 'test')`,
+    ).run(date);
+  }
+
+  const QUOTES = [
+    '2026-04-27',
+    '2026-04-28',
+    '2026-04-29',
+    '2026-04-30',
+    '2026-05-01',
+    '2026-07-03',
+    '2026-07-06',
+  ];
+
   beforeEach(() => {
     dbPath = join(tmpdir(), `mp-ptw-${Date.now()}.db`);
     process.env.DATABASE_PATH = dbPath;
     portfolioAddPaperTrades.value = '0';
     db = getDb({ path: dbPath });
     migrate(db);
+    for (const d of QUOTES) {
+      insertNiftyQuote(d);
+    }
     mockError.mockClear();
     mockWarn.mockClear();
     mockInfo.mockClear();
@@ -67,6 +87,10 @@ describe('recordPaperTrades', () => {
       INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
       VALUES (?, ?, 'rsi_oversold_bounce', 1, '{}')
     `,
+    ).run(symbol, date);
+    db.prepare(
+      `INSERT INTO signals (symbol, date, name, value, source)
+       VALUES (?, ?, 'mom_earnings_blackout', 0, 'test')`,
     ).run(symbol, date);
   }
 

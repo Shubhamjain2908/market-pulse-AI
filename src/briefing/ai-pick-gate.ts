@@ -18,7 +18,9 @@ export type AiPickBlockReason =
   | 'golden_cross_rejected'
   | 'rubric_low'
   | 'no_confirmation_path'
-  | 'operating_quality';
+  | 'operating_quality'
+  | 'earnings_blackout'
+  | 'earnings_blackout_unknown';
 
 export type AiPickConfirmPath =
   | 'path_a_non_generic_screen'
@@ -303,6 +305,7 @@ export function evaluateAiPickEligibility(
 
   const rankSig = getLatestSignal(sym, 'mom_rank', sourceDate, db);
   const falseFlagSig = getLatestSignal(sym, 'mom_false_flag', sourceDate, db);
+  const earningsBlackoutSig = getLatestSignal(sym, 'mom_earnings_blackout', sourceDate, db);
   const rsSig = getLatestSignal(sym, 'mom_relative_strength_ba', sourceDate, db);
   const sma50Sig = getLatestSignal(sym, 'sma_50', sourceDate, db);
   const sma200Sig = getLatestSignal(sym, 'sma_200', sourceDate, db);
@@ -312,6 +315,7 @@ export function evaluateAiPickEligibility(
   const volumeSpikeAlert = hasAlert(sym, sourceDate, 'volume_spike', db);
   const rankFresh = isSignalFresh(rankSig, twoBack);
   const falseFlagFresh = isSignalFresh(falseFlagSig, twoBack);
+  const earningsBlackoutFresh = isSignalFresh(earningsBlackoutSig, twoBack);
 
   facts.signals = {
     momRank: signalFacts(rankSig, rankFresh),
@@ -320,6 +324,7 @@ export function evaluateAiPickEligibility(
     sma50: signalFacts(sma50Sig),
     sma200: signalFacts(sma200Sig),
     volumeRatio20d: signalFacts(volRatioSig),
+    momEarningsBlackout: signalFacts(earningsBlackoutSig, earningsBlackoutFresh),
   };
   facts.close = close;
   facts.alerts = { near52wHigh: near52wHighAlert, volumeSpike: volumeSpikeAlert };
@@ -333,8 +338,24 @@ export function evaluateAiPickEligibility(
   facts.momRankDate = rankSig?.date ?? null;
   facts.momFalseFlag = falseFlagSig?.value ?? null;
   facts.momFalseFlagDate = falseFlagSig?.date ?? null;
+  facts.momEarningsBlackout = earningsBlackoutSig?.value ?? null;
+  facts.momEarningsBlackoutDate = earningsBlackoutSig?.date ?? null;
+  facts.momEarningsBlackoutFresh = earningsBlackoutFresh;
   facts.rankFresh = rankFresh;
   facts.falseFlagFresh = falseFlagFresh;
+
+  // ---- Earnings blackout check (fail-closed) ----
+  // Block BEFORE any path check so earnings risk gates all admission paths.
+  // Fresh blackout value 1 → active blackout.
+  // Missing or stale signal → block as unknown (fail-closed).
+  // Fresh value 0 → continue.
+  // catalyst_entry is exempt (handled in paper-trade-writer.ts; bypasses this gate entirely).
+  if (earningsBlackoutFresh && earningsBlackoutSig != null && earningsBlackoutSig.value === 1) {
+    return { eligible: false, reasons: ['earnings_blackout'], facts };
+  }
+  if (!earningsBlackoutFresh || earningsBlackoutSig == null) {
+    return { eligible: false, reasons: ['earnings_blackout_unknown'], facts };
+  }
 
   if (falseFlagFresh && falseFlagSig != null && falseFlagSig.value === 1) {
     return { eligible: false, reasons: ['false_momentum_flag'], facts };
