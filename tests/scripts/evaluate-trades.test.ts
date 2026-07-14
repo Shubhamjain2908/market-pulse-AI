@@ -285,9 +285,9 @@ describe('evaluate paper trades', () => {
    * and count toward win stats (not flipped to CLOSED_LOSS by pnl heuristics).
    */
   it('R9 — profitable TRAILING_STOP exit stays CLOSED_WIN in stats', () => {
-    const day1 = '2026-07-02';
-    const day2 = '2026-07-03';
-    const day3 = '2026-07-04';
+    const day1 = '2026-07-01';
+    const day2 = '2026-07-02';
+    const day3 = '2026-07-03';
     seedNifty(day1, day2, day3);
     upsertQuotes(
       [
@@ -297,13 +297,13 @@ describe('evaluate paper trades', () => {
       ],
       db,
     );
-    seedAtr14('R9GATE', ['2026-07-01', day1, day2, day3], 3);
+    seedAtr14('R9GATE', ['2026-06-30', day1, day2, day3], 3);
 
     insertPaperTradeIfAbsent(
       {
         symbol: 'R9GATE',
         signalType: 'AI_PICK',
-        sourceDate: '2026-07-01',
+        sourceDate: '2026-06-30',
         entryPrice: 100,
         stopLoss: 92,
         target: 220,
@@ -383,7 +383,7 @@ describe('evaluate paper trades', () => {
 
     it('9.2.2 — first session bar stop-out uses INITIAL_STOP (Day-1 block)', () => {
       const src = '2026-08-01';
-      const d1 = '2026-08-02';
+      const d1 = '2026-08-03';
       seedNifty(d1);
       upsertQuotes([q('INIT1', d1, 95, 100, 88, 92)], db);
       seedAtr14('INIT1', [src], 5);
@@ -411,7 +411,7 @@ describe('evaluate paper trades', () => {
 
     it('9.2.3 — momentum hard_stop_pct floor raises loose LLM stop (no atr on source)', () => {
       const src = '2026-10-01';
-      const d1 = '2026-10-02';
+      const d1 = '2026-10-05';
       seedNifty(d1);
       upsertQuotes([q('HFLOOR', d1, 100, 105, 93, 102)], db);
       insertPaperTradeIfAbsent(
@@ -758,7 +758,7 @@ describe('evaluate paper trades', () => {
 
   it('null prevClose on first symbol bar skips gap CB and runs trailing', () => {
     const src = '2026-10-01';
-    const d1 = '2026-10-02';
+    const d1 = '2026-10-05';
     seedNifty(d1);
     upsertQuotes([q('NOPREV', d1, 100, 108, 99, 106)], db);
     seedAtr14('NOPREV', [src, d1], 3);
@@ -1075,9 +1075,9 @@ describe('evaluate paper trades', () => {
 
   describe('stats integrity', () => {
     it('profitable trailing stop exit is CLOSED_WIN and counts as win in stats', () => {
-      const d1 = '2026-07-02';
-      const d2 = '2026-07-03';
-      const d3 = '2026-07-04';
+      const d1 = '2026-07-01';
+      const d2 = '2026-07-02';
+      const d3 = '2026-07-03';
       seedNifty(d1, d2, d3);
       upsertQuotes(
         [
@@ -1089,12 +1089,12 @@ describe('evaluate paper trades', () => {
         ],
         db,
       );
-      seedAtr14('WINST', ['2026-07-01', d1, d2, d3], 3);
+      seedAtr14('WINST', ['2026-06-30', d1, d2, d3], 3);
       insertPaperTradeIfAbsent(
         {
           symbol: 'WINST',
           signalType: 'AI_PICK',
-          sourceDate: '2026-07-01',
+          sourceDate: '2026-06-30',
           entryPrice: 100,
           stopLoss: 85,
           target: 200,
@@ -1157,9 +1157,9 @@ describe('evaluate paper trades', () => {
     });
 
     it('multiple trades: win rate matches actual positive-pnl count', () => {
-      seedNifty('2026-08-02');
+      seedNifty('2026-08-03');
       // Trade 1: target hit → WIN (+20%)
-      upsertQuotes([q('MR_W', '2026-08-02', 100, 125, 95, 122)], db);
+      upsertQuotes([q('MR_W', '2026-08-03', 100, 125, 95, 122)], db);
       insertPaperTradeIfAbsent(
         {
           symbol: 'MR_W',
@@ -1174,7 +1174,7 @@ describe('evaluate paper trades', () => {
         db,
       );
       // Trade 2: stop hit → LOSS (-10%)
-      upsertQuotes([q('MR_L', '2026-08-02', 100, 105, 85, 88)], db);
+      upsertQuotes([q('MR_L', '2026-08-03', 100, 105, 85, 88)], db);
       insertPaperTradeIfAbsent(
         {
           symbol: 'MR_L',
@@ -1189,11 +1189,11 @@ describe('evaluate paper trades', () => {
         db,
       );
 
-      const r = runEvaluatePaperTrades('2026-08-02', db, { skipAi: true });
+      const r = runEvaluatePaperTrades('2026-08-03', db, { skipAi: true });
       expect(r.closedWin).toBe(1);
       expect(r.closedLoss).toBe(1);
 
-      const stats = getPaperTradeStats({ days: 30, asOf: '2026-08-02' }, db);
+      const stats = getPaperTradeStats({ days: 30, asOf: '2026-08-03' }, db);
       expect(stats.closedCount).toBe(2);
       expect(stats.winCount).toBe(1);
       expect(stats.lossCount).toBe(1);
