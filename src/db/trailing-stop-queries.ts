@@ -12,6 +12,7 @@ import type {
   TrailingStopLogRow,
 } from '../types/trailing-stop.js';
 import { getDb } from './connection.js';
+import type { PaperTradePricingStatus } from './queries.js';
 
 const ATR14_NAME = 'atr_14';
 
@@ -144,15 +145,37 @@ export function patchPaperTradeTrailing(
   ).run(params);
 }
 
-/** Update pricing_status for a paper trade (priced / unpriced / stale). */
+/** Latest NSE quote date for a symbol on or before the requested session. */
+export function getLatestPaperTradeQuoteDate(
+  symbol: string,
+  expectedSession: string,
+  db: DatabaseType = getDb(),
+): string | null {
+  const row = db
+    .prepare(
+      `SELECT MAX(date) AS date
+       FROM quotes
+       WHERE symbol = ? AND exchange = 'NSE' AND date <= ?`,
+    )
+    .get(symbol.toUpperCase(), expectedSession) as { date: string | null } | undefined;
+  return row?.date ?? null;
+}
+
+/** Persist Pricing State without changing the OPEN trade lifecycle status. */
 export function patchPaperTradePricingStatus(
   tradeId: number,
-  pricingStatus: 'priced' | 'unpriced' | 'stale',
+  pricingStatus: PaperTradePricingStatus,
+  pricingStatusAsOf: string,
+  lastQuoteDate: string | null,
   db: DatabaseType = getDb(),
 ): void {
   db.prepare(
-    `UPDATE paper_trades SET pricing_status = @pricingStatus WHERE id = @id AND status = 'OPEN'`,
-  ).run({ id: tradeId, pricingStatus });
+    `UPDATE paper_trades
+     SET pricing_status = @pricingStatus,
+         pricing_status_as_of = @pricingStatusAsOf,
+         last_quote_date = @lastQuoteDate
+     WHERE id = @id AND status = 'OPEN'`,
+  ).run({ id: tradeId, pricingStatus, pricingStatusAsOf, lastQuoteDate });
 }
 
 /** Idempotent on (trade_id, log_date, action). Returns new row id when inserted, else null. */

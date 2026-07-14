@@ -1267,7 +1267,7 @@ export function getPromoterPledgeSnapshot(
 
 export type PaperTradeSignalType = 'AI_PICK' | 'PORTFOLIO_ADD' | 'momentum_mf' | 'catalyst_entry';
 export type PaperTradeStatus = 'OPEN' | 'CLOSED_WIN' | 'CLOSED_LOSS' | 'CLOSED_TIME';
-export type PaperTradePricingStatus = 'priced' | 'unpriced' | 'stale';
+export type PaperTradePricingStatus = 'PRICED' | 'UNPRICED';
 export type PaperTradeHorizon = 'short' | 'medium' | 'long';
 export type PaperTradeStopType = 'trailing' | 'fixed';
 
@@ -1285,7 +1285,6 @@ export interface PaperTradeInsertRow {
   atr14AtEntry?: number | null;
   notes?: string | null;
   positionWeightPct?: number | null;
-  pricingStatus?: PaperTradePricingStatus;
 }
 
 export interface PaperTradeRow {
@@ -1312,6 +1311,8 @@ export interface PaperTradeRow {
   exitReason: ExitReason | null;
   positionWeightPct: number | null;
   pricingStatus: PaperTradePricingStatus;
+  pricingStatusAsOf: string | null;
+  lastQuoteDate: string | null;
 }
 
 /** Insert if no row exists for (symbol, signal_type, source_date). Returns true when inserted. */
@@ -1324,11 +1325,11 @@ export function insertPaperTradeIfAbsent(
     INSERT OR IGNORE INTO paper_trades (
       symbol, signal_type, source_date, entry_price, stop_loss, target,
       time_horizon, max_hold_days, stop_type, trailing_multiplier, atr14_at_entry,
-      status, notes, position_weight_pct, pricing_status
+      status, notes, position_weight_pct
     ) VALUES (
       @symbol, @signalType, @sourceDate, @entryPrice, @stopLoss, @target,
       @timeHorizon, @maxHoldDays, @stopType, @trailingMultiplier, @atr14AtEntry,
-      'OPEN', @notes, @positionWeightPct, COALESCE(@pricingStatus, 'unpriced')
+      'OPEN', @notes, @positionWeightPct
     )
   `)
     .run({
@@ -1345,7 +1346,6 @@ export function insertPaperTradeIfAbsent(
       atr14AtEntry: row.atr14AtEntry ?? null,
       notes: row.notes ?? null,
       positionWeightPct: row.positionWeightPct ?? null,
-      pricingStatus: row.pricingStatus ?? 'unpriced',
     });
   return result.changes > 0;
 }
@@ -1366,37 +1366,15 @@ export function getOpenPaperTrades(db: DatabaseType = getDb()): PaperTradeRow[] 
            stop_raised_today AS stopRaisedToday,
            exit_reason AS exitReason,
            position_weight_pct AS positionWeightPct,
-           pricing_status AS pricingStatus
+           pricing_status AS pricingStatus,
+           pricing_status_as_of AS pricingStatusAsOf,
+           last_quote_date AS lastQuoteDate
     FROM paper_trades
     WHERE status = 'OPEN'
     ORDER BY source_date ASC, id ASC
   `,
     )
-    .all() as Array<{
-    id: number;
-    symbol: string;
-    signalType: PaperTradeSignalType;
-    sourceDate: string;
-    entryPrice: number;
-    stopLoss: number;
-    target: number;
-    timeHorizon: PaperTradeHorizon;
-    maxHoldDays: number;
-    status: PaperTradeStatus;
-    outcomeDate: string | null;
-    exitPrice: number | null;
-    pnlPct: number | null;
-    notes: string | null;
-    createdAt: string;
-    highestCloseSinceEntry: number | null;
-    atr14AtEntry: number | null;
-    trailingMultiplier: number | null;
-    stopType: PaperTradeStopType;
-    stopRaisedToday: number | null;
-    exitReason: ExitReason | null;
-    positionWeightPct: number | null;
-    pricingStatus: PaperTradePricingStatus;
-  }>;
+    .all() as PaperTradeRow[];
 
   return rows;
 }
@@ -1468,37 +1446,15 @@ export function getOpenPaperTradesForSignal(
            stop_raised_today AS stopRaisedToday,
            exit_reason AS exitReason,
            position_weight_pct AS positionWeightPct,
-           pricing_status AS pricingStatus
+           pricing_status AS pricingStatus,
+           pricing_status_as_of AS pricingStatusAsOf,
+           last_quote_date AS lastQuoteDate
     FROM paper_trades
     WHERE status = 'OPEN' AND signal_type = ?
     ORDER BY source_date ASC, id ASC
   `,
     )
-    .all(signalType) as Array<{
-    id: number;
-    symbol: string;
-    signalType: PaperTradeSignalType;
-    sourceDate: string;
-    entryPrice: number;
-    stopLoss: number;
-    target: number;
-    timeHorizon: PaperTradeHorizon;
-    maxHoldDays: number;
-    status: PaperTradeStatus;
-    outcomeDate: string | null;
-    exitPrice: number | null;
-    pnlPct: number | null;
-    notes: string | null;
-    createdAt: string;
-    highestCloseSinceEntry: number | null;
-    atr14AtEntry: number | null;
-    trailingMultiplier: number | null;
-    stopType: PaperTradeStopType;
-    stopRaisedToday: number | null;
-    exitReason: ExitReason | null;
-    positionWeightPct: number | null;
-    pricingStatus: PaperTradePricingStatus;
-  }>;
+    .all(signalType) as PaperTradeRow[];
 
   return rows;
 }

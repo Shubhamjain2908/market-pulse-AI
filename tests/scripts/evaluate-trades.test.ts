@@ -13,6 +13,7 @@ import {
 import {
   evaluateOnePaperTrade,
   exitPriceWhenStopHit,
+  formatUnpricedTradeWarning,
   runEvaluatePaperTrades,
 } from '../../src/scripts/evaluate-trades.js';
 import type { RawQuote } from '../../src/types/domain.js';
@@ -1199,6 +1200,112 @@ describe('evaluate paper trades', () => {
       // winRate requires MIN_SAMPLE_CLOSED=5; with only 2 trades it's null
       expect(stats.winRate).toBeNull();
       expect(stats.expectancyPct).toBeDefined();
+    });
+  });
+
+  describe('Pricing State', () => {
+    const sourceDate = '2026-07-09';
+    const friday = '2026-07-10';
+    const monday = '2026-07-13';
+
+    function seedPricingTrade(symbol: string): void {
+      insertPaperTradeIfAbsent(
+        {
+          symbol,
+          signalType: 'AI_PICK',
+          sourceDate,
+          entryPrice: 100,
+          stopLoss: 90,
+          target: 120,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+          stopType: 'fixed',
+        },
+        db,
+      );
+    }
+
+    it('persists PRICED for the expected session and avoids weekend false positives', () => {
+      seedNifty(friday);
+      seedPricingTrade('FRESH');
+      upsertQuotes([q('FRESH', friday, 100, 105, 95, 102)], db);
+
+      runEvaluatePaperTrades('2026-07-12', db, { skipAi: true });
+
+      expect(getOpenPaperTrades(db)[0]).toMatchObject({
+        pricingStatus: 'PRICED',
+        pricingStatusAsOf: '2026-07-12',
+        lastQuoteDate: friday,
+      });
+    });
+
+    it('keeps a missing-session trade OPEN and reports it as UNPRICED', () => {
+      seedNifty(friday, monday);
+      seedPricingTrade('KECL');
+      upsertQuotes([q('KECL', friday, 100, 105, 95, 102)], db);
+
+      const result = runEvaluatePaperTrades(monday, db, { skipAi: true });
+      const trade = getOpenPaperTrades(db)[0];
+
+      expect(trade).toMatchObject({
+        symbol: 'KECL',
+        status: 'OPEN',
+        pricingStatus: 'UNPRICED',
+        pricingStatusAsOf: monday,
+        lastQuoteDate: friday,
+      });
+      expect(result.unpriced).toBe(1);
+      expect(result.unpricedSymbols).toEqual(['KECL']);
+      const detail = result.unpricedDetails[0];
+      if (!detail) throw new Error('expected unpriced detail');
+      expect(formatUnpricedTradeWarning(detail)).toContain(
+        'KECL has no NSE quote for expected session 2026-07-13 (latest: 2026-07-10)',
+      );
+    });
+
+    it('records no latest quote when the symbol has never been priced', () => {
+      seedNifty(monday);
+      seedPricingTrade('NOQUOTE');
+
+      const result = runEvaluatePaperTrades(monday, db, { skipAi: true });
+
+      expect(result.skippedNoData).toBe(1);
+      expect(result.unpricedSymbols).toEqual(['NOQUOTE']);
+      expect(getOpenPaperTrades(db)[0]).toMatchObject({
+        status: 'OPEN',
+        pricingStatus: 'UNPRICED',
+        pricingStatusAsOf: monday,
+        lastQuoteDate: null,
+      });
+    });
+
+    it('returns an UNPRICED trade to PRICED when fresh quotes resume', () => {
+      seedNifty(friday, monday);
+      seedPricingTrade('RECOVER');
+      upsertQuotes([q('RECOVER', friday, 100, 105, 95, 102)], db);
+      runEvaluatePaperTrades(monday, db, { skipAi: true });
+
+      upsertQuotes([q('RECOVER', monday, 102, 108, 98, 106)], db);
+      const result = runEvaluatePaperTrades(monday, db, { skipAi: true });
+
+      expect(result.unpriced).toBe(0);
+      expect(getOpenPaperTrades(db)[0]).toMatchObject({
+        pricingStatus: 'PRICED',
+        pricingStatusAsOf: monday,
+        lastQuoteDate: monday,
+      });
+    });
+
+    it('processes available intermediate bars before applying quarantine', () => {
+      seedNifty(friday, monday);
+      seedPricingTrade('INTERMEDIATE');
+      upsertQuotes([q('INTERMEDIATE', friday, 100, 121, 95, 120)], db);
+
+      const result = runEvaluatePaperTrades(monday, db, { skipAi: true });
+
+      expect(result.closedWin).toBe(1);
+      expect(result.unpriced).toBe(0);
+      expect(getOpenPaperTrades(db)).toHaveLength(0);
     });
   });
 });
