@@ -158,7 +158,8 @@ export interface ComposeBriefingOptions {
   skipAi?: boolean;
   /**
    * Whether to admit new paper trades from theses and portfolio ADD actions.
-   * Default true. Set false for EOD Reconciliation Run to prevent new ledger rows.
+   * Default false. Set true for the scheduled Decision Run or when explicitly
+   * requested via CLI.
    */
   admitNewPaperTrades?: boolean;
   /** Weekend / NSE holiday — banner only; callers should also skip pipeline LLMs. */
@@ -227,7 +228,7 @@ export async function composeBriefing(
   const screenMatches = partialPipeline ? [] : gatherScreenMatches(date, db);
   const portfolio = partialPipeline ? undefined : gatherPortfolio(date, db);
 
-  const admitNew = opts.admitNewPaperTrades !== false;
+  const admitNew = opts.admitNewPaperTrades === true;
   let paperLog: PaperTradeRecordResult | undefined;
   if (admitNew) {
     paperLog = recordPaperTrades(date, theses, portfolio, db);
