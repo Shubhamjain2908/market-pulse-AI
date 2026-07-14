@@ -469,6 +469,32 @@ describe('briefing composer (Phase 3–4)', () => {
     expect(getOpenPaperTrades(db)).toHaveLength(0);
   });
 
+  it('surfaces the AI_PICK earnings blackout reason while retaining the thesis', async () => {
+    upsertSignals(
+      [
+        {
+          symbol: 'RELIANCE',
+          date: today,
+          name: 'mom_earnings_blackout',
+          value: 1,
+          source: 'momentum',
+        },
+      ],
+      db,
+    );
+
+    const result = await composeBriefing(
+      { date: today, watchlist: ['RELIANCE'], skipAi: true },
+      db,
+      llm,
+    );
+
+    expect(result.data.theses).toHaveLength(1);
+    expect(result.html).toContain('AI_PICK admission');
+    expect(result.html).toContain('RELIANCE — earnings blackout active');
+    expect(getOpenPaperTrades(db)).toHaveLength(0);
+  });
+
   it('shows holiday messaging when marketClosure is set', async () => {
     const result = await composeBriefing(
       {

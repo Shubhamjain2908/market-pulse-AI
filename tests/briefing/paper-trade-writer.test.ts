@@ -427,6 +427,9 @@ describe('recordPaperTrades', () => {
     const r = recordPaperTrades('2026-05-01', [aiPickThesisCard('NOGATE')], undefined, db);
     expect(r.insertedAiPick).toBe(0);
     expect(r.blockedAiPick).toBe(1);
+    expect(r.blockedAiPickDetails).toEqual([
+      { symbol: 'NOGATE', reasons: ['earnings_blackout_unknown'] },
+    ]);
     expect(mockInfo).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'ai_pick_blocked', symbol: 'NOGATE' }),
       'AI_PICK blocked by eligibility gate',
@@ -480,6 +483,37 @@ describe('recordPaperTrades', () => {
     `,
     ).run(symbol, date, JSON.stringify({ days_to_earnings: 7, atr_14: 3.2 }));
   }
+
+  it('keeps catalyst_entry exempt from the AI_PICK earnings blackout gate', () => {
+    seedCatalystScreen('CATEARN', '2026-05-01');
+    db.prepare(
+      `INSERT INTO signals (symbol, date, name, value, source)
+       VALUES ('CATEARN', '2026-05-01', 'mom_earnings_blackout', 1, 'test')`,
+    ).run();
+
+    const r = recordPaperTrades('2026-05-01', [catalystThesisCard('CATEARN')], undefined, db);
+
+    expect(r.insertedCatalystEntry).toBe(1);
+    expect(r.blockedAiPickDetails).toEqual([]);
+  });
+
+  it('does not insert an AI_PICK when earnings blackout is active', () => {
+    const date = '2026-07-06';
+    db.prepare(
+      `INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+       VALUES ('LTF', ?, 'volume_breakout', 1, '{}')`,
+    ).run(date);
+    db.prepare(
+      `INSERT INTO signals (symbol, date, name, value, source)
+       VALUES ('LTF', ?, 'mom_earnings_blackout', 1, 'test')`,
+    ).run(date);
+
+    const r = recordPaperTrades(date, [aiPickThesisCard('LTF')], undefined, db);
+
+    expect(r.insertedAiPick).toBe(0);
+    expect(r.blockedAiPickDetails).toEqual([{ symbol: 'LTF', reasons: ['earnings_blackout'] }]);
+    expect(getOpenPaperTrades(db)).toHaveLength(0);
+  });
 
   it('blocks catalyst_entry when another OPEN paper trade exists for the symbol', () => {
     seedCatalystScreen('CATBLK', '2026-05-01');

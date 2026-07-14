@@ -317,6 +317,35 @@ describe('evaluateAiPickEligibility', () => {
     expect(r.facts.momEarningsBlackoutFresh).toBe(true);
   });
 
+  it('earnings_blackout — blocks an otherwise valid Path B alert breakout', () => {
+    const sym = 'PATHB';
+    insertRegimeChoppy(SOURCE_DATE);
+    quote(sym, SOURCE_DATE, 105);
+    sig(sym, SOURCE_DATE, 'sma_50', 100);
+    sig(sym, SOURCE_DATE, 'sma_200', 90);
+    sig(sym, SOURCE_DATE, 'volume_ratio_20d', 2);
+    alert(sym, SOURCE_DATE, 'near_52w_high');
+    sig(sym, SOURCE_DATE, 'mom_earnings_blackout', 1);
+
+    const r = evaluateAiPickEligibility(sym, SOURCE_DATE, thesis(8), db);
+
+    expect(r.eligible).toBe(false);
+    expect(r.reasons).toEqual(['earnings_blackout']);
+  });
+
+  it('earnings_blackout — blocks an otherwise elite golden-cross candidate', () => {
+    seedBhelGoldenCrossElite(SOURCE_DATE);
+    db.prepare(
+      `UPDATE signals SET value = 1
+       WHERE symbol = 'BHEL' AND date = ? AND name = 'mom_earnings_blackout'`,
+    ).run(SOURCE_DATE);
+
+    const r = evaluateAiPickEligibility('BHEL', SOURCE_DATE, thesis(9), db);
+
+    expect(r.eligible).toBe(false);
+    expect(r.reasons).toEqual(['earnings_blackout']);
+  });
+
   it('earnings_blackout — missing signal blocks as unknown (fail-closed)', () => {
     insertRegimeChoppy(SOURCE_DATE);
     screen('NODATA', SOURCE_DATE, 'rsi_oversold_bounce');

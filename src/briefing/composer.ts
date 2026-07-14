@@ -236,6 +236,7 @@ export async function composeBriefing(
       paperLog.insertedPortfolioAdd > 0 ||
       paperLog.insertedCatalystEntry > 0 ||
       paperLog.crossStrategyBlocked > 0 ||
+      paperLog.blockedAiPick > 0 ||
       paperLog.blockedPortfolioAdd > 0
     ) {
       log.info(paperLog, 'paper trades recorded');
@@ -324,6 +325,20 @@ export async function composeBriefing(
   }
 
   const warnings: WarningEntry[] = [...(opts.warnings ?? [])];
+
+  for (const blocked of paperLog?.blockedAiPickDetails ?? []) {
+    const primaryReason = blocked.reasons[0];
+    const reason =
+      primaryReason === 'earnings_blackout'
+        ? 'earnings blackout active'
+        : primaryReason === 'earnings_blackout_unknown'
+          ? 'earnings blackout evidence unavailable or stale'
+          : (primaryReason?.replaceAll('_', ' ') ?? 'eligibility gate failed');
+    warnings.push({
+      category: 'AI_PICK admission',
+      message: `${blocked.symbol} — ${reason}. Research thesis retained; no paper trade created.`,
+    });
+  }
 
   const crossStrategyFromPaper = paperLog?.crossStrategyBlocked ?? 0;
   const crossStrategyFromMomentum = momentumSummary?.crossStrategyBlocked ?? 0;
