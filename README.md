@@ -605,6 +605,7 @@ Hard-null on `pe`, `pb`, `third_roe`, `latest_roce`, `debt_to_equity`, `peg`, `s
 
 - Same-day `quality_garp` screen → **## Quality-GARP context** append (sector from `symbols`, PEG from `matched_criteria`, moat / peer-comparison instructions).
 - If **`mom_false_flag === 1`**, addendum reminds **confidence ≤ 5** (same as momentum guardrail).
+- Stock-specific prompts and `context_refs` include only exact `news.symbol` matches. Untagged news and FII/DII flows remain outside stock context; market-wide flows are shown in Market Mood.
 
 **v2 backlog (not yet gated)**
 

@@ -111,6 +111,7 @@ describe('buildContextProvenance', () => {
           source: 'Moneycontrol',
           url: 'https://example.com/ril',
           publishedAt: '2026-06-30T10:00:00Z',
+          symbol: 'RELIANCE',
         },
       ],
       db,
@@ -118,6 +119,29 @@ describe('buildContextProvenance', () => {
     const refs = buildContextProvenance('RELIANCE', '2026-07-04', db);
     expect(refs.news.length).toBe(1);
     expect(refs.news[0]?.headline).toBe('RIL Q1 results beat estimates');
+  });
+
+  it('excludes untagged and other-symbol news from stock provenance', () => {
+    insertNews(
+      [
+        {
+          headline: 'Macro headline',
+          source: 'Moneycontrol',
+          url: 'https://example.com/macro',
+          publishedAt: '2026-06-30T10:00:00Z',
+        },
+        {
+          headline: 'TCS headline',
+          source: 'Moneycontrol',
+          url: 'https://example.com/tcs',
+          publishedAt: '2026-06-30T11:00:00Z',
+          symbol: 'TCS',
+        },
+      ],
+      db,
+    );
+
+    expect(buildContextProvenance('RELIANCE', '2026-07-04', db).news).toEqual([]);
   });
 
   it('ignores news outside the 7-day window', () => {

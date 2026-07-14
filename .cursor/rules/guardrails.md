@@ -8,7 +8,7 @@
 | **No duplicate ADD** | Symbol has ≥1 open paper trade → block ADD, output HOLD with note | `portfolio-analyser.ts` pre-check (newly added) |
 | **ADD pullback requirement** | ADD requires ≥1 ATR pullback from prior entry OR confirmed breakout on vol > 1.5× | Portfolio analyser system prompt Rule 9 (newly added) |
 | **Averaging-down disclosure** | If position at loss: state (a) % gain to breakeven, (b) whether stop allows recovery room | Portfolio analyser system prompt Rule 8 |
-| **No macro hallucination** | No FII/DII/USD/crude in stock-specific thesis unless directly tied to that stock's economics | All agent prompts |
+| **Stock-context provenance boundary** | Stock thesis and portfolio prompts receive only `news.symbol = analysed symbol`; untagged/other-symbol news and FII/DII flows are excluded in code. Market-wide flows remain in Market Mood. `buildContextProvenance` uses the identical symbol/date news filter. | `src/agents/thesis-generator.ts`, `src/agents/context-provenance.ts`, `src/briefing/composer.ts` |
 | **No financial hallucination** | Never invoke data not present in provided context | All agent prompts |
 | **Confidence range** | Full 1–10 scale. Strong tech + fundamentals = 7–8. Pure tech, weak fundamentals = 3–4. False momentum flag = max 5. Catalyst-event theses are hard-capped in code at max 6. | Thesis generator system prompt + post-LLM clamp |
 | **ETF/SGB RSI exclusion** | LIQUIDCASE, GOLDBEES, GOLDCASE, SILVERBEES, NIFTYBEES, JUNIORBEES, SGBs — skip RSI/volume signals entirely | `config/etf-exclusions.json` + portfolio analyser (newly added) |

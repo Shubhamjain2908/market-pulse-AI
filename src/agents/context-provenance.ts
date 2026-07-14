@@ -101,7 +101,7 @@ export function buildContextProvenance(
     .prepare(
       `SELECT headline, url, published_at AS publishedAt
        FROM news
-       WHERE (symbol = ? OR symbol IS NULL)
+       WHERE symbol = ?
          AND published_at >= datetime(?, '-7 days')
        ORDER BY published_at DESC LIMIT 10`,
     )
