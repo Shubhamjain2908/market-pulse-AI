@@ -14,8 +14,9 @@
 
 **Pipeline schedule:**
 - `8:30 AM IST Mon–Fri` — Kite OAuth auto-login (PM2 `kite-auth`; fail-open — logs only, pipeline still runs at 08:45)
-- `8:45 AM IST Mon–Fri` — Decision Run: full daily pipeline; may generate analysis and admit paper trades
+- `8:45 AM IST Mon–Fri` — Decision Run: full daily pipeline; may generate analysis and admit paper trades (`admitNewPaperTrades=true`)
 - `4:30 PM IST Mon–Fri` — EOD Reconciliation Run: refresh non-AI data, regime/screens, and existing-trade evaluation; `skipAi=true`, `admitNewPaperTrades=false`
+- Manual `pnpm daily`, `pnpm run-all`, `pnpm cli brief`, and `pnpm cli schedule --run-now` default `admitNewPaperTrades=false`; add `--admit-paper-trades` to opt in
 - `8:00 AM IST Sunday` — momentum rebalance job
 - `10:15 AM IST Mon–Fri` — healthcheck cron (email alert on failure)
 
