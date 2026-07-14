@@ -56,7 +56,7 @@ short, actionable briefing before market open.
 > single-command `pnpm daily` that runs the entire pipeline end-to-end and
 > produces a briefing with a "My Portfolio" section showing each
 > position's recommended action. Phase 4 adds croner scheduling
-> (08:45 / 16:30 weekdays, Sat 08:00 IST), Gmail SMTP delivery via
+> (08:45 Decision Run / 16:30 EOD Reconciliation Run weekdays, Sat 08:00 IST), Gmail SMTP delivery via
 > nodemailer, and stop-loss breach detection alerts. Earlier phases provide: a JSON-driven
 > screen engine, first-class watchlist alerts, a backtest harness, LLM
 > sentiment scoring, AI thesis generation, and an AI-composed HTML
@@ -227,7 +227,9 @@ pnpm cli portfolio-analyse -j 12    # override parallel calls for speed/tuning
 pnpm cli scan              # one-shot intraday LTP refresh + live alerts
                            # (cron every 5-15 min during market hours)
 pnpm cli schedule          # start built-in croner schedule (Asia/Kolkata):
-                           # weekdays 08:45 + 16:30, Saturday 08:00,
+                           # weekdays 08:45 Decision Run + 16:30 EOD Reconciliation,
+                           # EOD skips LLMs/new paper trades but refreshes data, screens, and evaluations
+                           # Saturday 08:00,
                            # Sunday 06:00 (Yahoo momentum earnings calendar),
                            # Sunday 07:30 (weekly DB cleanup: briefings 90d, signals 730d),
                            # Sunday 07:45 (COMEX gold COT via pnpm cot:gold),
@@ -406,8 +408,10 @@ To enable it:
    ```
    pnpm schedule
    ```
-   Starts recurring jobs at 08:45 / 16:30 on weekdays and 08:00 on
-   Saturdays (IST), using your configured delivery channel.
+   Starts a full **Decision Run** at 08:45, an **EOD Reconciliation Run** at
+   16:30 that refreshes non-AI data and evaluates existing trades without
+   admitting new ones, and a Saturday 08:00 run (IST), using your configured
+   delivery channel.
 
    **Kite token auto-login (Oracle VM only):** when your Kite redirect URL
    points at the same host as `kite-auth` (e.g. duckdns), the PM2 `kite-auth`

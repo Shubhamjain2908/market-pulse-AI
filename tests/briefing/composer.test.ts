@@ -435,6 +435,40 @@ describe('briefing composer (Phase 3–4)', () => {
     expect(result.html).not.toContain('--skip-ai');
   });
 
+  it('renders persisted theses without admitting trades during EOD reconciliation', async () => {
+    db.prepare(
+      `INSERT INTO screens (symbol, date, screen_name, score, matched_criteria)
+       VALUES ('RELIANCE', ?, 'rsi_oversold_bounce', 1, '{}')`,
+    ).run(today);
+    upsertSignals(
+      [
+        {
+          symbol: 'RELIANCE',
+          date: today,
+          name: 'mom_earnings_blackout',
+          value: 0,
+          source: 'momentum',
+        },
+      ],
+      db,
+    );
+
+    const result = await composeBriefing(
+      {
+        date: today,
+        watchlist: ['RELIANCE'],
+        skipAi: true,
+        admitNewPaperTrades: false,
+      },
+      db,
+      llm,
+    );
+
+    expect(result.data.theses).toHaveLength(1);
+    expect(result.html).toContain('RELIANCE');
+    expect(getOpenPaperTrades(db)).toHaveLength(0);
+  });
+
   it('shows holiday messaging when marketClosure is set', async () => {
     const result = await composeBriefing(
       {

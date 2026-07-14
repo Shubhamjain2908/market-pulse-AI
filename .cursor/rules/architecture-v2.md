@@ -14,7 +14,8 @@
 
 **Pipeline schedule:**
 - `8:30 AM IST Mon–Fri` — Kite OAuth auto-login (PM2 `kite-auth`; fail-open — logs only, pipeline still runs at 08:45)
-- `8:45 AM IST Mon–Fri` — full daily pipeline (PM2 `market-pulse` / `cli schedule`)
+- `8:45 AM IST Mon–Fri` — Decision Run: full daily pipeline; may generate analysis and admit paper trades
+- `4:30 PM IST Mon–Fri` — EOD Reconciliation Run: refresh non-AI data, regime/screens, and existing-trade evaluation; `skipAi=true`, `admitNewPaperTrades=false`
 - `8:00 AM IST Sunday` — momentum rebalance job
 - `10:15 AM IST Mon–Fri` — healthcheck cron (email alert on failure)
 
