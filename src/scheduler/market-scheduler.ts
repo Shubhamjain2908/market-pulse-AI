@@ -37,7 +37,14 @@ export interface SchedulerHandle {
 }
 
 export function scheduledWorkflowOptions(tag: string): DailyWorkflowOptions {
-  return tag === 'weekday-1630' ? { skipAi: true, admitNewPaperTrades: false } : {};
+  if (tag === 'weekday-1630') {
+    return { skipAi: true, admitNewPaperTrades: false };
+  }
+  if (tag === 'weekday-0845' || tag === 'sat-0800') {
+    return { admitNewPaperTrades: true };
+  }
+  // Defensive: unexpected tags behave like a non-admitting read-only run.
+  return { skipAi: true, admitNewPaperTrades: false };
 }
 
 export function startScheduler(): SchedulerHandle {

@@ -474,17 +474,21 @@ program
   .description('stage 4: compose + deliver the daily briefing')
   .option('--delivery <method>', "override delivery method ('file' | 'email')")
   .option('--skip-ai', 'skip LLM narrative generation in the briefing')
-  .action(async (opts: { delivery?: 'file' | 'email'; skipAi?: boolean }) => {
-    ensureDb();
-    const date = optionalCliIsoDate(program.opts().date);
-    const result = await runBriefingComposer({
-      date,
-      delivery: opts.delivery,
-      skipAi: opts.skipAi,
-    });
-    await deliverBriefing(result.html, result.date, opts.delivery ?? config.BRIEFING_DELIVERY);
-    closeDb();
-  });
+  .option('--admit-paper-trades', 'admit new paper trades (default false for manual safety)')
+  .action(
+    async (opts: { delivery?: 'file' | 'email'; skipAi?: boolean; admitPaperTrades?: boolean }) => {
+      ensureDb();
+      const date = optionalCliIsoDate(program.opts().date);
+      const result = await runBriefingComposer({
+        date,
+        delivery: opts.delivery,
+        skipAi: opts.skipAi,
+        admitNewPaperTrades: opts.admitPaperTrades,
+      });
+      await deliverBriefing(result.html, result.date, opts.delivery ?? config.BRIEFING_DELIVERY);
+      closeDb();
+    },
+  );
 
 program
   .command('evaluate')
@@ -502,12 +506,17 @@ program
   .command('run-all')
   .description('alias for daily: full workflow + portfolio sync + all pipeline stages + briefing')
   .option('--skip-ai', 'skip all LLM stages (sentiment, thesis, narrative)')
-  .action(async (opts: { skipAi?: boolean }) => {
+  .option(
+    '--admit-paper-trades',
+    'admit new paper trades during this run (default false for manual safety)',
+  )
+  .action(async (opts: { skipAi?: boolean; admitPaperTrades?: boolean }) => {
     ensureDb();
     const date = optionalCliIsoDate(program.opts().date) ?? isoDateIst();
     const result = await runDailyWorkflow({
       date,
       skipAi: opts.skipAi,
+      admitNewPaperTrades: opts.admitPaperTrades,
     });
     await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
     logger.info(
@@ -531,30 +540,37 @@ program
   .description('one-shot: full pipeline + portfolio sync + per-holding LLM analysis')
   .option('--skip-ai', 'skip all LLM stages (sentiment, thesis, portfolio analysis)')
   .option('--skip-portfolio', 'skip portfolio sync + analysis (rest of pipeline runs)')
-  .action(async (opts: { skipAi?: boolean; skipPortfolio?: boolean }) => {
-    ensureDb();
-    const date = optionalCliIsoDate(program.opts().date);
-    const result = await runDailyWorkflow({
-      date,
-      skipAi: opts.skipAi,
-      skipPortfolio: opts.skipPortfolio,
-    });
-    await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
-    logger.info(
-      {
-        date: result.date,
-        delivery: config.BRIEFING_DELIVERY,
-        portfolioCount: result.portfolioCount,
-        thesesCount: result.thesesCount,
-        screenMatchesCount: result.screenMatchesCount,
-        alertCount: result.alertCount,
-        holidayMode: result.holidayMode ?? false,
-        marketClosureLabel: result.marketClosureLabel,
-      },
-      'daily run complete',
-    );
-    closeDb();
-  });
+  .option(
+    '--admit-paper-trades',
+    'admit new paper trades during this run (default false for manual safety)',
+  )
+  .action(
+    async (opts: { skipAi?: boolean; skipPortfolio?: boolean; admitPaperTrades?: boolean }) => {
+      ensureDb();
+      const date = optionalCliIsoDate(program.opts().date);
+      const result = await runDailyWorkflow({
+        date,
+        skipAi: opts.skipAi,
+        skipPortfolio: opts.skipPortfolio,
+        admitNewPaperTrades: opts.admitPaperTrades,
+      });
+      await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
+      logger.info(
+        {
+          date: result.date,
+          delivery: config.BRIEFING_DELIVERY,
+          portfolioCount: result.portfolioCount,
+          thesesCount: result.thesesCount,
+          screenMatchesCount: result.screenMatchesCount,
+          alertCount: result.alertCount,
+          holidayMode: result.holidayMode ?? false,
+          marketClosureLabel: result.marketClosureLabel,
+        },
+        'daily run complete',
+      );
+      closeDb();
+    },
+  );
 
 program
   .command('kite-login')
@@ -629,7 +645,7 @@ program
   .action(async (opts: { runNow?: boolean }) => {
     ensureDb();
     if (opts.runNow) {
-      const now = await runDailyWorkflow();
+      const now = await runDailyWorkflow({ admitNewPaperTrades: false });
       await deliverBriefing(now.html, now.date, config.BRIEFING_DELIVERY);
       logger.info({ date: now.date }, 'initial run-now cycle complete');
       closeDb();
