@@ -501,7 +501,7 @@ describe('briefing composer (Phase 3–4)', () => {
     );
 
     const result = await composeBriefing(
-      { date: today, watchlist: ['RELIANCE'], skipAi: true },
+      { date: today, watchlist: ['RELIANCE'], skipAi: true, admitNewPaperTrades: true },
       db,
       llm,
     );

@@ -7,7 +7,10 @@ import {
   getTwoSessionsBackDate,
 } from '../../src/briefing/ai-pick-gate.js';
 import type { ThesisCard } from '../../src/briefing/template.js';
+import { config } from '../../src/config/env.js';
 import { closeDb, getDb, migrate } from '../../src/db/index.js';
+
+const originalRubricGate = config.AI_PICK_RUBRIC_GATE;
 
 const SOURCE_DATE = '2026-06-22';
 const SESSIONS = ['2026-06-17', '2026-06-18', '2026-06-19', '2026-06-22'];
@@ -21,6 +24,7 @@ describe('evaluateAiPickEligibility', () => {
   let db: ReturnType<typeof getDb>;
 
   beforeEach(() => {
+    config.AI_PICK_RUBRIC_GATE = '0';
     dbPath = join(tmpdir(), `mp-gate-${Date.now()}.db`);
     process.env.DATABASE_PATH = dbPath;
     db = getDb({ path: dbPath });
@@ -34,6 +38,7 @@ describe('evaluateAiPickEligibility', () => {
   });
 
   afterEach(() => {
+    config.AI_PICK_RUBRIC_GATE = originalRubricGate;
     db.close();
     closeDb();
     try {
