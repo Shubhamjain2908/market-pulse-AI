@@ -471,6 +471,22 @@ describe('briefing composer (Phase 3–4)', () => {
   });
 
   it('surfaces the AI_PICK earnings blackout reason while retaining the thesis', async () => {
+    upsertQuotes(
+      [
+        {
+          symbol: 'NIFTY_50',
+          exchange: 'NSE',
+          date: '2026-04-28',
+          open: 23800,
+          high: 23900,
+          low: 23750,
+          close: 23850,
+          volume: 0,
+          source: 'test',
+        },
+      ],
+      db,
+    );
     upsertSignals(
       [
         {

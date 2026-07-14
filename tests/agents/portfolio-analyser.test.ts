@@ -403,7 +403,8 @@ describe('portfolio analyser', () => {
     );
     const row = result.rows.find((r) => r.symbol === 'INFY');
     expect(row?.action).toBe('HOLD');
-    expect(row?.proposedAction).toBe('HOLD');
+    expect(row?.proposedAction).toBe('ADD');
+    expect(row?.actionOverrideReason).toContain('ADD blocked');
     expect(row?.triggerReason).toContain('ADD blocked');
     expect(row?.triggerReason).toContain('1 open trades for INFY');
   });
