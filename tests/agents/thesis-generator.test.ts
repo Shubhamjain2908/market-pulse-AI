@@ -11,7 +11,9 @@ import {
   closeDb,
   getDb,
   getThesesForDate,
+  insertNews,
   migrate,
+  upsertFiiDii,
   upsertHoldings,
   upsertQuotes,
   upsertSignals,
@@ -19,7 +21,13 @@ import {
 import { parseAndValidate } from '../../src/llm/json.js';
 import { MockLlmProvider } from '../../src/llm/providers/mock.js';
 import type { LlmJsonResult, LlmProvider } from '../../src/llm/types.js';
-import { type RawQuote, type Signal, ThesisSchema } from '../../src/types/domain.js';
+import {
+  type FiiDiiRow,
+  type NewsItem,
+  type RawQuote,
+  type Signal,
+  ThesisSchema,
+} from '../../src/types/domain.js';
 
 describe('thesis generator', () => {
   let dbPath: string;
@@ -370,6 +378,58 @@ describe('thesis generator', () => {
   it('omits screen matches section when no screens fired for the symbol', () => {
     const ctx = buildStockContext('RELIANCE', today, db, 'thesis');
     expect(ctx).not.toContain('## Screen matches today');
+  });
+
+  it('keeps stock context to symbol-tagged news and excludes market-wide flows', () => {
+    const news: NewsItem[] = [
+      {
+        headline: 'Reliance company update',
+        source: 'test',
+        url: 'https://example.com/reliance',
+        publishedAt: `${today}T10:00:00Z`,
+        symbol: 'RELIANCE',
+      },
+      {
+        headline: 'TCS company update',
+        source: 'test',
+        url: 'https://example.com/tcs',
+        publishedAt: `${today}T10:00:00Z`,
+        symbol: 'TCS',
+      },
+      {
+        headline: 'Generic macro update',
+        source: 'test',
+        url: 'https://example.com/macro',
+        publishedAt: `${today}T10:00:00Z`,
+      },
+    ];
+    const flows: FiiDiiRow[] = [
+      {
+        date: today,
+        segment: 'cash',
+        fiiBuy: 100,
+        fiiSell: 50,
+        fiiNet: 50,
+        diiBuy: 75,
+        diiSell: 25,
+        diiNet: 50,
+        source: 'test',
+      },
+    ];
+    insertNews(news, db);
+    upsertFiiDii(flows, db);
+
+    const ctx = buildStockContext('RELIANCE', today, db, 'thesis');
+
+    expect(ctx).toContain('Reliance company update');
+    expect(ctx).not.toContain('TCS company update');
+    expect(ctx).not.toContain('Generic macro update');
+    expect(ctx).not.toContain('FII/DII Activity');
+  });
+
+  it('explicitly forbids invented catalysts when symbol-tagged news is absent', () => {
+    const ctx = buildStockContext('RELIANCE', today, db, 'thesis');
+    expect(ctx).toContain('No symbol-tagged headlines in the window — do not invent company news.');
   });
 
   it('clamps confidenceScore to 6 for catalyst_entry context', async () => {

@@ -174,4 +174,40 @@ describe('regime_strategy_gate helpers', () => {
     expect(row?.regimeAge).toBe(3);
     db.close();
   });
+
+  it('same-date EOD reconciliation updates one row without incrementing regime age', () => {
+    const db = new Database(':memory:');
+    migrate(db);
+    const row = {
+      date: '2026-05-02',
+      regime: 'CHOPPY' as const,
+      scoreTotal: 0,
+      scoreTrend: 0,
+      scoreVix: 0,
+      scoreFii: 0,
+      scoreBreadth: 0,
+      vixValue: 18,
+      niftyVsSma200: 0,
+      fii20dNet: 0,
+      adRatio: 1,
+      pctAboveSma200: 50,
+      crisisOverride: false,
+      narrative: null,
+      prevRegime: 'BULL_TRENDING' as const,
+      regimeAge: 3,
+    };
+
+    insertRegimeRow(row, db);
+    insertRegimeRow({ ...row, scoreTotal: 1 }, db);
+
+    expect(
+      (
+        db.prepare('SELECT COUNT(*) AS count FROM regime_daily WHERE date = ?').get(row.date) as {
+          count: number;
+        }
+      ).count,
+    ).toBe(1);
+    expect(getTodayRegime(row.date, db)?.regimeAge).toBe(3);
+    db.close();
+  });
 });

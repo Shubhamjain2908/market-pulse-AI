@@ -13,7 +13,7 @@
 
 import { Cron } from 'croner';
 import { runBriefingComposer } from '../agents/briefing-composer.js';
-import { runDailyWorkflow } from '../agents/daily-workflow.js';
+import { type DailyWorkflowOptions, runDailyWorkflow } from '../agents/daily-workflow.js';
 import { runWeeklyCleanup } from '../agents/weekly-cleanup.js';
 import { deliverBriefing } from '../briefing/dispatch.js';
 import { config } from '../config/env.js';
@@ -34,6 +34,10 @@ const log = child({ component: 'market-scheduler' });
 
 export interface SchedulerHandle {
   stop: () => void;
+}
+
+export function scheduledWorkflowOptions(tag: string): DailyWorkflowOptions {
+  return tag === 'weekday-1630' ? { skipAi: true, admitNewPaperTrades: false } : {};
 }
 
 export function startScheduler(): SchedulerHandle {
@@ -150,6 +154,7 @@ async function runSundayMomentumRebalance(): Promise<void> {
     const briefing = await runBriefingComposer({
       date,
       skipAi: true,
+      admitNewPaperTrades: false,
       marketClosure: closure ?? undefined,
       momentumRebalanceSummary: summary,
       delivery: config.BRIEFING_DELIVERY,
@@ -224,9 +229,7 @@ async function runScheduledJob(tag: string): Promise<void> {
   try {
     // EOD Reconciliation Run (16:30): skip AI, do not admit new paper trades.
     // Decision Run (08:45) and Saturday: full workflow, backward-compatible defaults.
-    const isEod = tag === 'weekday-1630';
-    const opts = isEod ? { skipAi: true, admitNewPaperTrades: false } : {};
-    const result = await runDailyWorkflow(opts);
+    const result = await runDailyWorkflow(scheduledWorkflowOptions(tag));
     await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
     log.info(
       {

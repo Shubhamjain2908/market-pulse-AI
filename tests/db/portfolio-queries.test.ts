@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   closeDb,
   getDb,
+  getPortfolioAnalysisForDate,
   migrate,
   resolveBookValueInr,
   sumHoldingsBookValueInr,
   upsertHoldings,
+  upsertPortfolioAnalysis,
 } from '../../src/db/index.js';
 
 describe('portfolio-queries book value', () => {
@@ -93,5 +95,33 @@ describe('portfolio-queries book value', () => {
     );
 
     expect(resolveBookValueInr(db).bookValueInr).toBe(2200);
+  });
+
+  it('round-trips proposed and effective portfolio actions with the override reason', () => {
+    upsertPortfolioAnalysis(
+      [
+        {
+          symbol: 'SAIL',
+          date: '2026-07-14',
+          proposedAction: 'HOLD',
+          action: 'TRIM',
+          actionOverrideReason: 'Technical deterioration requires de-risking',
+          conviction: 0.7,
+          thesis: 'Underlying model analysis remains cautious.',
+          bullPoints: ['Valuation support'],
+          bearPoints: ['Weak momentum'],
+          triggerReason: 'Technical deterioration requires de-risking',
+          model: 'mock',
+        },
+      ],
+      db,
+    );
+
+    expect(getPortfolioAnalysisForDate('2026-07-14', db)[0]).toMatchObject({
+      symbol: 'SAIL',
+      proposedAction: 'HOLD',
+      action: 'TRIM',
+      actionOverrideReason: 'Technical deterioration requires de-risking',
+    });
   });
 });

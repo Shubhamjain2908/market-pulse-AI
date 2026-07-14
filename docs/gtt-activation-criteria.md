@@ -12,7 +12,6 @@ remains in observe-only mode until all gates pass.
 
 - At least **30 closed paper trades** with `source_date >= 2026-05-14` (post-fix cohort).
 - Evaluation is per `signal_type`, not pooled across types.
-- The cohort must contain trades from at least 2 distinct `signal_type` values.
 
 ### Gate 2: Positive Expectancy
 
@@ -37,9 +36,12 @@ remains in observe-only mode until all gates pass.
 
 ## Monitoring
 
-`deploy/healthcheck.ts` currently reports per-signal-type metrics on every run
-but does **not** enforce activation. See healthcheck logs for:
+`deploy/healthcheck.ts` currently reports per-signal-type metrics but does **not**
+enforce activation. Its output includes:
 
 - Post-fix closed trade counts per `signal_type`
-- Weighted and unweighted expectancy
-- Profit factor per signal type
+- Gross weighted and unweighted average `pnl_pct`
+- Hit rate
+
+Profit factor and the 20 bps post-cost adjustment remain manual activation checks
+until healthcheck explicitly implements them.

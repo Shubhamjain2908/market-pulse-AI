@@ -20,7 +20,7 @@ import {
   openSectorCounts,
   resolveSymbolSector,
 } from '../strategies/position-sizer.js';
-import { evaluateAiPickEligibility } from './ai-pick-gate.js';
+import { type AiPickBlockReason, evaluateAiPickEligibility } from './ai-pick-gate.js';
 import { getAtr14AtEntry, resolveAiPickStop } from './ai-pick-stop.js';
 import { parseInrPriceMidpoint } from './paper-trade-parsers.js';
 import type { PortfolioSummary, ThesisCard } from './template.js';
@@ -77,6 +77,10 @@ export interface PaperTradeRecordResult {
   /** Shadow: aggregate sector cap would block at next cohort boundary; insert still proceeds. */
   sectorCapExceeded: number;
   blockedAiPick: number;
+  blockedAiPickDetails: Array<{
+    symbol: string;
+    reasons: AiPickBlockReason[];
+  }>;
   blockedPortfolioAdd: number;
 }
 
@@ -150,6 +154,7 @@ export function recordPaperTrades(
   let crossStrategyBlocked = 0;
   let sectorCapExceeded = 0;
   let blockedAiPick = 0;
+  const blockedAiPickDetails: PaperTradeRecordResult['blockedAiPickDetails'] = [];
   let blockedPortfolioAdd = 0;
 
   const momentumCfg = loadMomentumConfig();
@@ -250,6 +255,7 @@ export function recordPaperTrades(
     const gate = evaluateAiPickEligibility(t.symbol, sourceDate, t, db);
     if (!gate.eligible) {
       blockedAiPick++;
+      blockedAiPickDetails.push({ symbol: t.symbol, reasons: gate.reasons });
       log.info(
         { event: 'ai_pick_blocked', symbol: t.symbol, reasons: gate.reasons, facts: gate.facts },
         'AI_PICK blocked by eligibility gate',
@@ -393,6 +399,7 @@ export function recordPaperTrades(
     crossStrategyBlocked,
     sectorCapExceeded,
     blockedAiPick,
+    blockedAiPickDetails,
     blockedPortfolioAdd,
   };
 }

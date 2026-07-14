@@ -56,7 +56,7 @@ short, actionable briefing before market open.
 > single-command `pnpm daily` that runs the entire pipeline end-to-end and
 > produces a briefing with a "My Portfolio" section showing each
 > position's recommended action. Phase 4 adds croner scheduling
-> (08:45 / 16:30 weekdays, Sat 08:00 IST), Gmail SMTP delivery via
+> (08:45 Decision Run / 16:30 EOD Reconciliation Run weekdays, Sat 08:00 IST), Gmail SMTP delivery via
 > nodemailer, and stop-loss breach detection alerts. Earlier phases provide: a JSON-driven
 > screen engine, first-class watchlist alerts, a backtest harness, LLM
 > sentiment scoring, AI thesis generation, and an AI-composed HTML
@@ -169,6 +169,8 @@ pnpm daily
 #    gated screen → sentiment → gated AI thesis → portfolio analysis → evaluate → HTML briefing
 # -> writes briefings/briefing-YYYY-MM-DD.html with regime card + "My Portfolio"
 #    section for every holding (HOLD / ADD / TRIM / EXIT + reason).
+#    Guardrail changes are explicit: Proposed Action → authoritative Effective Action,
+#    with the deterministic override reason and underlying analysis retained.
 
 # Variations
 pnpm daily --skip-portfolio   # skip the Kite branch entirely
@@ -227,7 +229,9 @@ pnpm cli portfolio-analyse -j 12    # override parallel calls for speed/tuning
 pnpm cli scan              # one-shot intraday LTP refresh + live alerts
                            # (cron every 5-15 min during market hours)
 pnpm cli schedule          # start built-in croner schedule (Asia/Kolkata):
-                           # weekdays 08:45 + 16:30, Saturday 08:00,
+                           # weekdays 08:45 Decision Run + 16:30 EOD Reconciliation,
+                           # EOD skips LLMs/new paper trades but refreshes data, screens, and evaluations
+                           # Saturday 08:00,
                            # Sunday 06:00 (Yahoo momentum earnings calendar),
                            # Sunday 07:30 (weekly DB cleanup: briefings 90d, signals 730d),
                            # Sunday 07:45 (COMEX gold COT via pnpm cot:gold),
@@ -406,8 +410,10 @@ To enable it:
    ```
    pnpm schedule
    ```
-   Starts recurring jobs at 08:45 / 16:30 on weekdays and 08:00 on
-   Saturdays (IST), using your configured delivery channel.
+   Starts a full **Decision Run** at 08:45, an **EOD Reconciliation Run** at
+   16:30 that refreshes non-AI data and evaluates existing trades without
+   admitting new ones, and a Saturday 08:00 run (IST), using your configured
+   delivery channel.
 
    **Kite token auto-login (Oracle VM only):** when your Kite redirect URL
    points at the same host as `kite-auth` (e.g. duckdns), the PM2 `kite-auth`
@@ -571,21 +577,20 @@ A **regime-gated**, long-horizon sleeve that combines Yahoo annual/snapshot fund
 | # | Gate | Fail semantics |
 |---|------|----------------|
 | 1 | Not on ETF/SGB exclusion list | Hard block |
-| 2 | Fundamentals row present | Hard block |
-| 3 | `pe` / `pb` non-null | Hard block |
-| 4 | **pe ≤ 35**, **pb ≤ 6** | Hard block |
-| 5 | **3-year ROE ≥ 18%** (`latest`, `prev`, `third` annual rows) | Hard block |
-| 6 | **latest ROCE ≥ 20%** | Hard block |
-| 7 | **debt_to_equity < 0.5** | Hard block |
-| 8 | **PEG < 1.2** (derived when Yahoo omits `trailingPegRatio`) | Hard block |
-| 9 | **RSI14 < threshold** (regime-aware: CHOPPY 45, BULL 55, BEAR 40, CRISIS 35) | Hard block |
-| 10 | **\|close − SMA50\| ≤ threshold** (regime-aware: CHOPPY 5%, BULL 8%, BEAR 3%, CRISIS 0%) | Hard block |
-| 11 | Promoter QoQ change | **Fail-open on NULL**; block only on active selling |
-| 12 | **Promoter pledge ≤ 15%** (`QUALITY_GARP_PLEDGE_GATE` gated — shadow by default) | **Fail-open on NULL**; hard block when gate active; shadow counter when disabled |
-| 13 | **Trailing 4-quarter OPM std-dev ≤ 5%** | **Fail-open on NULL** (<4 quarters of data); hard block when data exists and std-dev > 5% |
-| — | (Bonus) Quality Decay Score (QDS, post-gate) | **Fail-open on NULL** (<5 quarters); hard block ≤ 3; soft warn at 4; bypassed in CRISIS |
+| 2 | Fundamentals row with non-null `pe` / `pb` | Hard block (`no_fundamentals` / `valuation_null`) |
+| 3 | **pe ≤ 35**, **pb ≤ 6** | Hard block |
+| 4 | **3-year ROE ≥ 18%** (`latest`, `prev`, `third` annual rows) | Hard block |
+| 5 | **latest ROCE ≥ 20%** | Hard block |
+| 6 | **debt_to_equity < 0.5** | Hard block |
+| 7 | **PEG < 1.2** (derived when Yahoo omits `trailingPegRatio`) | Hard block (`peg_null` / `peg`) |
+| 8 | **RSI14 < threshold** (regime-aware: CHOPPY 45, BULL 55, BEAR 40, CRISIS 35) | Hard block |
+| 9 | **\|close − SMA50\| ≤ threshold** (regime-aware: CHOPPY 5%, BULL 8%, BEAR 3%, CRISIS 0%) | Hard block |
+| 10 | Promoter QoQ change | **Fail-open on NULL**; block only on active selling |
+| 11 | **Promoter pledge ≤ 15%** (`QUALITY_GARP_PLEDGE_GATE` gated — shadow by default) | **Fail-open on NULL**; hard block when gate active; shadow counter when disabled |
+| 12 | **Trailing 4-quarter OPM std-dev ≤ 5%** | **Fail-open on NULL** (<4 quarters of data); hard block when data exists and std-dev > 5% |
+| 13 | Quality Decay Score (QDS) | **Fail-open on NULL** (<5 quarters); hard block ≤ 3; soft warn at 4; bypassed in CRISIS |
 
-Note: The `QualityGarpFailGate` union has 15 values — the extra types (`valuation_null`, `peg_null`) are diagnostic/data-quality failure codes, not separate gates. The official gate count is `QUALITY_GARP_TOTAL_GATES = 13`.
+Note: The `QualityGarpFailGate` union has 15 values because gates 2 and 7 each expose separate missing-data and threshold failure codes. The official scoring denominator remains `QUALITY_GARP_TOTAL_GATES = 13`.
 
 Hard-null on `pe`, `pb`, `third_roe`, `latest_roce`, `debt_to_equity`, `peg`, `sma_50`, `close` blocks the symbol (guardrail). ETF list enforced; **no** `alreadyOwned` filter on the screener itself (thesis generator still skips held / open-paper symbols).
 
@@ -599,6 +604,7 @@ Hard-null on `pe`, `pb`, `third_roe`, `latest_roce`, `debt_to_equity`, `peg`, `s
 
 - Same-day `quality_garp` screen → **## Quality-GARP context** append (sector from `symbols`, PEG from `matched_criteria`, moat / peer-comparison instructions).
 - If **`mom_false_flag === 1`**, addendum reminds **confidence ≤ 5** (same as momentum guardrail).
+- Stock-specific prompts and `context_refs` include only exact `news.symbol` matches. Untagged news and FII/DII flows remain outside stock context; market-wide flows are shown in Market Mood.
 
 **v2 backlog (not yet gated)**
 
@@ -799,7 +805,7 @@ Holiday dates live in [`src/market/nse-calendar.ts`](src/market/nse-calendar.ts)
 | 5     | Real-time + Kite     | ✅ shipped    | Kite Connect HTTP client + interactive login; portfolio sync + per-holding LLM HOLD/ADD/TRIM/EXIT analyser; intraday LTP scanner; 4 new screens; single-command `pnpm daily` |
 | 6     | Market regime filter | ✅ shipped    | `regime_daily` + `regime_strategy_gate`; signal enricher + deterministic classifier; regime agent + briefing card; gated screens + gated AI thesis; seed/config via `strategy-gates.json` |
 | —     | Momentum screener (multi-factor) | ✅ shipped | `momentum-config.json` / `momentum-universe.json`; `mom_*` signals + ranker + rebalance → `paper_trades` (`momentum_mf`); merged latest-per-name signal map; thesis snapshot + confidence cap when false-flag; portfolio guardrails; **`momentum-card`** + Sunday **`--brief`** / scheduler delivery |
-| —     | Quality-GARP screener (`quality_garp`) | ✅ shipped (v1) | `getQualityGarpFundamentals` + 8-gate dispatcher in `stock-screener.ts`; regime gates (CHOPPY 0.75×); thesis Quality-GARP context; `tests/analysers/stock-screener.test.ts` |
+| —     | Quality-GARP screener (`quality_garp`) | ✅ shipped (v1) | `getQualityGarpFundamentals` + 13-gate dispatcher in `quality-garp-screen.ts`; regime gates (CHOPPY 0.75×); thesis Quality-GARP context; `tests/analysers/stock-screener.test.ts` |
 | —     | Adaptive trailing stops (paper trades) | ✅ shipped | Migrations `0007`/`0008`/`0016` (`stop_type`); `runEvaluatePaperTrades` + `trailing_stop_log` (trailing only); briefing **Paper trades · trailing stops** (above regime); optional LLM post-mortem on `STOPPED_OUT`; fixed path for `catalyst_entry`; tests in `tests/scripts/evaluate-trades.test.ts` + `tests/briefing/trailing-stop-card.test.ts` |
 | —     | Catalyst-driven entry (`catalyst_entry`) | ✅ shipped | `catalyst-screener` + stock-screener dispatcher; regime gates in `strategy-gates.json`; thesis catalyst context + confidence ≤ 6; fixed-stop paper trades; `tests/analysers/catalyst-screener.test.ts` |
 
@@ -815,7 +821,8 @@ See [`docs/gtt-activation-criteria.md`](docs/gtt-activation-criteria.md) for the
 
 ### MCP Server After DB Sync
 
-After replacing `data/market-pulse.db` (e.g., via `sync-db-to-vm.sh` or manual restore),
+After replacing `data/market-pulse.db` (for example with
+`deploy/sync-db-to-vm.example.sh`) or performing a manual restore,
 restart or reconnect the SQLite MCP server so it releases the previous file handle.
 Failure to do so may result in stale data being served.
 
