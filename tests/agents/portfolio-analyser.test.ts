@@ -141,6 +141,8 @@ describe('portfolio analyser', () => {
 
     const infy = persisted.find((p) => p.symbol === 'INFY');
     expect(infy?.action).toBe('HOLD');
+    expect(infy?.proposedAction).toBe('HOLD');
+    expect(infy?.actionOverrideReason).toBeNull();
     expect(infy?.bullPoints.length).toBeGreaterThan(0);
     expect(infy?.bearPoints.length).toBeGreaterThan(0);
     expect(infy?.pnlPct).toBe(8);
@@ -179,6 +181,8 @@ describe('portfolio analyser', () => {
     const result = await analysePortfolio({ date, symbols: ['INFY'] }, db, llm);
     const infy = result.rows.find((r) => r.symbol === 'INFY');
     expect(infy?.action).toBe('HOLD');
+    expect(infy?.proposedAction).toBe('ADD');
+    expect(infy?.actionOverrideReason).toContain('volume_ratio');
     expect(infy?.triggerReason).toContain('volume_ratio');
   });
 
@@ -188,6 +192,8 @@ describe('portfolio analyser', () => {
     const result = await analysePortfolio({ date, symbols: ['INFY'] }, db, llm);
     const infy = result.rows.find((r) => r.symbol === 'INFY');
     expect(infy?.action).toBe('HOLD');
+    expect(infy?.proposedAction).toBe('ADD');
+    expect(infy?.actionOverrideReason).toContain('Guardrail');
     expect(infy?.triggerReason).toContain('Guardrail');
   });
 
@@ -263,6 +269,8 @@ describe('portfolio analyser', () => {
     expect(infy?.thesis).toBe('Skipped: stale portfolio holdings');
     expect(infy?.triggerReason).toContain('STALE_HOLDINGS');
     expect(infy?.triggerReason).toContain(staleAsOf);
+    expect(infy?.proposedAction).toBe('HOLD');
+    expect(infy?.actionOverrideReason).toBeNull();
     expect(infy?.bullPoints).toEqual([]);
     expect(infy?.bearPoints).toEqual([]);
 
@@ -395,6 +403,7 @@ describe('portfolio analyser', () => {
     );
     const row = result.rows.find((r) => r.symbol === 'INFY');
     expect(row?.action).toBe('HOLD');
+    expect(row?.proposedAction).toBe('HOLD');
     expect(row?.triggerReason).toContain('ADD blocked');
     expect(row?.triggerReason).toContain('1 open trades for INFY');
   });

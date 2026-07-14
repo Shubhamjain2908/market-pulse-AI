@@ -99,6 +99,8 @@ export interface PortfolioPositionCard {
   technicalSummary?: string | null;
   /** What the LLM originally proposed before guardrail escalation — null when unchanged. */
   proposedAction?: string | null;
+  /** Deterministic reason when Proposed Action differs from Effective Action. */
+  actionOverrideReason?: string | null;
 }
 
 export interface PortfolioRiskRollup {
@@ -577,16 +579,16 @@ function renderPositionCard(c: PortfolioPositionCard): string {
       ? ''
       : ` <span class="day-chip ${c.dayChangePct >= 0 ? 'positive' : 'negative'}">${signedPct(c.dayChangePct)} today</span>`;
   const actionChip = c.action
-    ? `<span class="action-chip ${c.action.toLowerCase()}">${c.action}</span> `
+    ? `<span class="action-chip ${c.action.toLowerCase()}">Effective: ${esc(c.action)}</span> `
     : '';
   const proposedChip =
     c.proposedAction && c.proposedAction !== c.action
-      ? `<span class="proposed-badge" title="LLM originally proposed ${c.proposedAction} — guardrail escalated to ${c.action}">proposed: ${c.proposedAction}</span> `
+      ? `<span class="proposed-badge">Proposed: ${esc(c.proposedAction)}</span> `
       : '';
 
   const headline = `<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" class="email-layout position-header-table"><tr>
       <td valign="top" style="width:50%;padding:0 8px 0 0;"><strong>${esc(c.symbol)}</strong><span class="muted"> · ${c.qty.toFixed(0)} qty @ ₹${c.avgPrice.toFixed(2)}</span></td>
-      <td valign="top" align="right" style="width:50%;padding:0 0 0 8px;">${proposedChip}${actionChip}<span class="${pnlClass}">${pnl}</span>${dayChip}</td>
+      <td valign="top" align="right" style="width:50%;padding:0 0 0 8px;">${actionChip}${proposedChip}<span class="${pnlClass}">${pnl}</span>${dayChip}</td>
     </tr></table>`;
 
   const tech =
@@ -594,7 +596,13 @@ function renderPositionCard(c: PortfolioPositionCard): string {
       ? `<p class="position-tech">${esc(c.technicalSummary)}</p>`
       : '';
 
-  const thesis = c.thesis ? `<p class="position-thesis">${esc(c.thesis)}</p>` : '';
+  const override =
+    c.proposedAction && c.action && c.proposedAction !== c.action
+      ? `<p class="position-override"><strong>System override:</strong> Proposed ${esc(c.proposedAction)} → Effective ${esc(c.action)}<br><span class="muted">Reason:</span> ${esc(c.actionOverrideReason ?? c.triggerReason ?? 'deterministic portfolio guardrail')}</p>`
+      : '';
+  const thesis = c.thesis
+    ? `<p class="position-thesis">${override ? '<span class="muted">Underlying analysis:</span> ' : ''}${esc(c.thesis)}</p>`
+    : '';
   const trigger = c.triggerReason
     ? `<p class="position-trigger"><span class="muted">Review:</span> ${esc(c.triggerReason)}</p>`
     : '';
@@ -614,6 +622,7 @@ function renderPositionCard(c: PortfolioPositionCard): string {
     <div class="position-card" style="display:block;width:100%;max-width:100%;box-sizing:border-box;margin:0;border:1px solid ${t.border};border-radius:8px;background:#fafbfd;padding:14px;">
       ${headline}
       ${tech}
+      ${override}
       ${thesis}
       ${trigger}
       ${pointsTable}

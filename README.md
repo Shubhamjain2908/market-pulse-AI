@@ -169,6 +169,8 @@ pnpm daily
 #    gated screen → sentiment → gated AI thesis → portfolio analysis → evaluate → HTML briefing
 # -> writes briefings/briefing-YYYY-MM-DD.html with regime card + "My Portfolio"
 #    section for every holding (HOLD / ADD / TRIM / EXIT + reason).
+#    Guardrail changes are explicit: Proposed Action → authoritative Effective Action,
+#    with the deterministic override reason and underlying analysis retained.
 
 # Variations
 pnpm daily --skip-portfolio   # skip the Kite branch entirely

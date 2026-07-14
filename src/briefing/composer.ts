@@ -752,6 +752,7 @@ function gatherPortfolio(date: string, db: DatabaseType): PortfolioSummary | und
       suggestedStop: a?.suggestedStop ?? null,
       suggestedTarget: a?.suggestedTarget ?? null,
       proposedAction: a?.proposedAction ?? null,
+      actionOverrideReason: a?.actionOverrideReason ?? null,
       technicalSummary: technicalSummaryLine(h.symbol, date, db),
     };
   });

@@ -494,7 +494,8 @@ function buildAllocationCarryRow(
     pnlPct: h.pnlPct ?? null,
     model: 'none',
     raw: null,
-    proposedAction: null,
+    proposedAction: 'HOLD',
+    actionOverrideReason: null,
   };
 }
 
@@ -555,7 +556,8 @@ function buildLitePortfolioRow(
     pnlPct: h.pnlPct ?? null,
     model: 'lite-snapshot-v1',
     raw: null,
-    proposedAction: proposedAction !== shadowed.action ? proposedAction : null,
+    proposedAction,
+    actionOverrideReason: proposedAction !== shadowed.action ? shadowed.triggerReason : null,
   };
 }
 
@@ -639,7 +641,8 @@ async function analyseOne(
     pnlPct: h.pnlPct ?? null,
     model: llm.model,
     raw: result.raw,
-    proposedAction: proposedAction !== shadowed.action ? proposedAction : null,
+    proposedAction,
+    actionOverrideReason: proposedAction !== shadowed.action ? shadowed.triggerReason : null,
   };
 }
 
@@ -770,6 +773,7 @@ function buildStaleKiteHoldingsRows(
     pnlPct: h.pnlPct ?? null,
     model: 'none',
     raw: null,
-    proposedAction: null,
+    proposedAction: 'HOLD',
+    actionOverrideReason: null,
   }));
 }

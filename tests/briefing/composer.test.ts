@@ -13,6 +13,7 @@ import {
   migrate,
   upsertFiiDii,
   upsertHoldings,
+  upsertPortfolioAnalysis,
   upsertQuotes,
   upsertSignals,
   upsertThesis,
@@ -645,6 +646,55 @@ describe('briefing composer (Phase 3–4)', () => {
 
     const result = await composeBriefing({ date: today, watchlist: ['RELIANCE'] }, db, llm);
     expect(result.data.news.some((n) => n.symbol === 'RELIANCE')).toBe(true);
+  });
+
+  it('explains Proposed to Effective Action overrides in the portfolio card', async () => {
+    upsertHoldings(
+      [
+        {
+          symbol: 'SAIL',
+          exchange: 'NSE',
+          asOf: today,
+          qty: 10,
+          avgPrice: 100,
+          lastPrice: 95,
+          source: 'manual',
+        },
+      ],
+      db,
+    );
+    upsertPortfolioAnalysis(
+      [
+        {
+          symbol: 'SAIL',
+          date: today,
+          proposedAction: 'HOLD',
+          action: 'TRIM',
+          actionOverrideReason: 'Quality deterioration requires de-risking',
+          conviction: 0.7,
+          thesis: 'Wait for operating performance to stabilise.',
+          bullPoints: ['Valuation support'],
+          bearPoints: ['Weak quality trend'],
+          triggerReason: 'Quality deterioration requires de-risking',
+          model: 'mock',
+        },
+      ],
+      db,
+    );
+
+    const result = await composeBriefing(
+      { date: today, skipAi: true, admitNewPaperTrades: false },
+      db,
+      llm,
+    );
+
+    expect(result.html).toContain('System override:');
+    expect(result.html).toContain('Proposed HOLD → Effective TRIM');
+    expect(result.html).toContain('Reason:</span> Quality deterioration requires de-risking');
+    expect(result.html).toContain('Underlying analysis:');
+    expect(result.html.indexOf('Effective: TRIM')).toBeLessThan(
+      result.html.indexOf('Proposed: HOLD'),
+    );
   });
 
   it('classifies ETF/SGB sectors in portfolio risk rollup', async () => {
