@@ -85,10 +85,8 @@ export interface DailyWorkflowOptions {
   skipPortfolio?: boolean;
   /**
    * Whether to admit new paper trades during this run.
-   * Default true (backward-compatible). Set false for EOD Reconciliation Run
-   * to prevent new ledger rows from being created.
-   * When false, thesis, concall analysis, and portfolio analysis are also skipped
-   * (no LLM calls to generate admission candidates).
+   * Default false (safe manual caller default). Set true for the scheduled
+   * Decision Run to create new paper trades. Independent of `skipAi`.
    */
   admitNewPaperTrades?: boolean;
 }
@@ -196,8 +194,8 @@ export async function runDailyWorkflow(
   const warnings: WarningEntry[] = [];
   let budgetExceeded = false;
 
-  const admitNew = opts.admitNewPaperTrades !== false;
-  const shouldRunLlmStages = !opts.skipAi && admitNew;
+  const admitNew = opts.admitNewPaperTrades === true;
+  const shouldRunLlmStages = !opts.skipAi;
 
   if (shouldRunLlmStages) {
     startRunBudget(date, config.LLM_RUN_BUDGET_USD);
