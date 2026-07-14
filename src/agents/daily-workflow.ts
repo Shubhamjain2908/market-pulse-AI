@@ -141,6 +141,7 @@ export async function runDailyWorkflow(
       briefing = await runBriefingComposer({
         date,
         skipAi: true,
+        admitNewPaperTrades: false,
         marketClosure: closure,
         delivery: config.BRIEFING_DELIVERY,
       });
@@ -191,8 +192,6 @@ export async function runDailyWorkflow(
   let budgetExceeded = false;
 
   const admitNew = opts.admitNewPaperTrades !== false;
-  // Both skipAi AND admitNewPaperTrades must be false (or unset) to run LLM stages.
-  // At EOD (skipAi=true, admitNewPaperTrades=false), LLM stages are skipped.
   const shouldRunLlmStages = !opts.skipAi && admitNew;
 
   if (shouldRunLlmStages) {
@@ -512,7 +511,7 @@ export async function runDailyWorkflow(
         }
       }
 
-      if (shouldRunLlmStages && config.CONCALL_ANALYSIS_ENABLED === '1') {
+      if (config.CONCALL_ANALYSIS_ENABLED === '1') {
         recordPipelineStage({ runDate, stage: 'concall-analysis', status: 'started' }, db);
         try {
           const concallResult = await analyseConcallTranscripts({}, db);
@@ -554,7 +553,7 @@ export async function runDailyWorkflow(
         }
       }
 
-      if (!opts.skipPortfolio && admitNew) {
+      if (!opts.skipPortfolio) {
         recordPipelineStage({ runDate, stage: 'portfolio-analysis', status: 'started' }, db);
         try {
           const portfolioResult = await analysePortfolio({ date });

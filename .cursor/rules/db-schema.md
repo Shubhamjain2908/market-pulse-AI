@@ -304,7 +304,9 @@ CREATE INDEX idx_portfolio_holdings_as_of ON portfolio_holdings(as_of DESC);
 CREATE TABLE portfolio_analysis (
   symbol         TEXT NOT NULL,
   date           TEXT NOT NULL,      -- briefing date this analysis is for
-  action         TEXT NOT NULL,      -- 'HOLD' | 'ADD' | 'TRIM' | 'EXIT'
+  action         TEXT NOT NULL,      -- Effective Action: 'HOLD' | 'ADD' | 'TRIM' | 'EXIT'
+  proposed_action TEXT,              -- pre-guardrail Proposed Action (same enum)
+  action_override_reason TEXT,       -- deterministic explanation when proposed != effective
   conviction     REAL NOT NULL,      -- 0..1, model's confidence
   thesis         TEXT NOT NULL,      -- 2-3 sentence narrative
   bull_points    TEXT NOT NULL,      -- JSON array of strings

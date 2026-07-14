@@ -150,8 +150,10 @@ export interface PortfolioAnalysisRow {
   pnlPct?: number | null;
   model: string;
   raw?: string | null;
-  /** What the LLM originally proposed before portfolio guardrails modified it. */
-  proposedAction?: string | null;
+  /** Action before deterministic guardrails. */
+  proposedAction: PortfolioAnalysisRow['action'];
+  /** Deterministic explanation when proposedAction differs from action. */
+  actionOverrideReason?: string | null;
 }
 
 export function upsertPortfolioAnalysis(
@@ -163,11 +165,11 @@ export function upsertPortfolioAnalysis(
     INSERT INTO portfolio_analysis (
       symbol, date, action, conviction, thesis, bull_points, bear_points,
       trigger_reason, suggested_stop, suggested_target, pnl_pct, model, raw_response,
-      proposed_action
+      proposed_action, action_override_reason
     ) VALUES (
       @symbol, @date, @action, @conviction, @thesis, @bullPoints, @bearPoints,
       @triggerReason, @suggestedStop, @suggestedTarget, @pnlPct, @model, @raw,
-      @proposedAction
+      @proposedAction, @actionOverrideReason
     )
     ON CONFLICT(symbol, date) DO UPDATE SET
       action           = excluded.action,
@@ -181,7 +183,8 @@ export function upsertPortfolioAnalysis(
       pnl_pct          = excluded.pnl_pct,
       model            = excluded.model,
       raw_response     = excluded.raw_response,
-      proposed_action  = excluded.proposed_action
+      proposed_action        = excluded.proposed_action,
+      action_override_reason = excluded.action_override_reason
   `);
   const tx = db.transaction((batch: PortfolioAnalysisRow[]) => {
     for (const r of batch) {
@@ -199,7 +202,8 @@ export function upsertPortfolioAnalysis(
         pnlPct: r.pnlPct ?? null,
         model: r.model,
         raw: r.raw ?? null,
-        proposedAction: r.proposedAction ?? null,
+        proposedAction: r.proposedAction,
+        actionOverrideReason: r.actionOverrideReason ?? null,
       });
     }
   });
@@ -218,7 +222,8 @@ export function getPortfolioAnalysisForDate(
              trigger_reason AS triggerReason, suggested_stop AS suggestedStop,
              suggested_target AS suggestedTarget, pnl_pct AS pnlPct,
              model, raw_response AS raw,
-             proposed_action AS proposedAction
+             proposed_action AS proposedAction,
+             action_override_reason AS actionOverrideReason
       FROM portfolio_analysis
       WHERE date = ?
       ORDER BY conviction DESC, symbol

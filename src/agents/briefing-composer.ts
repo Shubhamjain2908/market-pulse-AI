@@ -57,6 +57,7 @@ export async function runBriefingComposer(opts: BriefRunOptions = {}): Promise<B
   const composed = await composeBriefing({
     date,
     skipAi: opts.skipAi,
+    admitNewPaperTrades: opts.admitNewPaperTrades,
     marketClosure: opts.marketClosure,
     thesisRun: opts.thesisRun,
     momentumRebalanceSummary: opts.momentumRebalanceSummary,

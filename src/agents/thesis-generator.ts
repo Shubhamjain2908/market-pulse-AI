@@ -849,8 +849,7 @@ export type StockContextVariant = 'thesis' | 'portfolio';
 
 /**
  * Assembles LLM-readable context for one symbol.
- * - `thesis`: includes broad news (symbol + untagged) and FII/DII flows.
- * - `portfolio`: stock-specific news only; omits FII/DII (macro belongs in Market Mood).
+ * Both variants receive symbol-tagged company news only; market-wide flows belong in Market Mood.
  */
 export function buildStockContext(
   symbol: string,
@@ -957,29 +956,6 @@ export function buildStockContext(
       sections.push(
         `Fired screens for ${symbol.toUpperCase()} on ${date}: ${firedScreens.map((s) => s.screenName).join(', ')}.`,
       );
-    }
-
-    const fiiDii = db
-      .prepare(
-        `
-      SELECT date, segment, fii_net, dii_net FROM fii_dii
-      WHERE date <= ? ORDER BY date DESC LIMIT 5
-    `,
-      )
-      .all(date) as Array<{
-      date: string;
-      segment: string;
-      fii_net: number;
-      dii_net: number;
-    }>;
-
-    if (fiiDii.length > 0) {
-      sections.push('\n## FII/DII Activity (recent)');
-      for (const f of fiiDii) {
-        sections.push(
-          `${f.date} ${f.segment}: FII net ₹${f.fii_net.toFixed(0)}Cr, DII net ₹${f.dii_net.toFixed(0)}Cr`,
-        );
-      }
     }
 
     const extCtx = getExtSignalContext(db, symbol, date);
