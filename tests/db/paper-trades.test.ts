@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getDb, migrate } from '../../src/db/index.js';
 import {
   closePaperTrade,
+  getOpenPaperTrades,
   getPaperTradeStats,
+  hasOpenPaperTradeForSymbol,
   insertPaperTradeIfAbsent,
 } from '../../src/db/queries.js';
 
@@ -148,5 +150,46 @@ describe('paper_trades stats', () => {
 
     const stats = getPaperTradeStats({ days: 30, asOf: '2026-05-15' }, db);
     expect(stats.weightedExpectancyPct).toBeCloseTo((10 * 2 + -10 * 4) / 6, 6);
+  });
+
+  it('defaults new trades to PRICED and keeps UNPRICED trades in OPEN dedup', () => {
+    insertPaperTradeIfAbsent(
+      {
+        symbol: 'KECL',
+        signalType: 'AI_PICK',
+        sourceDate: '2026-07-10',
+        entryPrice: 100,
+        stopLoss: 90,
+        target: 120,
+        timeHorizon: 'medium',
+        maxHoldDays: 90,
+      },
+      db,
+    );
+
+    const trade = getOpenPaperTrades(db)[0];
+    expect(trade?.pricingStatus).toBe('PRICED');
+    db.prepare(
+      `UPDATE paper_trades
+       SET pricing_status = 'UNPRICED', pricing_status_as_of = '2026-07-13'
+       WHERE id = ?`,
+    ).run(trade?.id);
+
+    expect(hasOpenPaperTradeForSymbol('KECL', db)).toBe(true);
+    expect(
+      insertPaperTradeIfAbsent(
+        {
+          symbol: 'KECL',
+          signalType: 'AI_PICK',
+          sourceDate: '2026-07-10',
+          entryPrice: 100,
+          stopLoss: 90,
+          target: 120,
+          timeHorizon: 'medium',
+          maxHoldDays: 90,
+        },
+        db,
+      ),
+    ).toBe(false);
   });
 });

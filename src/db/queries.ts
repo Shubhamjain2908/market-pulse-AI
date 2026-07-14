@@ -1267,6 +1267,7 @@ export function getPromoterPledgeSnapshot(
 
 export type PaperTradeSignalType = 'AI_PICK' | 'PORTFOLIO_ADD' | 'momentum_mf' | 'catalyst_entry';
 export type PaperTradeStatus = 'OPEN' | 'CLOSED_WIN' | 'CLOSED_LOSS' | 'CLOSED_TIME';
+export type PaperTradePricingStatus = 'PRICED' | 'UNPRICED';
 export type PaperTradeHorizon = 'short' | 'medium' | 'long';
 export type PaperTradeStopType = 'trailing' | 'fixed';
 
@@ -1309,6 +1310,9 @@ export interface PaperTradeRow {
   stopRaisedToday: number | null;
   exitReason: ExitReason | null;
   positionWeightPct: number | null;
+  pricingStatus: PaperTradePricingStatus;
+  pricingStatusAsOf: string | null;
+  lastQuoteDate: string | null;
 }
 
 /** Insert if no row exists for (symbol, signal_type, source_date). Returns true when inserted. */
@@ -1361,36 +1365,16 @@ export function getOpenPaperTrades(db: DatabaseType = getDb()): PaperTradeRow[] 
            stop_type AS stopType,
            stop_raised_today AS stopRaisedToday,
            exit_reason AS exitReason,
-           position_weight_pct AS positionWeightPct
+           position_weight_pct AS positionWeightPct,
+           pricing_status AS pricingStatus,
+           pricing_status_as_of AS pricingStatusAsOf,
+           last_quote_date AS lastQuoteDate
     FROM paper_trades
     WHERE status = 'OPEN'
     ORDER BY source_date ASC, id ASC
   `,
     )
-    .all() as Array<{
-    id: number;
-    symbol: string;
-    signalType: PaperTradeSignalType;
-    sourceDate: string;
-    entryPrice: number;
-    stopLoss: number;
-    target: number;
-    timeHorizon: PaperTradeHorizon;
-    maxHoldDays: number;
-    status: PaperTradeStatus;
-    outcomeDate: string | null;
-    exitPrice: number | null;
-    pnlPct: number | null;
-    notes: string | null;
-    createdAt: string;
-    highestCloseSinceEntry: number | null;
-    atr14AtEntry: number | null;
-    trailingMultiplier: number | null;
-    stopType: PaperTradeStopType;
-    stopRaisedToday: number | null;
-    exitReason: ExitReason | null;
-    positionWeightPct: number | null;
-  }>;
+    .all() as PaperTradeRow[];
 
   return rows;
 }
@@ -1461,36 +1445,16 @@ export function getOpenPaperTradesForSignal(
            stop_type AS stopType,
            stop_raised_today AS stopRaisedToday,
            exit_reason AS exitReason,
-           position_weight_pct AS positionWeightPct
+           position_weight_pct AS positionWeightPct,
+           pricing_status AS pricingStatus,
+           pricing_status_as_of AS pricingStatusAsOf,
+           last_quote_date AS lastQuoteDate
     FROM paper_trades
     WHERE status = 'OPEN' AND signal_type = ?
     ORDER BY source_date ASC, id ASC
   `,
     )
-    .all(signalType) as Array<{
-    id: number;
-    symbol: string;
-    signalType: PaperTradeSignalType;
-    sourceDate: string;
-    entryPrice: number;
-    stopLoss: number;
-    target: number;
-    timeHorizon: PaperTradeHorizon;
-    maxHoldDays: number;
-    status: PaperTradeStatus;
-    outcomeDate: string | null;
-    exitPrice: number | null;
-    pnlPct: number | null;
-    notes: string | null;
-    createdAt: string;
-    highestCloseSinceEntry: number | null;
-    atr14AtEntry: number | null;
-    trailingMultiplier: number | null;
-    stopType: PaperTradeStopType;
-    stopRaisedToday: number | null;
-    exitReason: ExitReason | null;
-    positionWeightPct: number | null;
-  }>;
+    .all(signalType) as PaperTradeRow[];
 
   return rows;
 }

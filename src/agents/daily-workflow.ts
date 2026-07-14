@@ -23,8 +23,13 @@ import { ingestYahooSnapshots } from '../ingestors/yahoo-snapshot-ingestor.js';
 import { clearRunBudget, LlmBudgetExceededError, startRunBudget } from '../llm/index.js';
 import { child } from '../logger.js';
 import { getMarketClosure, isSundayIst } from '../market/nse-calendar.js';
+import { lastOpenOnOrBefore, previousOpenTradingDay } from '../market/trading-days.js';
 import { runMomentumRanker } from '../rankers/momentum-ranker.js';
-import { type EvaluateTradesResult, runEvaluatePaperTrades } from '../scripts/evaluate-trades.js';
+import {
+  type EvaluateTradesResult,
+  formatUnpricedTradeWarning,
+  runEvaluatePaperTrades,
+} from '../scripts/evaluate-trades.js';
 import { applyMomentumRegimeGateExits } from '../strategies/momentum-rebalance.js';
 import { type BriefRunResult, runBriefingComposer } from './briefing-composer.js';
 import { analyseConcallTranscripts } from './concall-analyser.js';
@@ -608,10 +613,27 @@ export async function runDailyWorkflow(
       runDate,
       stage: 'evaluate',
       policy: 'fatal',
-      work: () => runEvaluatePaperTrades(date, db, { skipAi: opts.skipAi }),
-      metadata: (result) => ({ evaluated: result.evaluated, closed: result.closed }),
+      work: () =>
+        runEvaluatePaperTrades(date, db, {
+          skipAi: opts.skipAi,
+          expectedSession: admitNew
+            ? (previousOpenTradingDay(date) ?? date)
+            : (lastOpenOnOrBefore(date) ?? date),
+        }),
+      metadata: (result) => ({
+        evaluated: result.evaluated,
+        closed: result.closed,
+        unpriced: result.unpriced,
+        unpricedSymbols: result.unpricedSymbols,
+      }),
     });
     log.info(paperEval, 'paper trade evaluation');
+    for (const detail of paperEval.unpricedDetails) {
+      warnings.push({
+        category: 'Paper trade pricing unavailable',
+        message: formatUnpricedTradeWarning(detail),
+      });
+    }
 
     let briefing: BriefRunResult;
     try {

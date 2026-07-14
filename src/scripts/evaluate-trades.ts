@@ -25,7 +25,9 @@ import {
 import {
   getAtr14,
   getLastEvaluatedBarDate,
+  getLatestPaperTradeQuoteDate,
   insertStopLog,
+  patchPaperTradePricingStatus,
   patchPaperTradeTrailing,
   resetStopRaisedTodayForOpenTrades,
 } from '../db/trailing-stop-queries.js';
@@ -33,7 +35,7 @@ import { isoDateIst, parseIsoDate } from '../ingestors/base/dates.js';
 import { child } from '../logger.js';
 import { NIFTY_BENCHMARK_SYMBOL } from '../market/benchmarks.js';
 import { pnlPctLong } from '../market/quote-change.js';
-import { nextOpenOnOrAfter } from '../market/trading-days.js';
+import { lastOpenOnOrBefore, nextOpenOnOrAfter } from '../market/trading-days.js';
 import type { ExitReason } from '../types/trailing-stop.js';
 import { GAP_DOWN_THROUGH_STOP_NOTE } from '../types/trailing-stop.js';
 import { applyDay1InitialStop, computeNewStop } from './trailing-stop-engine.js';
@@ -49,6 +51,8 @@ function lowerExclusiveIsoFromBarDate(barDate: string): string {
 export interface EvaluatePaperTradesOptions {
   /** When true, skip fire-and-forget LLM post-mortem on STOPPED_OUT (writes no narrative). */
   skipAi?: boolean;
+  /** Completed NSE session whose quote must exist. Explicit CLI runs default to `asOf`. */
+  expectedSession?: string;
 }
 
 export interface EvaluateTradesResult {
@@ -60,7 +64,28 @@ export interface EvaluateTradesResult {
   closedTime: number;
   stillOpen: number;
   skippedNoData: number;
+  unpriced: number;
+  unpricedSymbols: string[];
+  unpricedDetails: UnpricedTradeDetail[];
 }
+
+export interface UnpricedTradeDetail {
+  symbol: string;
+  expectedSession: string;
+  lastQuoteDate: string | null;
+}
+
+export function formatUnpricedTradeWarning(detail: UnpricedTradeDetail): string {
+  return `${detail.symbol} has no NSE quote for expected session ${detail.expectedSession} (latest: ${detail.lastQuoteDate ?? 'none'}). Trade remains OPEN; stops and targets were not evaluated for the missing session.`;
+}
+
+export type PaperTradeEvaluationResult =
+  | 'CLOSED_WIN'
+  | 'CLOSED_LOSS'
+  | 'CLOSED_TIME'
+  | 'no_data'
+  | 'still_open'
+  | 'unpriced';
 
 interface OhlcBar {
   date: string;
@@ -132,14 +157,28 @@ export function evaluateOnePaperTrade(
   db: DatabaseType,
   asOf: string,
   opts?: EvaluatePaperTradesOptions,
-): 'CLOSED_WIN' | 'CLOSED_LOSS' | 'CLOSED_TIME' | 'no_data' | 'still_open' {
+): PaperTradeEvaluationResult {
   const isFixedStop = trade.stopType === 'fixed';
+  const expectedSession = opts?.expectedSession ?? lastOpenOnOrBefore(asOf) ?? asOf;
+  const lastQuoteDate = getLatestPaperTradeQuoteDate(trade.symbol, expectedSession, db);
+  const isPriced = lastQuoteDate === expectedSession;
   const lastEvaluated = getLastEvaluatedBarDate(trade.id, db);
   const walkFrom = lastEvaluated ?? trade.sourceDate;
-  const bars = getSymbolBars(db, trade.symbol, walkFrom, asOf);
+  const bars = getSymbolBars(db, trade.symbol, walkFrom, expectedSession);
   if (bars.length === 0) {
-    // Caught up through `asOf` (idempotent re-eval) vs never had quotes in the entry window.
-    return lastEvaluated !== null ? 'still_open' : 'no_data';
+    patchPaperTradePricingStatus(
+      trade.id,
+      isPriced ? 'PRICED' : 'UNPRICED',
+      asOf,
+      lastQuoteDate,
+      db,
+    );
+    if (isPriced) return 'still_open';
+    return lastEvaluated === null ? 'no_data' : 'unpriced';
+  }
+
+  if (isPriced) {
+    patchPaperTradePricingStatus(trade.id, 'PRICED', asOf, lastQuoteDate, db);
   }
 
   const momentumCfg = loadMomentumConfig();
@@ -426,6 +465,10 @@ export function evaluateOnePaperTrade(
     persistOpenRow();
   }
 
+  if (!isPriced) {
+    patchPaperTradePricingStatus(trade.id, 'UNPRICED', asOf, lastQuoteDate, db);
+    return 'unpriced';
+  }
   return 'still_open';
 }
 
@@ -437,15 +480,22 @@ export function runEvaluatePaperTrades(
   resetStopRaisedTodayForOpenTrades(db);
 
   const open = getOpenPaperTrades(db);
+  const expectedSession = opts?.expectedSession ?? lastOpenOnOrBefore(asOf) ?? asOf;
   let closedWin = 0;
   let closedLoss = 0;
   let closedTime = 0;
   let skippedNoData = 0;
+  const unpricedDetails: UnpricedTradeDetail[] = [];
 
   for (const t of open) {
     const result = evaluateOnePaperTrade(t, db, asOf, opts);
-    if (result === 'no_data') {
-      skippedNoData++;
+    if (result === 'no_data' || result === 'unpriced') {
+      if (result === 'no_data') skippedNoData++;
+      unpricedDetails.push({
+        symbol: t.symbol,
+        expectedSession,
+        lastQuoteDate: getLatestPaperTradeQuoteDate(t.symbol, expectedSession, db),
+      });
     } else if (result === 'CLOSED_WIN') closedWin++;
     else if (result === 'CLOSED_LOSS') closedLoss++;
     else if (result === 'CLOSED_TIME') closedTime++;
@@ -463,5 +513,8 @@ export function runEvaluatePaperTrades(
     closedTime,
     stillOpen,
     skippedNoData,
+    unpriced: unpricedDetails.length,
+    unpricedSymbols: [...new Set(unpricedDetails.map((detail) => detail.symbol))],
+    unpricedDetails,
   };
 }
