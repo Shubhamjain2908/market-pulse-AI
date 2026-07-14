@@ -696,11 +696,13 @@ Legacy open trades with `trailing_multiplier = 2.0` in DB are normalized to the 
 - [`src/db/migrations/0007_adaptive_trailing_stop.sql`](src/db/migrations/0007_adaptive_trailing_stop.sql) — `paper_trades` trailing columns, `trailing_stop_log`, **`exit_reason`**
 - [`src/db/migrations/0008_trailing_stop_log_notes.sql`](src/db/migrations/0008_trailing_stop_log_notes.sql) — `trailing_stop_log.notes` (e.g. gap-down-through-stop tag)
 - [`src/db/migrations/0016_paper_trades_stop_type.sql`](src/db/migrations/0016_paper_trades_stop_type.sql) — **`stop_type`** `TEXT NOT NULL DEFAULT 'trailing'` (`'trailing' | 'fixed'`); existing OPEN rows stay on the trailing path without backfill
+- [`src/db/migrations/0030_pricing_status.sql`](src/db/migrations/0030_pricing_status.sql) — Pricing State (`PRICED` / `UNPRICED`), evaluation date, and latest NSE quote date; lifecycle `status` remains unchanged
 
 **Evaluation**
 
 - [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) + [`src/scripts/trailing-stop-engine.ts`](src/scripts/trailing-stop-engine.ts) — branches on **`stop_type`**: **trailing** path uses config-driven mults (no inline 2.0/1.5/15%), bar walk from `source_date` to `asOf`, **incremental resume** from the last `trailing_stop_log` bar (non-`STOPPED_OUT`), idempotent log inserts; **fixed** path skips trailing math/logs and evaluates persisted `stop_loss` / `target` / `max_hold_days` under the same **circuit-breaker envelope** (gap-down skips SL/TP; gap-up suppresses fake `highest_close` only); Day-1 ATR latch uses [`nextOpenOnOrAfter`](src/market/trading-days.ts) when `source_date` is a non-session day; prior-close / corp-action lookups via [`getPrevClose`](src/db/queries.ts) / [`hasCorporateActionInRange`](src/db/queries.ts); **`pnpm cli evaluate`** with **`--skip-ai`**
-- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` before briefing composition so same-run closures appear in the brief
+- Missing expected-session quotes do not silently freeze trades: available intermediate bars are processed first, then still-open rows become `UNPRICED`. They remain `OPEN`, block duplicate entry, and are never closed using stale prices. The 08:45 Decision Run checks the prior completed session; the 16:30 EOD Reconciliation Run checks the current session. Weekend/holiday explicit evaluations use the latest open NSE session; fresh quotes restore `PRICED`.
+- [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` before briefing composition so same-run closures appear in the brief; evaluate metadata and the warning banner list unpriced symbols with expected/latest quote dates
 
 **Briefing**
 
