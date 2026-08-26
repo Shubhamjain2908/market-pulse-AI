@@ -33,10 +33,11 @@ function perMillion(usd: number): number {
  * Sources: https://ai.google.dev/gemini-api/docs/pricing (Jun 2026).
  */
 export const MODEL_COST_USD_PER_TOKEN: Record<string, { input: number; output: number }> = {
-  // DeepSeek Tier (Alias mapping to V4 Flash pricing: $0.14 input / $0.28 output per 1M)
-  'deepseek-chat': { input: perMillion(0.14), output: perMillion(0.28) },
-  'deepseek-v4-flash': { input: perMillion(0.14), output: perMillion(0.28) },
-  'deepseek-v4-pro': { input: perMillion(1.74), output: perMillion(3.48) },
+  // DeepSeek Tier — off-peak rates (peak = 2x on weekdays 06:30-09:30 & 11:30-15:30 IST)
+  // https://api-docs.deepseek.com/quick_start/pricing/ (Aug 2026)
+  'deepseek-chat': { input: perMillion(0.22), output: perMillion(0.66) },
+  'deepseek-v4-flash': { input: perMillion(0.22), output: perMillion(0.66) },
+  'deepseek-v4-pro': { input: perMillion(0.66), output: perMillion(1.98) },
 
   // Gemini 3.x Tier ($2.00 input / $12.00 output per 1M)
   'gemini-3.1-pro-preview': { input: perMillion(2.0), output: perMillion(12.0) },
