@@ -1,6 +1,6 @@
 /**
  * Headless Kite Connect OAuth login via Playwright + TOTP.
- * Run once: `pnpm kite-auto-login`  |  scheduled: PM2 `kite-auth` at 08:30 IST
+ * Run once: `pnpm kite-auto-login`  |  scheduled: PM2 `kite-auth` at 06:10 IST
  */
 
 import { mkdirSync } from 'node:fs';

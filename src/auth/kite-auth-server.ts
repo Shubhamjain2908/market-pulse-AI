@@ -538,28 +538,30 @@ function startKiteAutoLoginCron(): Cron | undefined {
     return undefined;
   }
   const job = new Cron(
-    '30 8 * * 1-5',
+    '10 6 * * 1-5',
     { timezone: MARKET_TIMEZONE, protect: true },
     () => void runScheduledKiteAutoLogin(),
   );
-  log.info({ timezone: MARKET_TIMEZONE, schedule: '30 8 * * 1-5' }, 'kite auto-login cron armed');
+  // Kite tokens expire at ~06:00 IST daily; login at 06:10 gives the
+  // 06:15 Decision Run a fresh token while staying off-peak.
+  log.info({ timezone: MARKET_TIMEZONE, schedule: '10 6 * * 1-5' }, 'kite auto-login cron armed');
   return job;
 }
 
 async function runScheduledKiteAutoLogin(): Promise<void> {
   const t0 = Date.now();
-  log.info({ tag: 'weekday-0830', health: 'started' }, 'kite auto-login started');
+  log.info({ tag: 'weekday-0610', health: 'started' }, 'kite auto-login started');
   try {
     // Playwright loads only at trigger, not Express boot
     const { runKiteAutoLogin } = await import('./kite-auto-login.js');
     const result = await runKiteAutoLogin();
     log.info(
-      { tag: 'weekday-0830', health: 'ok', durationMs: Date.now() - t0, userId: result.userId },
+      { tag: 'weekday-0610', health: 'ok', durationMs: Date.now() - t0, userId: result.userId },
       'kite auto-login finished',
     );
   } catch (err) {
     log.error(
-      { tag: 'weekday-0830', health: 'error', durationMs: Date.now() - t0, err },
+      { tag: 'weekday-0610', health: 'error', durationMs: Date.now() - t0, err },
       'kite auto-login failed',
     );
   } finally {
