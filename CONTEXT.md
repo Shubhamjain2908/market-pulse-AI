@@ -7,7 +7,7 @@ are the single source of truth; every document and PR should use them consistent
 
 | Term | Definition |
 |------|-----------|
-| **Decision Run** | Scheduled workflow that may generate investment analysis and admit new paper trades. Typically the 08:45 IST weekday run. |
+| **Decision Run** | Scheduled workflow that may generate investment analysis and admit new paper trades. Typically the 06:15 IST weekday run (kept outside DeepSeek's peak billing window). |
 | **EOD Reconciliation Run** | Post-close refresh that reconciles market data and evaluates existing positions without admitting new trades. Typically the 16:30 IST weekday run. |
 
 ## Portfolio Analysis

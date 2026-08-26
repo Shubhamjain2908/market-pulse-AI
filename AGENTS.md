@@ -40,6 +40,6 @@
 - Quality gate before handoff: `pnpm typecheck && pnpm test && pnpm lint`.
 
 ## Scheduler and Tests
-- Scheduler in `src/scheduler/market-scheduler.ts` (Asia/Kolkata): weekdays 08:45/16:30, Saturday 08:00, Sunday jobs. Kite auto-login at **08:30** weekdays is in `src/auth/kite-auth-server.ts` (PM2 `kite-auth`).
+- Scheduler in `src/scheduler/market-scheduler.ts` (Asia/Kolkata): weekdays 06:15/16:30, Saturday 08:00, Sunday jobs. Weekday Decision Run sits at 06:15 IST deliberately — before DeepSeek's peak billing window (06:30–09:30 & 11:30–15:30 IST); keep it outside those windows when rescheduling. Kite auto-login at **06:10** weekdays (five min before Decision Run; tokens expire ~06:00) is in `src/auth/kite-auth-server.ts` (PM2 `kite-auth`).
 - Keep schedule changes synchronized between code and docs in `README.md`.
 - Tests default to `NODE_ENV=test` and `LLM_PROVIDER=mock` (`tests/setup.ts`); add tests in the nearest domain folder for gating/briefing-sensitive changes.

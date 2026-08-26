@@ -3,7 +3,7 @@ import { scheduledWorkflowOptions } from '../../src/scheduler/market-scheduler.j
 
 describe('scheduledWorkflowOptions', () => {
   it('keeps the Decision Run admission-enabled by default', () => {
-    expect(scheduledWorkflowOptions('weekday-0845')).toEqual({});
+    expect(scheduledWorkflowOptions('weekday-0615')).toEqual({});
   });
 
   it('disables AI and new admissions for EOD reconciliation', () => {

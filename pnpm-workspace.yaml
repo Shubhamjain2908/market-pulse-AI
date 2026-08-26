@@ -1,7 +1,11 @@
 packages:
   - '.'
 
-# vite@6.4.x still depends on esbuild@0.25.x; cheerio@1.2.x pins undici@7.25.x — force patched releases for audit CI.
+# Force patched transitive deps past audit CI (pnpm.audit --audit-level=high)
 overrides:
   esbuild: '>=0.28.1'
-  undici: '>=7.28.0'
+  undici: '>=8.9.0'
+  fast-uri: '>=3.1.5'
+  ip-address: '>=10.3.1'
+  nanoid: '>=3.3.18'
+  postcss: '>=8.5.18'

@@ -114,7 +114,7 @@ These rules guide Jules AI in reviewing pull requests for the market-pulse-ai st
 
 ### Scheduler Consistency
 - **Timing in code + docs**: Changes to `src/scheduler/market-scheduler.ts` sync with `README.md`
-- **Kite auth at 08:30**: PM2 `kite-auth` auto-login weekdays (see `src/auth/kite-auth-server.ts`)
+- **Kite auth at 06:10**: PM2 `kite-auth` auto-login weekdays — five min before Decision Run (see `src/auth/kite-auth-server.ts`)
 - **Asia/Kolkata TZ**: All schedule times in this zone
 
 ---

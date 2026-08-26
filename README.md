@@ -4,7 +4,7 @@
 
 A personal morning-briefing agent for Indian stock markets (NSE/BSE).
 **Not** an auto-trader — every order is still placed by you. The system is a
-modular pipeline that runs every weekday at 8:45 AM IST and emails you a
+modular pipeline that runs every weekday at 6:15 AM IST and emails you a
 short, actionable briefing before market open.
 
 > **Status:** Phases 0–5 shipped (Delivery included). **Phase 6 — Market Regime
@@ -56,7 +56,7 @@ short, actionable briefing before market open.
 > single-command `pnpm daily` that runs the entire pipeline end-to-end and
 > produces a briefing with a "My Portfolio" section showing each
 > position's recommended action. Phase 4 adds croner scheduling
-> (08:45 Decision Run / 16:30 EOD Reconciliation Run weekdays, Sat 08:00 IST), Gmail SMTP delivery via
+> (06:15 Decision Run / 16:30 EOD Reconciliation Run weekdays, Sat 08:00 IST), Gmail SMTP delivery via
 > nodemailer, and stop-loss breach detection alerts. Earlier phases provide: a JSON-driven
 > screen engine, first-class watchlist alerts, a backtest harness, LLM
 > sentiment scoring, AI thesis generation, and an AI-composed HTML
@@ -95,7 +95,7 @@ can be re-run independently for debugging or backtesting.
 
 ```mermaid
 flowchart LR
-    Cron["croner 8:45 IST"] --> Ingest
+    Cron["croner 6:15 IST"] --> Ingest
     subgraph Ingest [Stage 1 - Ingestors]
         NSE[NseIngestor]
         Yahoo[YahooIngestor]
@@ -228,8 +228,7 @@ pnpm cli portfolio-analyse -s INFY,HDFCBANK
 pnpm cli portfolio-analyse -j 12    # override parallel calls for speed/tuning
 pnpm cli scan              # one-shot intraday LTP refresh + live alerts
                            # (cron every 5-15 min during market hours)
-pnpm cli schedule          # start built-in croner schedule (Asia/Kolkata):
-                           # weekdays 08:45 Decision Run + 16:30 EOD Reconciliation,
+pnpm cli schedule          # start built-in croner schedule (Asia/Kolkata):                            # weekdays 06:15 Decision Run + 16:30 EOD Reconciliation,
                            # EOD skips LLMs/new paper trades but refreshes data, screens, and evaluations
                            # Saturday 08:00,
                            # Sunday 06:00 (Yahoo momentum earnings calendar),
@@ -410,20 +409,22 @@ To enable it:
    ```
    pnpm schedule
    ```
-   Starts a full **Decision Run** at 08:45, an **EOD Reconciliation Run** at
+   Starts a full **Decision Run** at 06:15, an **EOD Reconciliation Run** at
    16:30 that refreshes non-AI data and evaluates existing trades without
    admitting new ones, and a Saturday 08:00 run (IST), using your configured
    delivery channel.
 
    **Kite token auto-login (Oracle VM only):** when your Kite redirect URL
    points at the same host as `kite-auth` (e.g. duckdns), the PM2 `kite-auth`
-   process runs auto-login at 08:30 IST Mon–Fri — 15 minutes before the
-   pipeline. One-shot test: `pnpm kite-auto-login`. Logs: `deploy/logs/pm2-auth.log`
-   (look for `autoLoginCron: true` on startup and `weekday-0830` at trigger).
+   process runs auto-login at 06:10 IST Mon–Fri — five minutes before the
+   Decision Run, delivering a fresh token. One-shot test: `pnpm
+   kite-auto-login`. Logs: `deploy/logs/pm2-auth.log` (look for
+   `autoLoginCron: true` on startup and `weekday-0610` at trigger). One-shot test: `pnpm kite-auto-login`. Logs: `deploy/logs/pm2-auth.log`
+   (look for `autoLoginCron: true` on startup and `weekday-0610` at trigger).
    Requires `KITE_USER_ID`, `KITE_PASSWORD`, `KITE_TOTP_SECRET`, and
    `KITE_REDIRECT_URL` in `.env`. Failures are logged only; the main
    scheduler keeps running. Fall back to `pnpm kite-login` manually if
-   auto-login fails before 08:45.
+   auto-login fails before 06:10.
 
 If you'd rather skip Kite entirely, leave `PORTFOLIO_SOURCE=manual` (the
 default) and edit `config/portfolio.json`. Same downstream output —
@@ -701,7 +702,7 @@ Legacy open trades with `trailing_multiplier = 2.0` in DB are normalized to the 
 **Evaluation**
 
 - [`src/scripts/evaluate-trades.ts`](src/scripts/evaluate-trades.ts) + [`src/scripts/trailing-stop-engine.ts`](src/scripts/trailing-stop-engine.ts) — branches on **`stop_type`**: **trailing** path uses config-driven mults (no inline 2.0/1.5/15%), bar walk from `source_date` to `asOf`, **incremental resume** from the last `trailing_stop_log` bar (non-`STOPPED_OUT`), idempotent log inserts; **fixed** path skips trailing math/logs and evaluates persisted `stop_loss` / `target` / `max_hold_days` under the same **circuit-breaker envelope** (gap-down skips SL/TP; gap-up suppresses fake `highest_close` only); Day-1 ATR latch uses [`nextOpenOnOrAfter`](src/market/trading-days.ts) when `source_date` is a non-session day; prior-close / corp-action lookups via [`getPrevClose`](src/db/queries.ts) / [`hasCorporateActionInRange`](src/db/queries.ts); **`pnpm cli evaluate`** with **`--skip-ai`**
-- Missing expected-session quotes do not silently freeze trades: available intermediate bars are processed first, then still-open rows become `UNPRICED`. They remain `OPEN`, block duplicate entry, and are never closed using stale prices. The 08:45 Decision Run checks the prior completed session; the 16:30 EOD Reconciliation Run checks the current session. Weekend/holiday explicit evaluations use the latest open NSE session; fresh quotes restore `PRICED`.
+- Missing expected-session quotes do not silently freeze trades: available intermediate bars are processed first, then still-open rows become `UNPRICED`. They remain `OPEN`, block duplicate entry, and are never closed using stale prices. The 06:15 Decision Run checks the prior completed session; the 16:30 EOD Reconciliation Run checks the current session. Weekend/holiday explicit evaluations use the latest open NSE session; fresh quotes restore `PRICED`.
 - [`src/agents/daily-workflow.ts`](src/agents/daily-workflow.ts) — calls `runEvaluatePaperTrades` before briefing composition so same-run closures appear in the brief; evaluate metadata and the warning banner list unpriced symbols with expected/latest quote dates
 
 **Briefing**
@@ -803,7 +804,7 @@ Holiday dates live in [`src/market/nse-calendar.ts`](src/market/nse-calendar.ts)
 | 1     | Ingest + enrich      | ✅ shipped    | NSE/Yahoo/Screener/RSS ingestors; SMA/EMA/RSI/ATR/volume/52W signals; HTML briefing |
 | 2     | Screening + backtest | ✅ shipped    | JSON screen DSL; momentum / value / FII screens; first-class watchlist alerts; backtest harness with hit-rate / drawdown |
 | 3     | AI layer             | ✅ shipped    | Anthropic/OpenAI/Cursor providers; sentiment enricher; thesis generator; LLM briefing narrative |
-| 4     | Delivery             | ✅ shipped    | Croner schedule (08:45 / 16:30 weekdays, Sat 08:00 IST; Sun 06:00 momentum earnings, Sun 08:00 momentum rebalance + skip-AI briefing deliver), Gmail SMTP delivery via nodemailer, stop-loss breach detector |
+| 4     | Delivery             | ✅ shipped    | Croner schedule (06:15 / 16:30 weekdays, Sat 08:00 IST; Sun 06:00 momentum earnings, Sun 08:00 momentum rebalance + skip-AI briefing deliver), Gmail SMTP delivery via nodemailer, stop-loss breach detector |
 | 5     | Real-time + Kite     | ✅ shipped    | Kite Connect HTTP client + interactive login; portfolio sync + per-holding LLM HOLD/ADD/TRIM/EXIT analyser; intraday LTP scanner; 4 new screens; single-command `pnpm daily` |
 | 6     | Market regime filter | ✅ shipped    | `regime_daily` + `regime_strategy_gate`; signal enricher + deterministic classifier; regime agent + briefing card; gated screens + gated AI thesis; seed/config via `strategy-gates.json` |
 | —     | Momentum screener (multi-factor) | ✅ shipped | `momentum-config.json` / `momentum-universe.json`; `mom_*` signals + ranker + rebalance → `paper_trades` (`momentum_mf`); merged latest-per-name signal map; thesis snapshot + confidence cap when false-flag; portfolio guardrails; **`momentum-card`** + Sunday **`--brief`** / scheduler delivery |
