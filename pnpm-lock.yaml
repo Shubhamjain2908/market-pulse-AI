@@ -16,8 +16,8 @@ importers:
         specifier: ^0.105.0
         version: 0.105.0(zod@4.4.3)
       '@google/genai':
-        specifier: ^2.11.0
-        version: 2.11.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
+        specifier: ^2.12.0
+        version: 2.12.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
       better-sqlite3:
         specifier: ^11.5.0
         version: 11.10.0
@@ -47,7 +47,7 @@ importers:
         version: 9.0.3
       openai:
         specifier: ^6.45.0
-        version: 6.45.0(ws@8.21.0)(zod@4.4.3)
+        version: 6.45.0(ws@8.21.1)(zod@4.4.3)
       otplib:
         specifier: ^13.4.1
         version: 13.4.1
@@ -392,8 +392,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@google/genai@2.11.0':
-    resolution: {integrity: sha512-d2Csf29vS0GfHc52H0MG25ccY4FKvvbDgqDlEovLrPLF8sPegWr/GGO+LMOy85/1SnX0iV0zDAW7R8SsvWg8Vg==}
+  '@google/genai@2.12.0':
+    resolution: {integrity: sha512-LUr972DZosqPUhf9Mb3CIVu/B99woD3QW6ZJV1T9aNgxaoimAZARmo+IyyDsxIL+zouFiYSdA4hzfEWXc9oNIQ==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': ^1.25.2
@@ -2281,8 +2281,8 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
-  ws@8.21.0:
-    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
+  ws@8.21.1:
+    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -2496,12 +2496,12 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@google/genai@2.11.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))':
+  '@google/genai@2.12.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))':
     dependencies:
       google-auth-library: 10.9.0
       p-retry: 4.6.2
       protobufjs: 7.6.5
-      ws: 8.21.0
+      ws: 8.21.1
     optionalDependencies:
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
     transitivePeerDependencies:
@@ -3705,9 +3705,9 @@ snapshots:
     dependencies:
       mimic-function: 5.0.1
 
-  openai@6.45.0(ws@8.21.0)(zod@4.4.3):
+  openai@6.45.0(ws@8.21.1)(zod@4.4.3):
     optionalDependencies:
-      ws: 8.21.0
+      ws: 8.21.1
       zod: 4.4.3
 
   otplib@13.4.1:
@@ -4339,7 +4339,7 @@ snapshots:
 
   wrappy@1.0.2: {}
 
-  ws@8.21.0: {}
+  ws@8.21.1: {}
 
   xml2js@0.5.0:
     dependencies:
