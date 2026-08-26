@@ -1,6 +1,6 @@
 /**
  * Post-briefing health probe for cron (IST). Run after the morning schedule
- * (e.g. 08:30 IST weekdays) once `mp schedule` has delivered the briefing.
+ * (e.g. 06:10 IST weekdays) once `mp schedule` has delivered the briefing.
  *
  * Checks (trading days only where noted):
  *  - Email: `briefings` row for today with delivery_method=email and delivered_at set
