@@ -2,7 +2,7 @@
  * Croner-based scheduler for recurring workflows.
  *
  * Required schedules (Asia/Kolkata):
- *  - Weekdays 08:45
+ *  - Weekdays 06:15 (Decision Run — kept off DeepSeek peak billing window 06:30-09:30 IST)
  *  - Weekdays 16:30
  *  - Saturday 08:00
  *  - Sunday 06:00 — Yahoo momentum earnings calendar refresh (weekly)
@@ -42,9 +42,9 @@ export function scheduledWorkflowOptions(tag: string): DailyWorkflowOptions {
 
 export function startScheduler(): SchedulerHandle {
   const weekdayMorning = new Cron(
-    '45 8 * * 1-5',
+    '15 6 * * 1-5',
     { timezone: MARKET_TIMEZONE, protect: true },
-    () => runScheduledJob('weekday-0845'),
+    () => runScheduledJob('weekday-0615'),
   );
   const weekdayClose = new Cron('30 16 * * 1-5', { timezone: MARKET_TIMEZONE, protect: true }, () =>
     runScheduledJob('weekday-1630'),
@@ -77,7 +77,7 @@ export function startScheduler(): SchedulerHandle {
     {
       timezone: MARKET_TIMEZONE,
       schedules: [
-        '45 8 * * 1-5',
+        '15 6 * * 1-5',
         '30 16 * * 1-5',
         '0 8 * * 6',
         '0 6 * * 0',
@@ -228,7 +228,8 @@ async function runScheduledJob(tag: string): Promise<void> {
   log.info({ tag, health: 'started' }, 'scheduled job started');
   try {
     // EOD Reconciliation Run (16:30): skip AI, do not admit new paper trades.
-    // Decision Run (08:45) and Saturday: full workflow, backward-compatible defaults.
+    // Decision Run (06:15) and Saturday: full workflow, backward-compatible defaults.
+    // Decision Run sits before DeepSeek's peak window (06:30-09:30 IST) for off-peak LLM rates.
     const result = await runDailyWorkflow(scheduledWorkflowOptions(tag));
     await deliverBriefing(result.html, result.date, config.BRIEFING_DELIVERY);
     log.info(

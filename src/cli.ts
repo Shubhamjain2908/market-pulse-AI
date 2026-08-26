@@ -21,8 +21,7 @@
  *   mp kite-login        Refresh Zerodha Kite Connect access_token (run daily)
  *   mp portfolio-sync    Pull holdings from Kite (or manual) into the DB
  *   mp portfolio-analyse Run LLM-driven HOLD/ADD/TRIM/EXIT analysis per holding
- *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)
- *   mp schedule          Start croner jobs (08:45 / 16:30 weekdays, Sat 08:00, Sun 06:00 earnings)
+ *   mp scan              One-shot intraday LTP refresh via Kite (cron-able)  *   mp schedule          Start croner jobs (06:15 / 16:30 weekdays, Sat 08:00, Sun 06:00 earnings)
  *   mp ext-signal-smoke  Live ext-signal ingest + portfolio overlap report
  *   mp fundamental-screen-audit  quality/dividend screen bottleneck audit
  *   mp ext-signal-cross-ref  ext signals vs watchlist/momentum/portfolio overlap
@@ -624,7 +623,7 @@ program
 
 program
   .command('schedule')
-  .description('start croner schedule (08:45 / 16:30 weekdays, Sat 08:00 IST)')
+  .description('start croner schedule (06:15 / 16:30 weekdays, Sat 08:00 IST)')
   .option('--run-now', 'run one cycle immediately on startup')
   .action(async (opts: { runNow?: boolean }) => {
     ensureDb();
