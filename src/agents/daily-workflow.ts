@@ -20,7 +20,6 @@ import { fetchInavSnapshots } from '../ingestors/inav-fetcher.js';
 import { fetchPromoterPledge } from '../ingestors/nse/pledge-fetcher.js';
 import { syncMomentumEarningsCalendarFromYahoo } from '../ingestors/yahoo/earnings-ingestor.js';
 import { ingestYahooSnapshots } from '../ingestors/yahoo-snapshot-ingestor.js';
-import { clearRunBudget, LlmBudgetExceededError, startRunBudget } from '../llm/index.js';
 import { child } from '../logger.js';
 import { getMarketClosure, isSundayIst } from '../market/nse-calendar.js';
 import { lastOpenOnOrBefore, previousOpenTradingDay } from '../market/trading-days.js';
@@ -194,19 +193,14 @@ export async function runDailyWorkflow(
   }
 
   const warnings: WarningEntry[] = [];
-  let budgetExceeded = false;
 
   const admitNew = opts.admitNewPaperTrades !== false;
   const shouldRunLlmStages = !opts.skipAi && admitNew;
 
-  if (shouldRunLlmStages) {
-    startRunBudget(date, config.LLM_RUN_BUDGET_USD);
-  }
-
   const db = getDb();
   const runDate = date;
 
-  try {
+  {
     if (!opts.skipPortfolio) {
       const portfolioSyncStage = await runStage({
         db,
@@ -493,27 +487,11 @@ export async function runDailyWorkflow(
           'thesis generation done',
         );
       } catch (err) {
-        if (err instanceof LlmBudgetExceededError) {
-          recordPipelineStage(
-            { runDate, stage: 'thesis', status: 'skipped', errorMsg: err.message },
-            db,
-          );
-          budgetExceeded = true;
-          log.warn(
-            { err, spent: err.spent, cap: err.cap },
-            'thesis stage skipped: LLM budget exceeded',
-          );
-          warnings.push({
-            category: 'LLM budget',
-            message: `Thesis generation skipped — run LLM budget exceeded ($${err.spent.toFixed(4)} / $${err.cap.toFixed(2)}).`,
-          });
-        } else {
-          recordPipelineStage(
-            { runDate, stage: 'thesis', status: 'failed', errorMsg: (err as Error).message },
-            db,
-          );
-          throw err;
-        }
+        recordPipelineStage(
+          { runDate, stage: 'thesis', status: 'failed', errorMsg: (err as Error).message },
+          db,
+        );
+        throw err;
       }
 
       if (config.CONCALL_ANALYSIS_ENABLED === '1') {
@@ -531,30 +509,16 @@ export async function runDailyWorkflow(
           );
           log.info(concallResult, 'concall analysis done');
         } catch (err) {
-          if (err instanceof LlmBudgetExceededError) {
-            recordPipelineStage(
-              { runDate, stage: 'concall-analysis', status: 'skipped', errorMsg: err.message },
-              db,
-            );
-            log.warn(
-              { err, spent: err.spent, cap: err.cap },
-              'concall analysis skipped: LLM budget exceeded',
-            );
-          } else {
-            recordPipelineStage(
-              {
-                runDate,
-                stage: 'concall-analysis',
-                status: 'failed',
-                errorMsg: (err as Error).message,
-              },
-              db,
-            );
-            log.warn(
-              { err: (err as Error).message },
-              'concall analysis failed; continuing workflow',
-            );
-          }
+          recordPipelineStage(
+            {
+              runDate,
+              stage: 'concall-analysis',
+              status: 'failed',
+              errorMsg: (err as Error).message,
+            },
+            db,
+          );
+          log.warn({ err: (err as Error).message }, 'concall analysis failed; continuing workflow');
         }
       }
 
@@ -578,32 +542,16 @@ export async function runDailyWorkflow(
             'portfolio analysis done',
           );
         } catch (err) {
-          if (err instanceof LlmBudgetExceededError) {
-            recordPipelineStage(
-              { runDate, stage: 'portfolio-analysis', status: 'skipped', errorMsg: err.message },
-              db,
-            );
-            budgetExceeded = true;
-            log.warn(
-              { err, spent: err.spent, cap: err.cap },
-              'portfolio-analysis stage skipped: LLM budget exceeded',
-            );
-            warnings.push({
-              category: 'LLM budget',
-              message: `Portfolio analysis skipped — run LLM budget exceeded ($${err.spent.toFixed(4)} / $${err.cap.toFixed(2)}).`,
-            });
-          } else {
-            recordPipelineStage(
-              {
-                runDate,
-                stage: 'portfolio-analysis',
-                status: 'failed',
-                errorMsg: (err as Error).message,
-              },
-              db,
-            );
-            throw err;
-          }
+          recordPipelineStage(
+            {
+              runDate,
+              stage: 'portfolio-analysis',
+              status: 'failed',
+              errorMsg: (err as Error).message,
+            },
+            db,
+          );
+          throw err;
         }
       }
     }
@@ -644,7 +592,6 @@ export async function runDailyWorkflow(
         thesisRun: shouldRunLlmStages ? thesisRun : undefined,
         delivery: config.BRIEFING_DELIVERY,
         warnings: warnings.length > 0 ? warnings : undefined,
-        budgetExceeded: budgetExceeded || undefined,
       });
     } catch (err) {
       recordPipelineStage(
@@ -687,9 +634,5 @@ export async function runDailyWorkflow(
       html: briefing.html,
       delivery: config.BRIEFING_DELIVERY,
     };
-  } finally {
-    if (shouldRunLlmStages) {
-      clearRunBudget(date);
-    }
   }
 }

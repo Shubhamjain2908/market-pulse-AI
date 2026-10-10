@@ -6,7 +6,6 @@
  * Follows the pattern from `generateTheses` in `thesis-generator.ts`:
  * - Uses `llm.generateJson` with zod schema
  * - `p-limit` concurrency respecting `config.THESIS_CONCURRENCY`
- * - Budget via `src/llm/budget.ts`
  * - Never throws — returns result counters on any failure
  */
 
@@ -20,7 +19,6 @@ import {
   getTranscriptsWithoutIntel,
   upsertConcallIntel,
 } from '../db/queries.js';
-import { assertBudgetAvailable, getCurrentRunId } from '../llm/budget.js';
 import { getLlmProvider } from '../llm/index.js';
 import type { LlmProvider } from '../llm/types.js';
 import { child } from '../logger.js';
@@ -46,7 +44,7 @@ Return ONLY a single JSON object matching the schema.`;
 /**
  * Analyse pending concall transcripts via LLM.
  * Processes transcripts that have text but no intel row yet.
- * Respects LLM budget and concurrency limits.
+ * Respects concurrency limits.
  */
 export interface AnalyseConcallOptions {
   maxPerRun?: number;
@@ -91,10 +89,6 @@ export async function analyseConcallTranscripts(
     transcripts.map((t) =>
       limit(async () => {
         try {
-          // Check budget before each call
-          const runId = getCurrentRunId();
-          if (runId) assertBudgetAvailable(runId);
-
           // Get prior intel for delivery comparison
           const priorIntel = getLatestConcallIntel(t.symbol, t.announcedAt, db);
 
