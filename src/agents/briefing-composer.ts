@@ -34,8 +34,6 @@ export interface BriefRunOptions {
   momentumRebalanceSummary?: MomentumRebalanceSummary;
   /** Non-fatal pipeline warnings surfaced during the workflow run. */
   warnings?: WarningEntry[];
-  /** When true, render a prominent LLM budget-exceeded banner in the briefing. */
-  budgetExceeded?: boolean;
 }
 
 export interface BriefRunResult {
@@ -62,7 +60,6 @@ export async function runBriefingComposer(opts: BriefRunOptions = {}): Promise<B
     thesisRun: opts.thesisRun,
     momentumRebalanceSummary: opts.momentumRebalanceSummary,
     warnings: opts.warnings,
-    budgetExceeded: opts.budgetExceeded,
   });
   const screenMatches = composed.data.screenMatches?.reduce((s, m) => s + m.symbols.length, 0) ?? 0;
   log.info(
