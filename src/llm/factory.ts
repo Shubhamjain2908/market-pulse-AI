@@ -5,7 +5,6 @@
  */
 
 import { config } from '../config/env.js';
-import { wrapWithBudgetTracking } from './provider.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { CursorAgentProvider } from './providers/cursor-agent.js';
 import { GoogleStudioProvider } from './providers/google-studio.js';
@@ -35,15 +34,15 @@ export function resetLlmProvider(): void {
 function createLlmProvider(): LlmProvider {
   switch (config.LLM_PROVIDER) {
     case 'cursor-agent':
-      return wrapWithBudgetTracking(new CursorAgentProvider());
+      return new CursorAgentProvider();
     case 'anthropic':
-      return wrapWithBudgetTracking(new AnthropicProvider());
+      return new AnthropicProvider();
     case 'vertex':
-      return wrapWithBudgetTracking(new VertexProvider());
+      return new VertexProvider();
     case 'openai':
-      return wrapWithBudgetTracking(new OpenAIProvider());
+      return new OpenAIProvider();
     case 'google-studio':
-      return wrapWithBudgetTracking(new GoogleStudioProvider());
+      return new GoogleStudioProvider();
     case 'mock':
       return new MockLlmProvider();
     default: {

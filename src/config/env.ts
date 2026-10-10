@@ -60,9 +60,6 @@ const EnvSchema = z.object({
   OPENAI_MODEL: z.string().default('gpt-4o'),
   OPENAI_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
 
-  /** Per daily-workflow run cap on LLM spend (USD). Enforced via `src/llm/budget.ts`. */
-  LLM_RUN_BUDGET_USD: z.coerce.number().positive().default(0.5),
-
   MARKET_DATA_PROVIDER: z.enum(['free', 'kite']).default('free'),
   KITE_API_KEY: z.string().optional(),
   KITE_API_SECRET: z.string().optional(),
