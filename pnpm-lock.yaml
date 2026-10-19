@@ -27,8 +27,8 @@ importers:
         specifier: ^0.105.0
         version: 0.105.0(zod@4.4.3)
       '@google/genai':
-        specifier: ^2.28.0
-        version: 2.28.0(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))
+        specifier: ^2.30.0
+        version: 2.30.0(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))
       better-sqlite3:
         specifier: ^11.5.0
         version: 11.10.0
@@ -58,7 +58,7 @@ importers:
         version: 10.1.0
       openai:
         specifier: ^6.45.0
-        version: 6.45.0(ws@8.21.1)(zod@4.4.3)
+        version: 6.45.0(ws@8.22.0)(zod@4.4.3)
       otplib:
         specifier: ^13.4.1
         version: 13.4.1
@@ -403,8 +403,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@google/genai@2.28.0':
-    resolution: {integrity: sha512-hyNAJj+ywu3L46qlZod6KO/JvcT3QONz6VCiPevC/FWOjAD+LQb7DMLUoV8vzoLpt61Q0ruQX99iqbxEjPJWmw==}
+  '@google/genai@2.30.0':
+    resolution: {integrity: sha512-Gkv1ix8iZey/V3WF4lHaRS8C71P533jenDT/lA+fdPTCfXYfmCVHvo+0H5jTgzonqsmROQG7QpzLJkpoP/x7bg==}
     engines: {node: '>=20.0.0'}
     peerDependencies:
       '@modelcontextprotocol/sdk': '>=1.31.0'
@@ -1244,8 +1244,8 @@ packages:
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
 
-  gaxios@7.2.0:
-    resolution: {integrity: sha512-CUVb4wcYe+771XevyH6HtGmXFAGGKkIC3kswAP8Z1JCe0j80JMaTPZH930DWFrvo0atjh18Arc0pEyUCWa5bfg==}
+  gaxios@7.3.1:
+    resolution: {integrity: sha512-kB3rzJV7d9juLZh8/56QTXCwQfxyhdOMdyYk1HdQKFtF8TJTDTZQJtixWIwXdE9Jji91mC41DUNpjleo4L4eAQ==}
     engines: {node: '>=18'}
 
   gcp-metadata@8.1.2:
@@ -1271,8 +1271,8 @@ packages:
   github-from-package@0.0.0:
     resolution: {integrity: sha512-SyHy3T1v2NUXn29OsWdxmK6RwHD+vkj3v8en8AOBZ1wBQ/hCAQ5bAQTD02kW4W9tUp/3Qh6J8r9EvntiyCmOOw==}
 
-  google-auth-library@10.9.0:
-    resolution: {integrity: sha512-xtvUqvINPhTaBm7nXqlYPcrMHJPm1lCNdSovxnKKhTm+4JsvQ+KGVYJViLoH9Yxu8w+T0Qv5HubzYT9BLrppJg==}
+  google-auth-library@10.9.1:
+    resolution: {integrity: sha512-i1ydyHrqcIxXkWh/uBmVkzCvIuq5yiK2ATndIe5XxKholrG/MTYP9xGYka4sQhrbIAgGjL2B6NOE7rFaiF3fXw==}
     engines: {node: '>=18'}
 
   google-logging-utils@1.1.3:
@@ -1751,8 +1751,8 @@ packages:
   process-warning@5.0.0:
     resolution: {integrity: sha512-a39t9ApHNx2L4+HBnQKqxxHNs1r7KF+Intd8Q/g1bUh6q0WIp9voPXJ/x0j+ZL45KF1pJd9+q2jLIRMfvEshkA==}
 
-  protobufjs@7.6.5:
-    resolution: {integrity: sha512-/FPD0nUc9jH6rfFjji9IBqOz4pcSE3CsT1m7Ep6Mdb0LxSUMj8hgl6GomOvZzpNpAqqGaXA0P3VSrZLFzIhQrw==}
+  protobufjs@7.6.6:
+    resolution: {integrity: sha512-dYDWdjSl5RNb7SgPxGQcRU+GtvP7s2fpkrY0r432PcOIaZ0/rBcxEZnQN67iJhFuQiVw754JDoPruPCNdGsbjg==}
     engines: {node: '>=12.0.0'}
 
   proxy-addr@2.0.8:
@@ -2196,8 +2196,8 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
-  ws@8.21.1:
-    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
+  ws@8.22.0:
+    resolution: {integrity: sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -2238,8 +2238,8 @@ packages:
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
-  zod@4.6.5:
-    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
 snapshots:
 
@@ -2411,12 +2411,12 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@google/genai@2.28.0(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))':
+  '@google/genai@2.30.0(@modelcontextprotocol/sdk@1.32.1(zod@4.4.3))':
     dependencies:
-      google-auth-library: 10.9.0
+      google-auth-library: 10.9.1
       p-retry: 4.6.2
-      protobufjs: 7.6.5
-      ws: 8.21.1
+      protobufjs: 7.6.6
+      ws: 8.22.0
     optionalDependencies:
       '@modelcontextprotocol/sdk': 1.32.1(zod@4.4.3)
     transitivePeerDependencies:
@@ -2464,7 +2464,7 @@ snapshots:
       - supports-color
     optional: true
 
-  '@modelcontextprotocol/sdk@1.32.1(zod@4.6.5)':
+  '@modelcontextprotocol/sdk@1.32.1(zod@4.6.7)':
     dependencies:
       '@hono/node-server': 2.1.4(hono@4.13.13)
       ajv: 8.20.0
@@ -2481,8 +2481,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.6.5
-      zod-to-json-schema: 3.25.2(zod@4.6.5)
+      zod: 4.6.7
+      zod-to-json-schema: 3.25.2(zod@4.6.7)
     transitivePeerDependencies:
       - supports-color
 
@@ -3197,7 +3197,7 @@ snapshots:
 
   function-bind@1.1.2: {}
 
-  gaxios@7.2.0:
+  gaxios@7.3.1:
     dependencies:
       extend: 3.0.2
       https-proxy-agent: 7.0.6
@@ -3207,7 +3207,7 @@ snapshots:
 
   gcp-metadata@8.1.2:
     dependencies:
-      gaxios: 7.2.0
+      gaxios: 7.3.1
       google-logging-utils: 1.1.3
       json-bigint: 1.0.0
     transitivePeerDependencies:
@@ -3240,11 +3240,11 @@ snapshots:
 
   github-from-package@0.0.0: {}
 
-  google-auth-library@10.9.0:
+  google-auth-library@10.9.1:
     dependencies:
       base64-js: 1.5.1
       ecdsa-sig-formatter: 1.0.11
-      gaxios: 7.2.0
+      gaxios: 7.3.1
       gcp-metadata: 8.1.2
       google-logging-utils: 1.1.3
       jws: 4.0.1
@@ -3563,9 +3563,9 @@ snapshots:
     dependencies:
       mimic-function: 5.0.1
 
-  openai@6.45.0(ws@8.21.1)(zod@4.4.3):
+  openai@6.45.0(ws@8.22.0)(zod@4.4.3):
     optionalDependencies:
-      ws: 8.21.1
+      ws: 8.22.0
       zod: 4.4.3
 
   otplib@13.4.1:
@@ -3696,7 +3696,7 @@ snapshots:
 
   process-warning@5.0.0: {}
 
-  protobufjs@7.6.5:
+  protobufjs@7.6.6:
     dependencies:
       '@protobufjs/aspromise': 1.1.2
       '@protobufjs/base64': 1.1.2
@@ -4133,7 +4133,7 @@ snapshots:
 
   wrappy@1.0.2: {}
 
-  ws@8.21.1: {}
+  ws@8.22.0: {}
 
   xml2js@0.5.0:
     dependencies:
@@ -4145,12 +4145,12 @@ snapshots:
   yahoo-finance2@4.0.3:
     dependencies:
       '@deno/shim-deno': 0.18.2
-      '@modelcontextprotocol/sdk': 1.32.1(zod@4.6.5)
+      '@modelcontextprotocol/sdk': 1.32.1(zod@4.6.7)
       fetch-mock-cache: 3.1.0
       json-schema: 0.4.0
       tough-cookie: 6.0.2
       tough-cookie-file-store: 3.3.0
-      zod: 4.6.5
+      zod: 4.6.7
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - supports-color
@@ -4165,10 +4165,10 @@ snapshots:
       zod: 4.4.3
     optional: true
 
-  zod-to-json-schema@3.25.2(zod@4.6.5):
+  zod-to-json-schema@3.25.2(zod@4.6.7):
     dependencies:
-      zod: 4.6.5
+      zod: 4.6.7
 
   zod@4.4.3: {}
 
-  zod@4.6.5: {}
+  zod@4.6.7: {}
